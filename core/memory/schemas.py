@@ -10,11 +10,36 @@ from storage.relational.models import NamespaceType, MemoryType, LifecycleState
 class AgentBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=128)
     description: Optional[str] = None
+    role: str = "worker"
 
 class AgentCreate(AgentBase):
     pass
 
+class SubAgentCreate(BaseModel):
+    parent_agent_name: str
+    subagent_name: str
+    bounded_scope: str = Field(..., description="Namespace URI scope the sub-agent is restricted to")
+    description: Optional[str] = None
+
 class AgentRead(AgentBase):
+    id: str
+    parent_agent_id: Optional[str] = None
+    bounded_scope: Optional[str] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+# Access Grant Schemas
+class AccessGrantBase(BaseModel):
+    agent_id: str
+    namespace_id: str
+    actions: List[str] = Field(default_factory=lambda: ["read", "query"])
+    purpose: Optional[str] = None
+    expires_at: Optional[datetime] = None
+
+class AccessGrantCreate(AccessGrantBase):
+    pass
+
+class AccessGrantRead(AccessGrantBase):
     id: str
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
@@ -59,6 +84,7 @@ class MemoryRecordUpdate(BaseModel):
 class MemoryTransitionRequest(BaseModel):
     target_state: LifecycleState
     superseded_by_id: Optional[str] = None
+    purpose: Optional[str] = None
 
 class MemoryRecordRead(MemoryRecordBase):
     id: str

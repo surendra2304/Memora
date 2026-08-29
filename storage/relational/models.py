@@ -1,10 +1,10 @@
 ﻿"""
 Canonical Relational Data Models for Memora
-Defines Agent, Namespace, MemoryRecord, and AuditLog with SQLAlchemy 2.0.
+Defines Agent, Namespace, MemoryRecord, AccessGrant, and AuditLog with SQLAlchemy 2.0.
 """
 import enum
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import (
     String,
     Text,
@@ -49,21 +49,31 @@ class LifecycleState(str, enum.Enum):
 class Agent(Base):
     """
     Represents an actor / agent in the ecosystem (e.g., FRIDAY, FORGE, NEXUS).
+    Supports hierarchical parent-subagent delegation with bounded scopes.
     """
     __tablename__ = "agents"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=generate_uuid)
     name: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    role: Mapped[str] = mapped_column(String(64), nullable=False, default="worker")
+    
+    # Sub-agent hierarchy & bounded context
+    parent_agent_id: Mapped[Optional[str]] = mapped_column(String(64), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)
+    bounded_scope: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)  # e.g., 'memora://forge/projects/app-17'
+    
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now, nullable=False)
 
     # Relationships
+    parent_agent: Mapped[Optional["Agent"]] = relationship("Agent", remote_side=[id], back_populates="sub_agents")
+    sub_agents: Mapped[List["Agent"]] = relationship("Agent", back_populates="parent_agent")
     namespaces: Mapped[List["Namespace"]] = relationship("Namespace", back_populates="agent", cascade="all, delete-orphan")
     owned_memories: Mapped[List["MemoryRecord"]] = relationship("MemoryRecord", back_populates="owner", cascade="all, delete-orphan")
+    access_grants: Mapped[List["AccessGrant"]] = relationship("AccessGrant", back_populates="agent", cascade="all, delete-orphan")
     audit_logs: Mapped[List["AuditLog"]] = relationship("AuditLog", back_populates="actor")
 
     def __repr__(self) -> str:
-        return f"<Agent(id={self.id}, name={self.name})>"
+        return f"<Agent(id={self.id}, name={self.name}, role={self.role})>"
 
 class Namespace(Base):
     """
@@ -85,9 +95,44 @@ class Namespace(Base):
     # Relationships
     agent: Mapped[Optional["Agent"]] = relationship("Agent", back_populates="namespaces")
     memories: Mapped[List["MemoryRecord"]] = relationship("MemoryRecord", back_populates="namespace", cascade="all, delete-orphan")
+    access_grants: Mapped[List["AccessGrant"]] = relationship("AccessGrant", back_populates="namespace", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<Namespace(id={self.id}, path={self.path}, type={self.type})>"
+
+class AccessGrant(Base):
+    """
+    Explicit access permission grant for an Agent on a Namespace.
+    Implements multi-dimensional policy rules (Who, What, Where, Why, How long).
+    """
+    __tablename__ = "access_grants"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=generate_uuid)
+    agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    namespace_id: Mapped[str] = mapped_column(String(64), ForeignKey("namespaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    actions: Mapped[List[str]] = mapped_column(JSON, nullable=False, default=lambda: ["read"])  # e.g., ["read", "write", "query"]
+    purpose: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)  # Why: reason / task scope
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)  # How long: TTL
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now, nullable=False)
+
+    # Relationships
+    agent: Mapped["Agent"] = relationship("Agent", back_populates="access_grants")
+    namespace: Mapped["Namespace"] = relationship("Namespace", back_populates="access_grants")
+
+    __table_args__ = (
+        Index("ix_grant_agent_ns", "agent_id", "namespace_id"),
+    )
+
+    def is_expired(self) -> bool:
+        if not self.expires_at:
+            return False
+        now = datetime.now(timezone.utc)
+        if self.expires_at.tzinfo is None:
+            return datetime.utcnow() > self.expires_at
+        return now > self.expires_at
+
+    def __repr__(self) -> str:
+        return f"<AccessGrant(id={self.id}, agent_id={self.agent_id}, namespace_id={self.namespace_id})>"
 
 class MemoryRecord(Base):
     """

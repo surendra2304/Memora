@@ -11,3 +11,9 @@ def get_actor_header(
 ) -> str:
     """Extracts the requesting agent identity from request headers."""
     return x_agent_name.lower()
+
+def get_purpose_header(
+    x_access_purpose: Optional[str] = Header(default=None, alias="X-Access-Purpose")
+) -> Optional[str]:
+    """Extracts the stated purpose / intent for audit and policy verification."""
+    return x_access_purpose

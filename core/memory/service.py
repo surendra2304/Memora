@@ -30,7 +30,8 @@ class MemoryService:
     def create_memory(
         db: Session,
         memory_in: MemoryRecordCreate,
-        actor_name: Optional[str] = None
+        actor_name: Optional[str] = None,
+        purpose: Optional[str] = None
     ) -> MemoryRecord:
         # Resolve Owner Agent
         if memory_in.owner_id:
@@ -45,40 +46,21 @@ class MemoryService:
 
         # Resolve Actor Agent
         actor = IdentityService.get_agent_by_name(db, actor_name) if actor_name else owner
+        if not actor:
+            actor = IdentityService.register_agent(db, actor_name or "unknown")
 
         # Resolve Namespace
         if memory_in.namespace_id:
             namespace = db.query(Namespace).filter(Namespace.id == memory_in.namespace_id).first()
         elif memory_in.namespace_path:
-            namespace = IdentityService.get_namespace_by_path(db, memory_in.namespace_path)
-            if not namespace:
-                namespace = IdentityService.create_namespace(
-                    db,
-                    path=memory_in.namespace_path,
-                    ns_type=NamespaceType.AGENT_PRIVATE if "private" in memory_in.namespace_path else NamespaceType.TEAM_SHARED,
-                    agent_id=owner.id
-                )
+            namespace = IdentityService.resolve_namespace(db, memory_in.namespace_path, owner_agent_id=owner.id)
         else:
-            # Default to owner private namespace
             ns_path = f"memora://{owner.name}/private"
-            namespace = IdentityService.get_namespace_by_path(db, ns_path)
-            if not namespace:
-                namespace = IdentityService.create_namespace(
-                    db,
-                    path=ns_path,
-                    ns_type=NamespaceType.AGENT_PRIVATE,
-                    agent_id=owner.id
-                )
+            namespace = IdentityService.resolve_namespace(db, ns_path, owner_agent_id=owner.id)
 
         # Policy Check
-        decision = PolicyEngine.evaluate_access(db, actor, namespace, action="write")
+        decision = PolicyEngine.evaluate_access(db, actor, namespace, action="write", purpose=purpose)
         if not decision:
-            PolicyEngine.log_audit(
-                db,
-                action="create_denied",
-                actor_id=actor.id,
-                details={"reason": decision.reason, "namespace_id": namespace.id}
-            )
             raise PermissionDeniedError(decision.reason)
 
         # Create record
@@ -97,13 +79,17 @@ class MemoryService:
         db.commit()
         db.refresh(record)
 
-        # Audit Log
-        PolicyEngine.log_audit(
+        # Audit Log for creation
+        PolicyEngine.log_audit_decision(
             db,
-            action="create",
+            PolicyDecision(
+                allowed=True,
+                reason=f"Memory record created under namespace '{namespace.path}'.",
+                rule_matched="MEMORY_CREATED",
+                dimensions={"namespace_path": namespace.path, "memory_type": record.memory_type.value}
+            ),
             actor_id=actor.id,
-            memory_id=record.id,
-            details={"memory_type": record.memory_type.value, "namespace_path": namespace.path}
+            memory_id=record.id
         )
         return record
 
@@ -111,7 +97,8 @@ class MemoryService:
     def get_memory_by_id(
         db: Session,
         memory_id: str,
-        actor_name: Optional[str] = None
+        actor_name: Optional[str] = None,
+        purpose: Optional[str] = None
     ) -> MemoryRecord:
         record = db.query(MemoryRecord).filter(MemoryRecord.id == memory_id).first()
         if not record:
@@ -120,18 +107,16 @@ class MemoryService:
         if actor_name:
             actor = IdentityService.get_agent_by_name(db, actor_name)
             if actor:
-                decision = PolicyEngine.evaluate_access(db, actor, record.namespace, action="read")
+                decision = PolicyEngine.evaluate_access(
+                    db,
+                    actor=actor,
+                    namespace=record.namespace,
+                    action="read",
+                    purpose=purpose,
+                    memory_id=record.id
+                )
                 if not decision:
-                    PolicyEngine.log_audit(
-                        db,
-                        action="read_denied",
-                        actor_id=actor.id,
-                        memory_id=record.id,
-                        details={"reason": decision.reason}
-                    )
                     raise PermissionDeniedError(decision.reason)
-
-                PolicyEngine.log_audit(db, action="read", actor_id=actor.id, memory_id=record.id)
 
         return record
 
@@ -139,9 +124,20 @@ class MemoryService:
     def query_memories(
         db: Session,
         query: MemoryQuery,
-        actor_name: Optional[str] = None
+        actor_name: Optional[str] = None,
+        purpose: Optional[str] = None
     ) -> List[MemoryRecord]:
-        q = db.query(MemoryRecord).join(Namespace).join(Agent)
+        actor = IdentityService.get_agent_by_name(db, actor_name) if actor_name else None
+        
+        # If querying specific namespace, run policy check
+        if query.namespace_path and actor:
+            ns = IdentityService.get_namespace_by_path(db, query.namespace_path)
+            if ns:
+                decision = PolicyEngine.evaluate_access(db, actor, ns, action="query", purpose=purpose)
+                if not decision:
+                    raise PermissionDeniedError(decision.reason)
+
+        q = db.query(MemoryRecord).join(Namespace).join(Agent, MemoryRecord.owner_id == Agent.id)
 
         if query.query_text:
             q = q.filter(MemoryRecord.content_text.ilike(f"%{query.query_text}%"))
@@ -158,7 +154,6 @@ class MemoryService:
         if query.lifecycle_states:
             q = q.filter(MemoryRecord.lifecycle_state.in_(query.lifecycle_states))
         else:
-            # Default exclude deleted
             q = q.filter(MemoryRecord.lifecycle_state != LifecycleState.DELETED)
 
         if query.min_confidence:
@@ -169,16 +164,14 @@ class MemoryService:
 
         results = q.order_by(MemoryRecord.created_at.desc()).offset(query.offset).limit(query.limit).all()
 
-        # Audit query
-        if actor_name:
-            actor = IdentityService.get_agent_by_name(db, actor_name)
-            if actor:
-                PolicyEngine.log_audit(
-                    db,
-                    action="query",
-                    actor_id=actor.id,
-                    details={"matched_count": len(results), "query_text": query.query_text}
-                )
+        # Filter out records where actor lacks read access (for cross-namespace queries)
+        if actor:
+            accessible_results = []
+            for r in results:
+                dec = PolicyEngine.evaluate_access(db, actor, r.namespace, action="read", purpose=purpose, memory_id=r.id, log_audit=False)
+                if dec.allowed:
+                    accessible_results.append(r)
+            return accessible_results
 
         return results
 
@@ -188,13 +181,15 @@ class MemoryService:
         memory_id: str,
         target_state: LifecycleState,
         actor_name: Optional[str] = None,
-        superseded_by_id: Optional[str] = None
+        superseded_by_id: Optional[str] = None,
+        purpose: Optional[str] = None
     ) -> MemoryRecord:
         record = MemoryService.get_memory_by_id(db, memory_id)
 
         actor = IdentityService.get_agent_by_name(db, actor_name) if actor_name else None
         if actor:
-            decision = PolicyEngine.evaluate_access(db, actor, record.namespace, action="verify" if target_state == LifecycleState.VERIFIED else "supersede")
+            action_name = "verify" if target_state == LifecycleState.VERIFIED else "supersede"
+            decision = PolicyEngine.evaluate_access(db, actor, record.namespace, action=action_name, purpose=purpose, memory_id=record.id)
             if not decision:
                 raise PermissionDeniedError(decision.reason)
 
@@ -202,11 +197,16 @@ class MemoryService:
         db.commit()
         db.refresh(record)
 
-        PolicyEngine.log_audit(
+        # Audit Log for state transition
+        PolicyEngine.log_audit_decision(
             db,
-            action=f"transition_{target_state.value}",
+            PolicyDecision(
+                allowed=True,
+                reason=f"Transitioned lifecycle state to '{target_state.value}'.",
+                rule_matched="MEMORY_TRANSITION",
+                dimensions={"target_state": target_state.value, "superseded_by_id": superseded_by_id}
+            ),
             actor_id=actor.id if actor else None,
-            memory_id=record.id,
-            details={"previous_state": record.lifecycle_state.value, "target_state": target_state.value}
+            memory_id=record.id
         )
         return record

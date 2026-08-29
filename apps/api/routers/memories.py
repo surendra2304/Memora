@@ -2,7 +2,7 @@
 Memory Ingestion, Query, Lifecycle, and Retrieval Endpoints
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from storage.relational.session import get_db
 from storage.relational.models import MemoryType, LifecycleState
@@ -14,11 +14,10 @@ from core.memory.service import (
 from core.memory.schemas import (
     MemoryRecordCreate,
     MemoryRecordRead,
-    MemoryRecordUpdate,
     MemoryQuery,
     MemoryTransitionRequest
 )
-from apps.api.dependencies import get_actor_header
+from apps.api.dependencies import get_actor_header, get_purpose_header
 
 router = APIRouter(prefix="/memories", tags=["Memories"])
 
@@ -26,10 +25,11 @@ router = APIRouter(prefix="/memories", tags=["Memories"])
 def ingest_memory(
     memory_in: MemoryRecordCreate,
     actor_name: str = Depends(get_actor_header),
+    purpose: Optional[str] = Depends(get_purpose_header),
     db: Session = Depends(get_db)
 ):
     try:
-        record = MemoryService.create_memory(db, memory_in, actor_name=actor_name)
+        record = MemoryService.create_memory(db, memory_in, actor_name=actor_name, purpose=purpose)
         return record
     except PermissionDeniedError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
@@ -40,10 +40,11 @@ def ingest_memory(
 def get_memory(
     memory_id: str,
     actor_name: str = Depends(get_actor_header),
+    purpose: Optional[str] = Depends(get_purpose_header),
     db: Session = Depends(get_db)
 ):
     try:
-        return MemoryService.get_memory_by_id(db, memory_id=memory_id, actor_name=actor_name)
+        return MemoryService.get_memory_by_id(db, memory_id=memory_id, actor_name=actor_name, purpose=purpose)
     except MemoryNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except PermissionDeniedError as e:
@@ -53,15 +54,20 @@ def get_memory(
 def query_memories(
     query: MemoryQuery,
     actor_name: str = Depends(get_actor_header),
+    purpose: Optional[str] = Depends(get_purpose_header),
     db: Session = Depends(get_db)
 ):
-    return MemoryService.query_memories(db, query=query, actor_name=actor_name)
+    try:
+        return MemoryService.query_memories(db, query=query, actor_name=actor_name, purpose=purpose)
+    except PermissionDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
 
 @router.post("/{memory_id}/transition", response_model=MemoryRecordRead)
 def transition_memory_lifecycle(
     memory_id: str,
     req: MemoryTransitionRequest,
     actor_name: str = Depends(get_actor_header),
+    purpose: Optional[str] = Depends(get_purpose_header),
     db: Session = Depends(get_db)
 ):
     try:
@@ -70,7 +76,8 @@ def transition_memory_lifecycle(
             memory_id=memory_id,
             target_state=req.target_state,
             actor_name=actor_name,
-            superseded_by_id=req.superseded_by_id
+            superseded_by_id=req.superseded_by_id,
+            purpose=req.purpose or purpose
         )
     except MemoryNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
