@@ -1,4 +1,4 @@
-﻿"""
+"""
 Context Builder Service for Memora
 Generates curated, token-budgeted, policy-filtered Context Bundles for AI Agents.
 """
@@ -109,9 +109,9 @@ class ContextBuilderService:
             )
 
         # -------------------------------------------------------------
-        # 3. MULTI-FACTOR RERANKING
+        # 3. MULTI-FACTOR NEURAL CROSS-ENCODER RERANKING
         # -------------------------------------------------------------
-        reranked_items = ContextReranker.rerank(search_results)
+        reranked_items = ContextReranker.rerank(search_results, query=task_query)
 
         # -------------------------------------------------------------
         # 4. FAIL-CLOSED POLICY FILTER
