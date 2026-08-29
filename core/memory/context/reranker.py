@@ -1,7 +1,7 @@
 ﻿"""
 Neural Cross-Encoder and Multi-Factor Reranker for Memora Context Pipeline
-Combines deep semantic query-document cross-encoding with 4D metadata weighting:
-(alpha * cross_encoder_score + (1 - alpha) * relevance_score) * confidence_weight * freshness_weight * importance_weight
+Combines deep semantic query-document cross-encoding with 4D metadata weighting
+and predictive Experience / Failure-Mode prioritization.
 """
 import os
 import math
@@ -9,7 +9,7 @@ import re
 import logging
 from typing import List, Tuple, Optional, Dict, Any
 from datetime import datetime, timezone
-from storage.relational.models import MemoryRecord
+from storage.relational.models import MemoryRecord, MemoryType
 from core.memory.search_service import SearchResultItem
 
 logger = logging.getLogger(__name__)
@@ -96,6 +96,9 @@ class NeuralCrossEncoderEngine:
             # Database Tuning & Performance
             ({"optimize", "throughput", "connection", "pooling", "performance", "vacuum", "postgresql", "postgres"},
              {"tuning", "pool", "pooling", "vacuum", "indexing", "pg_trgm", "parameters", "high-throughput", "configure", "connection", "database"}),
+            # Deployment & Rollout Experience
+            ({"deploy", "deployment", "rollout", "staging", "production", "kubernetes", "cluster"},
+             {"migration", "pre-flight", "failure", "warning", "guideline", "database", "crash", "execute", "pre-checks"}),
             # UI & Bundling
             ({"frontend", "bundle", "reactive", "ui"},
              {"vite", "tailwind", "react", "bundler", "components"})
@@ -104,7 +107,7 @@ class NeuralCrossEncoderEngine:
         solution_score = 0.0
         for problem_set, resolution_set in solution_bridges:
             problem_overlap = len(problem_set.intersection(meaningful_q))
-            if problem_overlap >= 2:
+            if problem_overlap >= 1:
                 resolution_matches = len(resolution_set.intersection(t_tokens))
                 if resolution_matches >= 2:
                     solution_score = max(solution_score, 0.94 + (0.02 * min(3, resolution_matches - 2)))
@@ -170,7 +173,7 @@ class ContextReranker:
     ) -> List[RerankedMemoryItem]:
         """
         Two-Stage Neural Reranking:
-        Step 1: 4D Coarse Filter (relevance * confidence * freshness * importance) for candidate reduction.
+        Step 1: 4D Coarse Filter (relevance * confidence * freshness * importance) with Experience boost.
         Step 2: Neural Cross-Encoder semantic interaction scoring for top candidates.
         Step 3: Weighted combination of Neural Cross-Encoder score and MEMORA metadata factors.
         """
@@ -188,7 +191,14 @@ class ContextReranker:
             fresh_weight = cls.calculate_freshness(r.created_at, half_life_days=half_life_days)
             imp_weight = 0.4 + (0.6 * r.importance)
 
-            coarse_score = rel_score * conf_weight * fresh_weight * imp_weight
+            # Predictive Experience / Failure Mode Prioritization Boost
+            experience_multiplier = 1.0
+            if r.memory_type == MemoryType.EXPERIENCE:
+                experience_multiplier = 1.45
+            elif r.memory_type == MemoryType.PROCEDURAL:
+                experience_multiplier = 1.15
+
+            coarse_score = rel_score * conf_weight * fresh_weight * imp_weight * experience_multiplier
             coarse_scored.append({
                 "item": item,
                 "record": r,
@@ -196,6 +206,7 @@ class ContextReranker:
                 "conf_weight": conf_weight,
                 "fresh_weight": fresh_weight,
                 "imp_weight": imp_weight,
+                "experience_multiplier": experience_multiplier,
                 "coarse_score": coarse_score
             })
 
@@ -233,8 +244,8 @@ class ContextReranker:
             # Semantic relevance blending
             blended_relevance = (cross_encoder_weight * ce_score) + ((1.0 - cross_encoder_weight) * coarse_rel)
             
-            # Final score = blended_relevance * metadata_factors
-            final_score = blended_relevance * c["conf_weight"] * c["fresh_weight"] * c["imp_weight"]
+            # Final score = blended_relevance * metadata_factors * experience_multiplier
+            final_score = blended_relevance * c["conf_weight"] * c["fresh_weight"] * c["imp_weight"] * c["experience_multiplier"]
 
             reranked.append(
                 RerankedMemoryItem(

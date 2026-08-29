@@ -1,4 +1,4 @@
-﻿"""
+"""
 MEMORA v1 Memory Endpoints
 Provides POST /v1/memories, GET /v1/memories/search (Hybrid Search),
 POST /v1/memories/{id}/verify, POST /v1/memories/{id}/share,
@@ -26,6 +26,7 @@ from core.memory.graph_service import GraphService
 from core.memory.search_service import SearchService, SearchResultItem
 from core.policy.engine import PolicyEngine, PolicyDecision
 from core.events.emitter import event_emitter
+from core.memory.experience_service import ExperienceLearnerService, LearnExperienceRequest
 from apps.api.dependencies import get_actor_header, get_purpose_header
 
 router = APIRouter(prefix="/v1/memories", tags=["v1 Memories"])
@@ -146,6 +147,34 @@ def write_memory_event(
         )
     except PermissionDeniedError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+@router.post("/learn-experience", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
+def learn_experience_endpoint(
+    req: LearnExperienceRequest,
+    actor_name: str = Depends(get_actor_header),
+    db: Session = Depends(get_db)
+):
+    calling_agent = req.agent_id or actor_name
+    try:
+        record = ExperienceLearnerService.learn_experience(
+            db=db,
+            actor_name=calling_agent,
+            outcomes=req.outcomes,
+            namespace_path=req.namespace_path
+        )
+        return {
+            "id": record.id,
+            "namespace_id": record.namespace_id,
+            "owner_id": record.owner_id,
+            "memory_type": record.memory_type.value,
+            "content_text": record.content_text,
+            "confidence": record.confidence,
+            "importance": record.importance,
+            "lifecycle_state": record.lifecycle_state.value,
+            "provenance": record.provenance or {}
+        }
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 

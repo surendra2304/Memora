@@ -1,18 +1,20 @@
 ﻿"""
 Context Builder Service for Memora
-Generates curated, token-budgeted, policy-filtered Context Bundles for AI Agents.
+Generates curated, token-budgeted, policy-filtered Context Bundles for AI Agents
+with Predictive Experience and Failure-Mode Pre-Fetching.
 """
 import time
 import uuid
+import re
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
-from storage.relational.models import MemoryRelationship, Namespace, Agent
+from storage.relational.models import MemoryRelationship, Namespace, Agent, MemoryRecord, MemoryType, LifecycleState
 from core.identity.service import IdentityService
 from core.policy.engine import PolicyEngine
-from core.memory.search_service import SearchService
+from core.memory.search_service import SearchService, SearchResultItem
 from core.memory.context.reranker import ContextReranker
 from core.memory.context.budgeter import ContextBudgeter, BudgetedMemoryItem
 from core.metrics.collector import metrics_collector
@@ -111,7 +113,38 @@ class ContextBuilderService:
             )
 
         # -------------------------------------------------------------
-        # 3. MULTI-FACTOR NEURAL CROSS-ENCODER RERANKING
+        # 2b. PREDICTIVE CONTEXT PRE-FETCHING (Experience & Procedural Stores)
+        # -------------------------------------------------------------
+        existing_result_ids = {item.record.id for item in search_results}
+        exp_candidates = db.query(MemoryRecord).filter(
+            MemoryRecord.memory_type.in_([MemoryType.EXPERIENCE, MemoryType.PROCEDURAL]),
+            MemoryRecord.lifecycle_state.in_([LifecycleState.ACTIVE, LifecycleState.VERIFIED])
+        ).all()
+
+        q_tokens = set(re.split(r"[\s,.\-_/\\:;!?\"'()\[\]{}]+", task_query.lower()))
+        stopwords = {"the", "a", "an", "is", "are", "and", "or", "in", "on", "at", "to", "for", "of", "with", "by", "how", "do", "we"}
+        meaningful_q = q_tokens - stopwords
+
+        for exp in exp_candidates:
+            if exp.id in existing_result_ids:
+                continue
+
+            exp_tokens = set(re.split(r"[\s,.\-_/\\:;!?\"'()\[\]{}]+", exp.content_text.lower()))
+            overlap = meaningful_q.intersection(exp_tokens)
+
+            # If task keywords overlap with experience or high-confidence operational guideline
+            if overlap or exp.importance >= 0.95:
+                search_results.append(
+                    SearchResultItem(
+                        record=exp,
+                        final_score=0.90,
+                        match_reasons=["predictive_experience_prefetch"]
+                    )
+                )
+                existing_result_ids.add(exp.id)
+
+        # -------------------------------------------------------------
+        # 3. MULTI-FACTOR NEURAL CROSS-ENCODER RERANKING (WITH EXPERIENCE BOOST)
         # -------------------------------------------------------------
         reranked_items = ContextReranker.rerank(search_results, query=task_query)
 
