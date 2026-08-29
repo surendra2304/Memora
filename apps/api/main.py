@@ -10,6 +10,7 @@ from fastapi.responses import RedirectResponse
 from core.config import settings
 from storage.relational.session import init_db
 from storage.vector.qdrant_adapter import vector_adapter
+from core.events.emitter import event_emitter
 from apps.api.routers import (
     health_router,
     agents_router,
@@ -18,12 +19,16 @@ from apps.api.routers import (
     audit_router,
     v1_memories_router,
     v1_context_router,
+    v1_metrics_router,
+    v1_namespaces_router,
 )
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Initialize database tables, vector connection, and event bus
     init_db()
     vector_adapter.connect()
+    event_emitter.connect()
     yield
 
 app = FastAPI(
@@ -49,6 +54,8 @@ app.include_router(namespaces_router)
 app.include_router(memories_router)
 app.include_router(v1_memories_router)
 app.include_router(v1_context_router)
+app.include_router(v1_metrics_router)
+app.include_router(v1_namespaces_router)
 app.include_router(audit_router)
 
 @app.get("/", include_in_schema=False)

@@ -4,7 +4,7 @@ Manages registered ecosystem agents, parent-subagent delegation with bounded con
 and dynamic URI namespace resolution.
 """
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
 from storage.relational.models import Agent, Namespace, NamespaceType, AccessGrant
 
@@ -54,11 +54,6 @@ class IdentityService:
         bounded_scope: str,
         description: Optional[str] = None
     ) -> Agent:
-        """
-        Creates a sub-agent with bounded inherited context.
-        The sub-agent can only access its specific bounded_scope (e.g. 'memora://forge/projects/app-17'),
-        never the parent's full private namespace.
-        """
         parent = IdentityService.get_agent_by_name(db, parent_agent_name)
         if not parent:
             parent = IdentityService.register_agent(db, parent_agent_name)
@@ -66,7 +61,6 @@ class IdentityService:
         if not bounded_scope.startswith("memora://"):
             bounded_scope = f"memora://{bounded_scope.lstrip('/')}"
 
-        # Subagent name scoping
         formatted_subname = f"{parent.name}:{subagent_name.lower()}"
         subagent = IdentityService.register_agent(
             db,
@@ -77,7 +71,6 @@ class IdentityService:
             bounded_scope=bounded_scope
         )
 
-        # Grant access to the bounded namespace
         target_ns = IdentityService.resolve_namespace(db, bounded_scope, default_type=NamespaceType.PROJECT_PRIVATE)
         IdentityService.grant_access(
             db,
@@ -131,7 +124,6 @@ class IdentityService:
         default_type: NamespaceType = NamespaceType.PROJECT_PRIVATE,
         owner_agent_id: Optional[str] = None
     ) -> Namespace:
-        """Resolves a namespace URI path, creating it if it does not exist."""
         if not path.startswith("memora://"):
             path = f"memora://{path.lstrip('/')}"
 
@@ -139,7 +131,6 @@ class IdentityService:
         if ns:
             return ns
 
-        # Auto-infer namespace type from path pattern if not explicitly set
         ns_type = default_type
         if "/private" in path:
             ns_type = NamespaceType.AGENT_PRIVATE
@@ -175,14 +166,35 @@ class IdentityService:
     @staticmethod
     def grant_access(
         db: Session,
-        agent_id: str,
-        namespace_id: str,
+        agent_id: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        namespace_id: Optional[str] = None,
         actions: Optional[List[str]] = None,
         purpose: Optional[str] = None,
-        expires_at: Optional[datetime] = None
+        expires_at: Optional[datetime] = None,
+        ttl_hours: Optional[int] = None
     ) -> AccessGrant:
+        if not agent_id and agent_name:
+            agent = IdentityService.get_agent_by_name(db, agent_name)
+            if not agent:
+                agent = IdentityService.register_agent(db, agent_name)
+            resolved_agent_id = agent.id
+        elif agent_id:
+            # Check if agent_id is actually an agent name
+            agent = IdentityService.get_agent_by_id(db, agent_id)
+            if not agent:
+                agent = IdentityService.get_agent_by_name(db, agent_id)
+            if not agent:
+                agent = IdentityService.register_agent(db, agent_id)
+            resolved_agent_id = agent.id
+        else:
+            raise ValueError("Either agent_id or agent_name must be provided.")
+
+        if ttl_hours and not expires_at:
+            expires_at = datetime.now(timezone.utc) + timedelta(hours=ttl_hours)
+
         grant = db.query(AccessGrant).filter(
-            AccessGrant.agent_id == agent_id,
+            AccessGrant.agent_id == resolved_agent_id,
             AccessGrant.namespace_id == namespace_id
         ).first()
 
@@ -193,7 +205,7 @@ class IdentityService:
             grant.expires_at = expires_at
         else:
             grant = AccessGrant(
-                agent_id=agent_id,
+                agent_id=resolved_agent_id,
                 namespace_id=namespace_id,
                 actions=action_list,
                 purpose=purpose,

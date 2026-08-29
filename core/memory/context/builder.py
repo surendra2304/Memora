@@ -2,8 +2,9 @@
 Context Builder Service for Memora
 Generates curated, token-budgeted, policy-filtered Context Bundles for AI Agents.
 """
-from typing import Dict, Any, List, Optional
+import time
 import uuid
+from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
@@ -14,6 +15,8 @@ from core.policy.engine import PolicyEngine
 from core.memory.search_service import SearchService
 from core.memory.context.reranker import ContextReranker
 from core.memory.context.budgeter import ContextBudgeter, BudgetedMemoryItem
+from core.metrics.collector import metrics_collector
+from core.events.emitter import event_emitter
 
 class ContextBundle:
     def __init__(
@@ -26,7 +29,8 @@ class ContextBundle:
         summary: str,
         memories: List[Dict[str, Any]],
         graph_edges: List[Dict[str, Any]],
-        created_at: str
+        created_at: str,
+        is_degraded: bool = False
     ):
         self.bundle_id = bundle_id
         self.query = query
@@ -37,6 +41,7 @@ class ContextBundle:
         self.memories = memories
         self.graph_edges = graph_edges
         self.created_at = created_at
+        self.is_degraded = is_degraded
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -46,6 +51,7 @@ class ContextBundle:
             "total_tokens_estimated": self.total_tokens_estimated,
             "token_budget_limit": self.token_budget_limit,
             "summary": self.summary,
+            "is_degraded": self.is_degraded,
             "memories_count": len(self.memories),
             "memories": self.memories,
             "graph_edges_count": len(self.graph_edges),
@@ -65,6 +71,9 @@ class ContextBuilderService:
         purpose: Optional[str] = None,
         max_candidates: int = 30
     ) -> ContextBundle:
+        start_time = time.time()
+        is_degraded = False
+
         # -------------------------------------------------------------
         # 1. RESOLVE IDENTITY & SCOPE
         # -------------------------------------------------------------
@@ -75,15 +84,29 @@ class ContextBuilderService:
             actor = IdentityService.register_agent(db, agent_id_or_name)
 
         # -------------------------------------------------------------
-        # 2. HYBRID RETRIEVAL
+        # 2. HYBRID RETRIEVAL WITH GRACEFUL DEGRADATION
         # -------------------------------------------------------------
-        search_results = SearchService.hybrid_search(
-            db=db,
-            query_text=task_query,
-            actor_name=actor.name,
-            namespace_path=namespace_path,
-            limit=max_candidates
-        )
+        try:
+            search_results = SearchService.hybrid_search(
+                db=db,
+                query_text=task_query,
+                actor_name=actor.name,
+                namespace_path=namespace_path,
+                limit=max_candidates
+            )
+        except Exception as e:
+            # Fallback to pure database keyword query on degradation
+            is_degraded = True
+            search_results = SearchService.hybrid_search(
+                db=db,
+                query_text=task_query,
+                actor_name=actor.name,
+                namespace_path=namespace_path,
+                limit=max_candidates,
+                vector_weight=0.0,
+                keyword_weight=0.85,
+                graph_weight=0.15
+            )
 
         # -------------------------------------------------------------
         # 3. MULTI-FACTOR RERANKING
@@ -135,19 +158,33 @@ class ContextBuilderService:
                     "weight": r.weight
                 })
 
-        # Synthesize summary overview
         summary_lines = [
             f"Curated {len(budgeted_memories)} contextual memories for query '{task_query}'.",
             f"Agent: {actor.name} (Scope: {actor.bounded_scope or 'global/unbounded'}).",
             f"Tokens utilized: {total_tokens} / {token_budget} max budget."
         ]
+        if is_degraded:
+            summary_lines.append("Warning: Executed under degraded vector store fallback.")
         if graph_edges:
             summary_lines.append(f"Discovered {len(graph_edges)} relational dependency edges between memories.")
 
         summary_text = " ".join(summary_lines)
+        bundle_id = str(uuid.uuid4())
+
+        elapsed_ms = (time.time() - start_time) * 1000
+        metrics_collector.record_context_generation(tokens_used=total_tokens, token_budget=token_budget, latency_ms=elapsed_ms)
+
+        event_emitter.publish("context.generated", {
+            "bundle_id": bundle_id,
+            "query": task_query,
+            "agent": actor.name,
+            "tokens": total_tokens,
+            "memories_count": len(budgeted_memories),
+            "is_degraded": is_degraded
+        })
 
         return ContextBundle(
-            bundle_id=str(uuid.uuid4()),
+            bundle_id=bundle_id,
             query=task_query,
             target_agent=actor.name,
             total_tokens_estimated=total_tokens,
@@ -155,5 +192,6 @@ class ContextBuilderService:
             summary=summary_text,
             memories=[m.to_dict() for m in budgeted_memories],
             graph_edges=graph_edges,
-            created_at=datetime.now(timezone.utc).isoformat()
+            created_at=datetime.now(timezone.utc).isoformat(),
+            is_degraded=is_degraded
         )

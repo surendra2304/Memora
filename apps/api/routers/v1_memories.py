@@ -1,6 +1,8 @@
 ﻿"""
 MEMORA v1 Memory Endpoints
-Provides POST /v1/memories, GET /v1/memories/search (Hybrid Multi-Modal Search), lifecycle management, and graph relationships.
+Provides POST /v1/memories, GET /v1/memories/search (Hybrid Search),
+POST /v1/memories/{id}/verify, POST /v1/memories/{id}/share,
+POST /v1/memories/{id}/supersede, DELETE /v1/memories/{id}, and relationships.
 """
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -8,14 +10,22 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from storage.relational.session import get_db
-from storage.relational.models import MemoryType, LifecycleState
+from storage.relational.models import (
+    MemoryRecord,
+    MemoryType,
+    LifecycleState,
+    Namespace,
+    Agent
+)
 from core.memory.schemas import MemoryRecordRead, MemoryQuery
 from core.memory.pipeline.write_service import MemoryWriteService
 from core.memory.pipeline.secret_scanner import SecretDetectedSecurityViolation
 from core.memory.service import MemoryService, MemoryNotFoundError, PermissionDeniedError
+from core.identity.service import IdentityService
 from core.memory.graph_service import GraphService
 from core.memory.search_service import SearchService, SearchResultItem
 from core.policy.engine import PolicyEngine, PolicyDecision
+from core.events.emitter import event_emitter
 from apps.api.dependencies import get_actor_header, get_purpose_header
 
 router = APIRouter(prefix="/v1/memories", tags=["v1 Memories"])
@@ -47,6 +57,12 @@ class MemoryWriteResponse(BaseModel):
 class MemoryVerifyRequest(BaseModel):
     notes: Optional[str] = None
 
+class MemoryShareRequest(BaseModel):
+    target_agent_name: str = Field(..., min_length=2, description="Handle of agent receiving access")
+    actions: List[str] = Field(default_factory=lambda: ["read"], description="Permitted action list")
+    purpose: Optional[str] = Field(default=None, description="Operational reason for sharing")
+    ttl_hours: Optional[int] = Field(default=None, ge=1, le=8760, description="Grant TTL expiration in hours")
+
 class MemorySupersedeRequest(BaseModel):
     new_memory_id: str = Field(..., description="ID of the new canonical memory record that supersedes this record")
     reason: Optional[str] = None
@@ -58,7 +74,7 @@ class MemoryDecayRequest(BaseModel):
 
 class MemoryRelationshipCreate(BaseModel):
     target_memory_id: str = Field(..., description="Destination memory ID")
-    relationship_type: str = Field(default="relates_to", description="Graph edge type (e.g. derived_from, depends_on, contradicts, supersedes)")
+    relationship_type: str = Field(default="relates_to", description="Graph edge type")
     weight: float = Field(default=1.0, ge=0.0, le=1.0)
 
 class HybridSearchResultResponse(BaseModel):
@@ -135,8 +151,8 @@ def write_memory_event(
 
 @router.get("/search", response_model=List[HybridSearchResultResponse])
 def search_memories_get(
-    q: str = Query(..., min_length=1, description="Query string for hybrid semantic and keyword search"),
-    namespace_path: Optional[str] = Query(None, description="Optional namespace scope filter"),
+    q: str = Query(..., min_length=1, description="Query string for hybrid search"),
+    namespace_path: Optional[str] = Query(None, description="Optional namespace filter"),
     limit: int = Query(10, ge=1, le=100),
     min_score: float = Query(0.0, ge=0.0, le=1.0),
     include_superseded: bool = Query(False),
@@ -195,16 +211,69 @@ def verify_memory_endpoint(
     db: Session = Depends(get_db)
 ):
     try:
-        return MemoryService.verify_memory(
+        record = MemoryService.verify_memory(
             db=db,
             memory_id=memory_id,
             actor_name=actor_name,
             notes=req.notes if req else None
         )
+        event_emitter.publish("memory.updated", {"memory_id": memory_id, "action": "verify", "actor": actor_name})
+        return record
     except MemoryNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except PermissionDeniedError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+
+@router.post("/{memory_id}/share")
+def share_memory_endpoint(
+    memory_id: str,
+    req: MemoryShareRequest,
+    actor_name: str = Depends(get_actor_header),
+    db: Session = Depends(get_db)
+):
+    try:
+        record = db.query(MemoryRecord).filter(MemoryRecord.id == memory_id).first()
+        if not record:
+            raise MemoryNotFoundError(f"Memory with ID '{memory_id}' not found.")
+
+        caller = IdentityService.get_agent_by_name(db, actor_name)
+        if not caller:
+            caller = IdentityService.register_agent(db, actor_name)
+
+        namespace = record.namespace or db.query(Namespace).filter(Namespace.id == record.namespace_id).first()
+
+        grant = IdentityService.grant_access(
+            db=db,
+            agent_name=req.target_agent_name,
+            namespace_id=record.namespace_id,
+            actions=req.actions,
+            purpose=req.purpose,
+            ttl_hours=req.ttl_hours
+        )
+
+        event_emitter.publish("memory.shared", {
+            "memory_id": memory_id,
+            "shared_by": actor_name,
+            "shared_with": req.target_agent_name,
+            "namespace_path": namespace.path if namespace else None,
+            "actions": req.actions
+        })
+
+        return {
+            "status": "shared",
+            "memory_id": memory_id,
+            "grant_id": grant.id,
+            "shared_with": req.target_agent_name,
+            "actions": req.actions,
+            "purpose": req.purpose,
+            "expires_at": grant.expires_at.isoformat() if grant.expires_at else None
+        }
+    except MemoryNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except PermissionDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 @router.post("/{memory_id}/supersede")
 def supersede_memory_endpoint(
@@ -214,13 +283,20 @@ def supersede_memory_endpoint(
     db: Session = Depends(get_db)
 ):
     try:
-        return MemoryService.supersede_memory(
+        res = MemoryService.supersede_memory(
             db=db,
             old_memory_id=memory_id,
             new_memory_id=req.new_memory_id,
             actor_name=actor_name,
             reason=req.reason
         )
+        event_emitter.publish("memory.superseded", {
+            "superseded_id": res["superseded_id"],
+            "winner_id": res["winner_id"],
+            "actor": actor_name,
+            "reason": res["reason"]
+        })
+        return res
     except MemoryNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except PermissionDeniedError as e:
@@ -269,12 +345,14 @@ def delete_memory_endpoint(
     db: Session = Depends(get_db)
 ):
     try:
-        return MemoryService.delete_memory(
+        res = MemoryService.delete_memory(
             db=db,
             memory_id=memory_id,
             actor_name=actor_name,
             hard_delete=hard
         )
+        event_emitter.publish("memory.updated", {"memory_id": memory_id, "action": "delete", "hard": hard})
+        return res
     except MemoryNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except PermissionDeniedError as e:

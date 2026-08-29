@@ -1,29 +1,28 @@
 ﻿"""
-Multi-Dimensional Policy Enforcement Engine for Memora
-Evaluates access across 5 dimensions:
-- Who: Actor identity, role, parentage, subagent scope bounds
-- What: Action requested (read, write, query, verify, supersede, delete), memory type
-- Where: Namespace URI path, isolation level (private, project, team, global, public)
-- Why: Declared task intent / authorization purpose
-- How long: Time-bounded expiration & validity window
-
-Enforces core invariant rules:
-- Rule 1: Private by default, shared by explicit promotion.
-- Rule 2: Project-shared namespaces require explicit project membership / grant.
-- Rule 3: Sub-agents have strictly bounded context; blocked from parent private history.
-- Rule 4: Every policy check logs an immutable entry to AuditLog.
+Policy Engine for Memora
+Evaluates access control across 5 operational dimensions:
+Who, What, Where, Why, How long.
 """
-from typing import Optional, Dict, Any, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-from storage.relational.models import Agent, Namespace, NamespaceType, AccessGrant, AuditLog
+
+from storage.relational.models import (
+    Agent,
+    Namespace,
+    NamespaceType,
+    AccessGrant,
+    AuditLog
+)
+from core.metrics.collector import metrics_collector
+from core.events.emitter import event_emitter
 
 class PolicyDecision:
     def __init__(
         self,
         allowed: bool,
-        reason: str = "",
-        rule_matched: str = "",
+        reason: str,
+        rule_matched: str,
         dimensions: Optional[Dict[str, Any]] = None
     ):
         self.allowed = allowed
@@ -49,70 +48,59 @@ class PolicyEngine:
         db: Session,
         actor: Agent,
         namespace: Namespace,
-        action: str,  # 'read', 'write', 'query', 'verify', 'supersede', 'delete'
+        action: str = "read",
         purpose: Optional[str] = None,
         memory_id: Optional[str] = None,
         log_audit: bool = True
     ) -> PolicyDecision:
-        action_normalized = action.lower().strip()
         dims = {
-            "who": {"actor_id": actor.id, "actor_name": actor.name, "role": actor.role, "parent_id": actor.parent_agent_id},
-            "what": {"action": action_normalized, "memory_id": memory_id},
-            "where": {"namespace_id": namespace.id, "namespace_path": namespace.path, "namespace_type": namespace.type.value},
+            "who": {"id": actor.id, "name": actor.name, "role": actor.role, "bounded_scope": actor.bounded_scope},
+            "what": {"action": action, "memory_id": memory_id},
+            "where": {"namespace_id": namespace.id, "path": namespace.path, "type": namespace.type.value},
             "why": {"purpose": purpose or "unspecified"},
-            "how_long": {"evaluated_at": datetime.now(timezone.utc).isoformat()}
+            "how_long": {"timestamp": datetime.now(timezone.utc).isoformat()}
         }
 
         # -------------------------------------------------------------
-        # DIMENSION 1: SUB-AGENT BOUNDED CONTEXT ENFORCEMENT
+        # SUPERVISOR GLOBAL BYPASS (FRIDAY / SUPERVISOR ROLE)
         # -------------------------------------------------------------
-        if actor.bounded_scope:
-            # Subagent cannot access parent or other agent's private namespace
-            if namespace.type == NamespaceType.AGENT_PRIVATE:
-                decision = PolicyDecision(
-                    allowed=False,
-                    reason=f"Sub-agent '{actor.name}' is bounded to scope '{actor.bounded_scope}' and strictly forbidden from accessing private namespace '{namespace.path}'.",
-                    rule_matched="RULE_3_SUBAGENT_BOUNDED_CONTEXT_ISOLATION",
-                    dimensions=dims
-                )
-                if log_audit:
-                    cls.log_audit_decision(db, decision, actor.id, memory_id)
-                return decision
-
-            # Subagent must be accessing within its bounded scope path
-            if not (namespace.path == actor.bounded_scope or namespace.path.startswith(f"{actor.bounded_scope}/")):
-                # Check if explicitly granted shared/global access
-                grant = cls._get_active_grant(db, actor.id, namespace.id, action_normalized)
-                if not grant and namespace.type not in [NamespaceType.UNIVERSE_GLOBAL, NamespaceType.PUBLIC]:
-                    decision = PolicyDecision(
-                        allowed=False,
-                        reason=f"Sub-agent '{actor.name}' attempted access outside bounded scope '{actor.bounded_scope}' to '{namespace.path}'.",
-                        rule_matched="RULE_3_SUBAGENT_SCOPE_EXCEEDED",
-                        dimensions=dims
-                    )
-                    if log_audit:
-                        cls.log_audit_decision(db, decision, actor.id, memory_id)
-                    return decision
-
-        # -------------------------------------------------------------
-        # SUPERVISOR BYPASS (FRIDAY / root / surendra)
-        # -------------------------------------------------------------
-        if actor.name in ["friday", "root", "admin", "surendra"] and not actor.bounded_scope:
+        if actor.name.lower() in ["friday", "supervisor", "admin"] or actor.role in ["supervisor", "admin"]:
             decision = PolicyDecision(
                 allowed=True,
-                reason="Master supervisor authorization granted.",
-                rule_matched="RULE_0_SUPERVISOR_FULL_ACCESS",
+                reason=f"Agent '{actor.name}' is an ecosystem supervisor with global oversight permissions.",
+                rule_matched="RULE_0_SUPERVISOR_GLOBAL_ACCESS",
                 dimensions=dims
             )
-            if log_audit:
-                cls.log_audit_decision(db, decision, actor.id, memory_id)
+            cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
             return decision
 
         # -------------------------------------------------------------
-        # DIMENSION 2: NAMESPACE ISOLATION RULES
+        # DIMENSION 1: SUB-AGENT BOUNDED CONTEXT ISOLATION
         # -------------------------------------------------------------
+        if actor.bounded_scope:
+            if namespace.type == NamespaceType.AGENT_PRIVATE:
+                decision = PolicyDecision(
+                    allowed=False,
+                    reason=f"Sub-agent '{actor.name}' is bounded to '{actor.bounded_scope}' and is strictly forbidden from accessing private namespace '{namespace.path}'.",
+                    rule_matched="RULE_3_SUBAGENT_BOUNDED_CONTEXT_ISOLATION",
+                    dimensions=dims
+                )
+                cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
+                return decision
 
-        # RULE 1: AGENT-PRIVATE NAMESPACES ("Private by default, shared by explicit promotion")
+            if not namespace.path.startswith(actor.bounded_scope):
+                decision = PolicyDecision(
+                    allowed=False,
+                    reason=f"Sub-agent '{actor.name}' is restricted to scope '{actor.bounded_scope}'. Target '{namespace.path}' is outside boundary.",
+                    rule_matched="RULE_3_SUBAGENT_SCOPE_EXCEEDED",
+                    dimensions=dims
+                )
+                cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
+                return decision
+
+        # -------------------------------------------------------------
+        # DIMENSION 2: RULE 1 - "PRIVATE BY DEFAULT"
+        # -------------------------------------------------------------
         if namespace.type == NamespaceType.AGENT_PRIVATE:
             if namespace.agent_id == actor.id:
                 decision = PolicyDecision(
@@ -121,129 +109,101 @@ class PolicyEngine:
                     rule_matched="RULE_1_OWNER_PRIVATE_ACCESS",
                     dimensions=dims
                 )
-                if log_audit:
-                    cls.log_audit_decision(db, decision, actor.id, memory_id)
+                cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
                 return decision
             else:
-                # Private namespaces are strictly inaccessible to other agents
                 decision = PolicyDecision(
                     allowed=False,
-                    reason=f"Access denied: Namespace '{namespace.path}' is private to another agent. Private namespaces are isolated by default.",
+                    reason=f"Private namespace '{namespace.path}' is private to another agent and isolated. Agent '{actor.name}' cannot access it without promotion.",
                     rule_matched="RULE_1_PRIVATE_BY_DEFAULT_PROMOTION_REQUIRED",
                     dimensions=dims
                 )
-                if log_audit:
-                    cls.log_audit_decision(db, decision, actor.id, memory_id)
+                cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
                 return decision
 
-        # RULE 2: PROJECT-PRIVATE / SHARED NAMESPACES (Requires Explicit Grant / Membership)
-        if namespace.type in [NamespaceType.PROJECT_PRIVATE, NamespaceType.TEAM_SHARED]:
-            # Check owner
-            if namespace.agent_id == actor.id:
-                decision = PolicyDecision(
-                    allowed=True,
-                    reason=f"Agent '{actor.name}' created or owns project namespace '{namespace.path}'.",
-                    rule_matched="RULE_2_PROJECT_OWNER_ACCESS",
-                    dimensions=dims
-                )
-                if log_audit:
-                    cls.log_audit_decision(db, decision, actor.id, memory_id)
-                return decision
-
-            # Check explicit AccessGrant (Who + What + How long + Why)
-            grant = cls._get_active_grant(db, actor.id, namespace.id, action_normalized)
-            if grant:
-                decision = PolicyDecision(
-                    allowed=True,
-                    reason=f"Explicit access grant valid for action '{action_normalized}' on '{namespace.path}'. (Purpose: {grant.purpose or 'General'})",
-                    rule_matched="RULE_2_PROJECT_MEMBERSHIP_GRANT_ACTIVE",
-                    dimensions=dims
-                )
-                if log_audit:
-                    cls.log_audit_decision(db, decision, actor.id, memory_id)
-                return decision
-            else:
-                decision = PolicyDecision(
-                    allowed=False,
-                    reason=f"Access denied: Agent '{actor.name}' lacks active project membership or access grant for '{namespace.path}'.",
-                    rule_matched="RULE_2_PROJECT_MEMBERSHIP_REQUIRED",
-                    dimensions=dims
-                )
-                if log_audit:
-                    cls.log_audit_decision(db, decision, actor.id, memory_id)
-                return decision
-
-        # UNIVERSE-GLOBAL NAMESPACES
-        if namespace.type == NamespaceType.UNIVERSE_GLOBAL:
-            if action_normalized in ["read", "query", "write"]:
-                decision = PolicyDecision(
-                    allowed=True,
-                    reason="Universe-global namespace accessible to registered agents.",
-                    rule_matched="RULE_GLOBAL_REGISTERED_ACCESS",
-                    dimensions=dims
-                )
-            elif action_normalized in ["verify", "supersede", "delete"]:
-                decision = PolicyDecision(
-                    allowed=True,
-                    reason="Global modification allowed.",
-                    rule_matched="RULE_GLOBAL_MODIFICATION_PERMITTED",
-                    dimensions=dims
-                )
-            else:
-                decision = PolicyDecision(
-                    allowed=False,
-                    reason=f"Action '{action_normalized}' not permitted on universe-global namespace.",
-                    rule_matched="RULE_GLOBAL_ACTION_REJECTED",
-                    dimensions=dims
-                )
-            if log_audit:
-                cls.log_audit_decision(db, decision, actor.id, memory_id)
+        # -------------------------------------------------------------
+        # DIMENSION 3: UNIVERSE GLOBAL & PUBLIC NAMESPACES
+        # -------------------------------------------------------------
+        if namespace.type in [NamespaceType.UNIVERSE_GLOBAL, NamespaceType.PUBLIC]:
+            decision = PolicyDecision(
+                allowed=True,
+                reason=f"Namespace '{namespace.path}' is {namespace.type.value} and openly readable.",
+                rule_matched="PUBLIC_OR_GLOBAL_ACCESS",
+                dimensions=dims
+            )
+            cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
             return decision
 
-        # PUBLIC NAMESPACES
-        if namespace.type == NamespaceType.PUBLIC:
-            if action_normalized in ["read", "query"]:
-                decision = PolicyDecision(
-                    allowed=True,
-                    reason="Public namespace read permitted.",
-                    rule_matched="RULE_PUBLIC_READ_ALLOWED",
-                    dimensions=dims
-                )
-            else:
-                decision = PolicyDecision(
-                    allowed=False,
-                    reason="Public namespaces are strictly read-only.",
-                    rule_matched="RULE_PUBLIC_WRITE_REJECTED",
-                    dimensions=dims
-                )
-            if log_audit:
-                cls.log_audit_decision(db, decision, actor.id, memory_id)
+        # -------------------------------------------------------------
+        # DIMENSION 4: RULE 2 - PROJECT / TEAM SHARED MEMBERSHIP & GRANTS
+        # -------------------------------------------------------------
+        if namespace.agent_id == actor.id:
+            decision = PolicyDecision(
+                allowed=True,
+                reason=f"Agent '{actor.name}' is owner of namespace '{namespace.path}'.",
+                rule_matched="RULE_2_OWNER_SHARED_ACCESS",
+                dimensions=dims
+            )
+            cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
             return decision
 
-        # Fallback denial
+        grant = db.query(AccessGrant).filter(
+            AccessGrant.agent_id == actor.id,
+            AccessGrant.namespace_id == namespace.id
+        ).first()
+
+        if grant:
+            if grant.is_expired():
+                decision = PolicyDecision(
+                    allowed=False,
+                    reason=f"Access grant for agent '{actor.name}' on namespace '{namespace.path}' expired at {grant.expires_at}.",
+                    rule_matched="RULE_2_ACCESS_GRANT_EXPIRED",
+                    dimensions=dims
+                )
+                cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
+                return decision
+
+            if action not in grant.actions and "*" not in grant.actions:
+                decision = PolicyDecision(
+                    allowed=False,
+                    reason=f"Access grant does not permit action '{action}'. Permitted: {grant.actions}",
+                    rule_matched="RULE_2_ACTION_UNAUTHORIZED",
+                    dimensions=dims
+                )
+                cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
+                return decision
+
+            purpose_str = f" for purpose '{purpose}'" if purpose else ""
+            decision = PolicyDecision(
+                allowed=True,
+                reason=f"Agent '{actor.name}' has active membership grant for namespace '{namespace.path}'{purpose_str}.",
+                rule_matched="RULE_2_PROJECT_MEMBERSHIP_GRANT_ACTIVE",
+                dimensions=dims
+            )
+            cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
+            return decision
+
         decision = PolicyDecision(
             allowed=False,
-            reason=f"Access denied: No matching policy rule for namespace type '{namespace.type.value}'.",
-            rule_matched="RULE_DEFAULT_DENY",
+            reason=f"Shared namespace '{namespace.path}' requires explicit membership or access grant. None found for '{actor.name}'.",
+            rule_matched="RULE_2_PROJECT_MEMBERSHIP_REQUIRED",
             dimensions=dims
         )
-        if log_audit:
-            cls.log_audit_decision(db, decision, actor.id, memory_id)
+        cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
         return decision
 
     @classmethod
-    def _get_active_grant(cls, db: Session, agent_id: str, namespace_id: str, action: str) -> Optional[AccessGrant]:
-        grants = db.query(AccessGrant).filter(
-            AccessGrant.agent_id == agent_id,
-            AccessGrant.namespace_id == namespace_id
-        ).all()
-
-        for g in grants:
-            if not g.is_expired():
-                # Check action list
-                if action in g.actions or "*" in g.actions:
-                    return g
-        return None
+    def _handle_decision(cls, db: Session, decision: PolicyDecision, actor_id: Optional[str], memory_id: Optional[str], log_audit: bool):
+        metrics_collector.record_policy_check(decision.allowed)
+        if not decision.allowed:
+            event_emitter.publish("access.denied", {
+                "actor_id": actor_id,
+                "memory_id": memory_id,
+                "reason": decision.reason,
+                "rule": decision.rule_matched
+            })
+        if log_audit:
+            cls.log_audit_decision(db, decision, actor_id=actor_id, memory_id=memory_id)
 
     @classmethod
     def log_audit_decision(
@@ -254,13 +214,18 @@ class PolicyEngine:
         memory_id: Optional[str] = None
     ) -> AuditLog:
         action_name = "policy_approved" if decision.allowed else "policy_denied"
-        log = AuditLog(
-            action=action_name,
+        audit_entry = AuditLog(
             actor_id=actor_id,
             memory_id=memory_id,
-            details=decision.to_dict()
+            action=action_name,
+            details={
+                "allowed": decision.allowed,
+                "reason": decision.reason,
+                "rule_matched": decision.rule_matched,
+                "dimensions": decision.dimensions
+            }
         )
-        db.add(log)
+        db.add(audit_entry)
         db.commit()
-        db.refresh(log)
-        return log
+        db.refresh(audit_entry)
+        return audit_entry
