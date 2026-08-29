@@ -29,8 +29,12 @@ class Settings(BaseSettings):
     VECTOR_DIMENSION: int = 1536
 
     # Security & Policy
-    MEMORA_MASTER_KEY: str = "memora_secret_dev_key_2026"
+    MEMORA_API_KEY: str = "memora_api"
+    MEMORA_MASTER_KEY: Optional[str] = None
     DEFAULT_CONFIDENCE_THRESHOLD: float = 0.75
     DEFAULT_IMPORTANCE_THRESHOLD: float = 0.50
+
+    def get_memora_api_key(self) -> str:
+        return self.MEMORA_API_KEY or self.MEMORA_MASTER_KEY or "memora_api"
 
 settings = Settings()
