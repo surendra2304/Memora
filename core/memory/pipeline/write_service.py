@@ -17,6 +17,7 @@ from storage.relational.models import (
     AuditLog
 )
 from storage.vector.qdrant_adapter import vector_adapter
+from storage.vector.embedding import EmbeddingGenerator
 from core.identity.service import IdentityService
 from core.policy.engine import PolicyEngine, PolicyDecision
 from core.memory.pipeline.secret_scanner import SecretScanner, SecretDetectedSecurityViolation
@@ -90,7 +91,6 @@ class MemoryWriteService:
         # -------------------------------------------------------------
         # STEP 3: CLASSIFY MEMORY TYPE AND SENSITIVITY (SECRET SCANNING)
         # -------------------------------------------------------------
-        # Scan for credentials & secrets
         SecretScanner.validate_content_safety(content_text)
 
         resolved_type = memory_type or MemoryType.EPISODIC
@@ -133,7 +133,6 @@ class MemoryWriteService:
         if dedup_result.is_duplicate and not allow_duplicates and dedup_result.duplicate_of_id:
             existing = db.query(MemoryRecord).filter(MemoryRecord.id == dedup_result.duplicate_of_id).first()
             if existing:
-                # Return existing record without re-persisting duplicate
                 return MemoryWriteResult(
                     record=existing,
                     step_outputs=step_trace,
@@ -195,18 +194,19 @@ class MemoryWriteService:
         db.commit()
         db.refresh(record)
 
-        # Queue / Index vector representation
-        mock_embedding = [0.01 * (i % 10) for i in range(1536)]
+        # Generate dense embedding and index
+        dense_embedding = EmbeddingGenerator.generate_embedding(normalized_content)
         vector_adapter.upsert_embedding(
             memory_id=record.id,
-            vector=mock_embedding,
+            vector=dense_embedding,
             payload={"namespace_path": namespace.path, "memory_type": resolved_type.value, "owner": actor.name}
         )
 
         step_trace["step_9_persistence"] = {
             "memory_id": record.id,
             "db_persisted": True,
-            "vector_indexed": True
+            "vector_indexed": True,
+            "embedding_dimension": len(dense_embedding)
         }
 
         # -------------------------------------------------------------

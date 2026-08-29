@@ -131,9 +131,9 @@ class MemoryService:
         query: MemoryQuery,
         actor_name: Optional[str] = None,
         purpose: Optional[str] = None,
-        include_superseded: bool = False,
-        include_archived: bool = False,
-        include_deleted: bool = False
+        include_superseded: Optional[bool] = None,
+        include_archived: Optional[bool] = None,
+        include_deleted: Optional[bool] = None
     ) -> List[MemoryRecord]:
         actor = IdentityService.get_agent_by_name(db, actor_name) if actor_name else None
         
@@ -163,12 +163,16 @@ class MemoryService:
         if query.lifecycle_states:
             q = q.filter(MemoryRecord.lifecycle_state.in_(query.lifecycle_states))
         else:
+            inc_sup = query.include_superseded if include_superseded is None else include_superseded
+            inc_arc = query.include_archived if include_archived is None else include_archived
+            inc_del = query.include_deleted if include_deleted is None else include_deleted
+
             allowed_states = [LifecycleState.ACTIVE, LifecycleState.VERIFIED, LifecycleState.CANDIDATE]
-            if include_superseded:
+            if inc_sup:
                 allowed_states.append(LifecycleState.SUPERSEDED)
-            if include_archived:
+            if inc_arc:
                 allowed_states.append(LifecycleState.ARCHIVED)
-            if include_deleted:
+            if inc_del:
                 allowed_states.append(LifecycleState.DELETED)
             q = q.filter(MemoryRecord.lifecycle_state.in_(allowed_states))
 
@@ -233,7 +237,6 @@ class MemoryService:
         actor_name: Optional[str] = None,
         notes: Optional[str] = None
     ) -> MemoryRecord:
-        """Transitions a memory to VERIFIED, bumps confidence, and sets last_verified_at."""
         record = MemoryService.get_memory_by_id(db, memory_id)
         actor = IdentityService.get_agent_by_name(db, actor_name) if actor_name else None
 
@@ -267,7 +270,6 @@ class MemoryService:
         actor_name: Optional[str] = None,
         reason: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Explicitly supersedes old memory with new canonical memory."""
         old_record = MemoryService.get_memory_by_id(db, old_memory_id)
         new_record = MemoryService.get_memory_by_id(db, new_memory_id)
         actor = IdentityService.get_agent_by_name(db, actor_name) if actor_name else None
@@ -319,7 +321,6 @@ class MemoryService:
         actor_name: Optional[str] = None,
         hard_delete: bool = False
     ) -> Dict[str, Any]:
-        """Performs soft deletion (mark as deleted) or hard deletion (purge DB and vector index)."""
         record = db.query(MemoryRecord).filter(MemoryRecord.id == memory_id).first()
         if not record:
             raise MemoryNotFoundError(f"Memory with ID '{memory_id}' not found.")

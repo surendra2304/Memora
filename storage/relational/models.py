@@ -1,6 +1,6 @@
 ﻿"""
 Canonical Relational Data Models for Memora
-Defines Agent, Namespace, MemoryRecord, AccessGrant, and AuditLog with SQLAlchemy 2.0.
+Defines Agent, Namespace, AccessGrant, MemoryRecord, MemoryRelationship, and AuditLog with SQLAlchemy 2.0.
 """
 import enum
 from typing import Optional, List, Dict, Any
@@ -60,7 +60,7 @@ class Agent(Base):
     
     # Sub-agent hierarchy & bounded context
     parent_agent_id: Mapped[Optional[str]] = mapped_column(String(64), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)
-    bounded_scope: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)  # e.g., 'memora://forge/projects/app-17'
+    bounded_scope: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now, nullable=False)
 
@@ -103,16 +103,15 @@ class Namespace(Base):
 class AccessGrant(Base):
     """
     Explicit access permission grant for an Agent on a Namespace.
-    Implements multi-dimensional policy rules (Who, What, Where, Why, How long).
     """
     __tablename__ = "access_grants"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=generate_uuid)
     agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
     namespace_id: Mapped[str] = mapped_column(String(64), ForeignKey("namespaces.id", ondelete="CASCADE"), nullable=False, index=True)
-    actions: Mapped[List[str]] = mapped_column(JSON, nullable=False, default=lambda: ["read"])  # e.g., ["read", "write", "query"]
-    purpose: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)  # Why: reason / task scope
-    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)  # How long: TTL
+    actions: Mapped[List[str]] = mapped_column(JSON, nullable=False, default=lambda: ["read"])
+    purpose: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now, nullable=False)
 
     # Relationships
@@ -168,6 +167,8 @@ class MemoryRecord(Base):
     owner: Mapped["Agent"] = relationship("Agent", back_populates="owned_memories")
     superseded_by: Mapped[Optional["MemoryRecord"]] = relationship("MemoryRecord", remote_side=[id], foreign_keys=[superseded_by_id])
     audit_logs: Mapped[List["AuditLog"]] = relationship("AuditLog", back_populates="memory")
+    outgoing_relationships: Mapped[List["MemoryRelationship"]] = relationship("MemoryRelationship", foreign_keys="MemoryRelationship.source_memory_id", back_populates="source_memory", cascade="all, delete-orphan")
+    incoming_relationships: Mapped[List["MemoryRelationship"]] = relationship("MemoryRelationship", foreign_keys="MemoryRelationship.target_memory_id", back_populates="target_memory", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_memory_owner_type", "owner_id", "memory_type"),
@@ -176,6 +177,30 @@ class MemoryRecord(Base):
 
     def __repr__(self) -> str:
         return f"<MemoryRecord(id={self.id}, type={self.memory_type}, state={self.lifecycle_state})>"
+
+class MemoryRelationship(Base):
+    """
+    Graph/Relationship layer simulating entity dependencies and knowledge links.
+    """
+    __tablename__ = "memory_relationships"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=generate_uuid)
+    source_memory_id: Mapped[str] = mapped_column(String(64), ForeignKey("memory_records.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_memory_id: Mapped[str] = mapped_column(String(64), ForeignKey("memory_records.id", ondelete="CASCADE"), nullable=False, index=True)
+    relationship_type: Mapped[str] = mapped_column(String(64), nullable=False, default="relates_to", index=True)  # derived_from, depends_on, contradicts, supersedes, relates_to, causal_child
+    weight: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now, nullable=False)
+
+    # Relationships
+    source_memory: Mapped["MemoryRecord"] = relationship("MemoryRecord", foreign_keys=[source_memory_id], back_populates="outgoing_relationships")
+    target_memory: Mapped["MemoryRecord"] = relationship("MemoryRecord", foreign_keys=[target_memory_id], back_populates="incoming_relationships")
+
+    __table_args__ = (
+        Index("ix_relationship_src_tgt", "source_memory_id", "target_memory_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<MemoryRelationship({self.source_memory_id} -[{self.relationship_type}]-> {self.target_memory_id})>"
 
 class AuditLog(Base):
     """

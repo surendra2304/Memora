@@ -1,6 +1,6 @@
 ﻿"""
 MEMORA v1 Memory Endpoints
-Provides POST /v1/memories, lifecycle management (verify, supersede, archive, decay), and query.
+Provides POST /v1/memories, GET /v1/memories/search (Hybrid Multi-Modal Search), lifecycle management, and graph relationships.
 """
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -13,6 +13,8 @@ from core.memory.schemas import MemoryRecordRead, MemoryQuery
 from core.memory.pipeline.write_service import MemoryWriteService
 from core.memory.pipeline.secret_scanner import SecretDetectedSecurityViolation
 from core.memory.service import MemoryService, MemoryNotFoundError, PermissionDeniedError
+from core.memory.graph_service import GraphService
+from core.memory.search_service import SearchService, SearchResultItem
 from core.policy.engine import PolicyEngine, PolicyDecision
 from apps.api.dependencies import get_actor_header, get_purpose_header
 
@@ -54,18 +56,27 @@ class MemoryDecayRequest(BaseModel):
     unverified_threshold_days: int = 14
     archive_threshold: float = 0.15
 
-class V1MemoryQueryRequest(BaseModel):
-    query_text: Optional[str] = None
+class MemoryRelationshipCreate(BaseModel):
+    target_memory_id: str = Field(..., description="Destination memory ID")
+    relationship_type: str = Field(default="relates_to", description="Graph edge type (e.g. derived_from, depends_on, contradicts, supersedes)")
+    weight: float = Field(default=1.0, ge=0.0, le=1.0)
+
+class HybridSearchResultResponse(BaseModel):
+    id: str
+    namespace_id: str
     namespace_path: Optional[str] = None
     owner_name: Optional[str] = None
-    memory_types: Optional[List[MemoryType]] = None
-    include_superseded: bool = False
-    include_archived: bool = False
-    include_deleted: bool = False
-    min_confidence: Optional[float] = 0.0
-    min_importance: Optional[float] = 0.0
-    limit: int = 50
-    offset: int = 0
+    memory_type: str
+    content_text: str
+    confidence: float
+    importance: float
+    lifecycle_state: str
+    created_at: Optional[str] = None
+    final_score: float
+    semantic_score: float
+    keyword_score: float
+    graph_boost: float
+    match_reasons: List[str]
 
 @router.post("", response_model=MemoryWriteResponse, status_code=status.HTTP_201_CREATED)
 def write_memory_event(
@@ -122,6 +133,46 @@ def write_memory_event(
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
+@router.get("/search", response_model=List[HybridSearchResultResponse])
+def search_memories_get(
+    q: str = Query(..., min_length=1, description="Query string for hybrid semantic and keyword search"),
+    namespace_path: Optional[str] = Query(None, description="Optional namespace scope filter"),
+    limit: int = Query(10, ge=1, le=100),
+    min_score: float = Query(0.0, ge=0.0, le=1.0),
+    include_superseded: bool = Query(False),
+    include_archived: bool = Query(False),
+    actor_name: str = Depends(get_actor_header),
+    db: Session = Depends(get_db)
+):
+    results = SearchService.hybrid_search(
+        db=db,
+        query_text=q,
+        actor_name=actor_name,
+        namespace_path=namespace_path,
+        min_score=min_score,
+        limit=limit,
+        include_superseded=include_superseded,
+        include_archived=include_archived
+    )
+    return [r.to_dict() for r in results]
+
+@router.post("/query", response_model=List[MemoryRecordRead])
+def query_memories(
+    query_req: MemoryQuery,
+    actor_name: str = Depends(get_actor_header),
+    purpose: Optional[str] = Depends(get_purpose_header),
+    db: Session = Depends(get_db)
+):
+    try:
+        return MemoryService.query_memories(
+            db,
+            query=query_req,
+            actor_name=actor_name,
+            purpose=purpose
+        )
+    except PermissionDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+
 @router.get("/{memory_id}", response_model=MemoryRecordRead)
 def get_memory_record(
     memory_id: str,
@@ -133,36 +184,6 @@ def get_memory_record(
         return MemoryService.get_memory_by_id(db, memory_id=memory_id, actor_name=actor_name, purpose=purpose)
     except MemoryNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except PermissionDeniedError as e:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
-
-@router.post("/query", response_model=List[MemoryRecordRead])
-def query_memories(
-    query_req: V1MemoryQueryRequest,
-    actor_name: str = Depends(get_actor_header),
-    purpose: Optional[str] = Depends(get_purpose_header),
-    db: Session = Depends(get_db)
-):
-    try:
-        q = MemoryQuery(
-            query_text=query_req.query_text,
-            namespace_path=query_req.namespace_path,
-            owner_name=query_req.owner_name,
-            memory_types=query_req.memory_types,
-            min_confidence=query_req.min_confidence,
-            min_importance=query_req.min_importance,
-            limit=query_req.limit,
-            offset=query_req.offset
-        )
-        return MemoryService.query_memories(
-            db,
-            query=q,
-            actor_name=actor_name,
-            purpose=purpose,
-            include_superseded=query_req.include_superseded,
-            include_archived=query_req.include_archived,
-            include_deleted=query_req.include_deleted
-        )
     except PermissionDeniedError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
 
@@ -204,6 +225,41 @@ def supersede_memory_endpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except PermissionDeniedError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+
+@router.post("/{memory_id}/relationships")
+def create_memory_relationship(
+    memory_id: str,
+    req: MemoryRelationshipCreate,
+    actor_name: str = Depends(get_actor_header),
+    db: Session = Depends(get_db)
+):
+    try:
+        rel = GraphService.create_relationship(
+            db=db,
+            source_memory_id=memory_id,
+            target_memory_id=req.target_memory_id,
+            relationship_type=req.relationship_type,
+            weight=req.weight
+        )
+        return {
+            "status": "created",
+            "id": rel.id,
+            "source_memory_id": rel.source_memory_id,
+            "target_memory_id": rel.target_memory_id,
+            "relationship_type": rel.relationship_type,
+            "weight": rel.weight
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+@router.get("/{memory_id}/graph")
+def get_memory_graph(
+    memory_id: str,
+    max_hops: int = Query(2, ge=1, le=5),
+    actor_name: str = Depends(get_actor_header),
+    db: Session = Depends(get_db)
+):
+    return GraphService.get_connected_memories(db=db, memory_id=memory_id, max_hops=max_hops)
 
 @router.delete("/{memory_id}")
 def delete_memory_endpoint(
