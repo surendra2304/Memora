@@ -1,4 +1,4 @@
-﻿"""
+"""
 Comprehensive Integration Tests for MEMORA Retrieval & Context Pipeline
 Tests ContextBuilderService, ContextReranker, Token Budgeting, Policy Filtering, and Context Bundles.
 """
@@ -85,9 +85,10 @@ def test_token_budgeter_and_deduplication(test_db):
     reranked = ContextReranker.rerank(search_items)
 
     # Budget of only 60 tokens (~240 chars)
-    budgeted, tokens = ContextBudgeter.fit_to_budget(reranked, max_tokens=60)
+    budgeted, tokens, compaction_strategy = ContextBudgeter.fit_to_budget(reranked, max_tokens=60)
     assert len(budgeted) >= 1
     assert tokens <= 60
+    assert compaction_strategy in ["none", "summarized", "truncated"]
 
 def test_fail_closed_policy_isolation_in_context_bundle(test_db):
     """

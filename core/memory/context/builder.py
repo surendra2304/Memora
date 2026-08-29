@@ -1,4 +1,4 @@
-"""
+﻿"""
 Context Builder Service for Memora
 Generates curated, token-budgeted, policy-filtered Context Bundles for AI Agents.
 """
@@ -30,6 +30,7 @@ class ContextBundle:
         memories: List[Dict[str, Any]],
         graph_edges: List[Dict[str, Any]],
         created_at: str,
+        compaction_strategy: str = "none",
         is_degraded: bool = False
     ):
         self.bundle_id = bundle_id
@@ -41,6 +42,7 @@ class ContextBundle:
         self.memories = memories
         self.graph_edges = graph_edges
         self.created_at = created_at
+        self.compaction_strategy = compaction_strategy
         self.is_degraded = is_degraded
 
     def to_dict(self) -> Dict[str, Any]:
@@ -51,6 +53,7 @@ class ContextBundle:
             "total_tokens_estimated": self.total_tokens_estimated,
             "token_budget_limit": self.token_budget_limit,
             "summary": self.summary,
+            "compaction_strategy": self.compaction_strategy,
             "is_degraded": self.is_degraded,
             "memories_count": len(self.memories),
             "memories": self.memories,
@@ -95,7 +98,6 @@ class ContextBuilderService:
                 limit=max_candidates
             )
         except Exception as e:
-            # Fallback to pure database keyword query on degradation
             is_degraded = True
             search_results = SearchService.hybrid_search(
                 db=db,
@@ -131,14 +133,18 @@ class ContextBuilderService:
                 policy_filtered.append(item)
 
         # -------------------------------------------------------------
-        # 5. TOKEN BUDGETING & FACT COMPACTION
+        # 5. TOKEN BUDGETING & HIERARCHICAL LLM COMPACTION
         # -------------------------------------------------------------
-        budgeted_memories, total_tokens = ContextBudgeter.fit_to_budget(
+        budgeted_memories, total_tokens, compaction_strategy = ContextBudgeter.fit_to_budget(
             policy_filtered,
-            max_tokens=token_budget
+            max_tokens=token_budget,
+            query=task_query
         )
 
-        included_memory_ids = [m.record.id for m in budgeted_memories]
+        included_memory_ids = []
+        for m in budgeted_memories:
+            included_memory_ids.extend(m.source_memory_ids)
+        included_memory_ids = list(set(included_memory_ids))
 
         # -------------------------------------------------------------
         # 6. GRAPH RELATIONSHIP EDGES EXTRACTION
@@ -161,7 +167,8 @@ class ContextBuilderService:
         summary_lines = [
             f"Curated {len(budgeted_memories)} contextual memories for query '{task_query}'.",
             f"Agent: {actor.name} (Scope: {actor.bounded_scope or 'global/unbounded'}).",
-            f"Tokens utilized: {total_tokens} / {token_budget} max budget."
+            f"Tokens utilized: {total_tokens} / {token_budget} max budget.",
+            f"Compaction strategy: {compaction_strategy}."
         ]
         if is_degraded:
             summary_lines.append("Warning: Executed under degraded vector store fallback.")
@@ -180,6 +187,7 @@ class ContextBuilderService:
             "agent": actor.name,
             "tokens": total_tokens,
             "memories_count": len(budgeted_memories),
+            "compaction_strategy": compaction_strategy,
             "is_degraded": is_degraded
         })
 
@@ -193,5 +201,6 @@ class ContextBuilderService:
             memories=[m.to_dict() for m in budgeted_memories],
             graph_edges=graph_edges,
             created_at=datetime.now(timezone.utc).isoformat(),
+            compaction_strategy=compaction_strategy,
             is_degraded=is_degraded
         )

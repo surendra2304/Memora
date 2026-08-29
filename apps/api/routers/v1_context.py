@@ -29,6 +29,7 @@ class ContextBundleResponse(BaseModel):
     total_tokens_estimated: int
     token_budget_limit: int
     summary: str
+    compaction_strategy: str = "none"
     memories_count: int
     memories: List[Dict[str, Any]]
     graph_edges_count: int
