@@ -1,4 +1,4 @@
-﻿"""
+"""
 Memory Write Service for Memora
 Executes the deterministic 10-Step Memory Write Pipeline before persisting memory records.
 """

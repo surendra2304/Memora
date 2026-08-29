@@ -1,4 +1,4 @@
-﻿"""
+"""
 Comprehensive Integration Tests for MEMORA Memory Lifecycle Manager
 Tests State Machine, Contradiction Resolution, Supersession, Soft/Hard Deletion, and Decay.
 """

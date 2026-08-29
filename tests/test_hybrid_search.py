@@ -1,4 +1,4 @@
-﻿"""
+"""
 Comprehensive Integration Tests for MEMORA Hybrid Storage and Search Architecture
 Tests Vector Embedding, Keyword Full-Text Search, Graph Store, and Reciprocal Rank Fusion (RRF).
 """

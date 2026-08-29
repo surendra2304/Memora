@@ -1,4 +1,4 @@
-﻿from adapters.base_adapter import (
+from adapters.base_adapter import (
     BaseAgentAdapter,
     MemoraAdapterError,
     MemoraAccessDeniedError,

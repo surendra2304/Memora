@@ -1,4 +1,4 @@
-﻿"""
+"""
 E2E Integration Tests for Experience Learning and Predictive Context Pre-Fetching
 Proves that if an agent (e.g. FORGE) previously failed at a deployment step,
 that past failure experience is automatically synthesized, stored, and predictive

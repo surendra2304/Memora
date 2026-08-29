@@ -1,4 +1,4 @@
-﻿"""
+"""
 Unit and Integration Tests for Neural Cross-Encoder Reranker
 Compares Heuristic-only baseline vs Neural Cross-Encoder reranking
 proving conceptual relevance is prioritized over superficial keyword overlap.

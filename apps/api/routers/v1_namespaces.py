@@ -1,4 +1,4 @@
-﻿"""
+"""
 MEMORA v1 Namespace Policy Endpoints
 Provides GET /v1/namespaces/{id}/policy to inspect effective access rules and grants.
 """

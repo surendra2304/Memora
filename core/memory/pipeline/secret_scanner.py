@@ -1,4 +1,4 @@
-﻿"""
+"""
 Secret Scanner and Credential Detection for Memora Write Pipeline
 Scans incoming memory content for API keys, bearer tokens, private keys, and passwords.
 """

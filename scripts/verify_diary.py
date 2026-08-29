@@ -1,4 +1,4 @@
-﻿"""
+"""
 Diary Verification Script for Memora
 Enforces strict line count, section structure, and voice rules across all diary files.
 """

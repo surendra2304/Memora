@@ -1,4 +1,4 @@
-﻿"""
+"""
 Audit Log Inspection Endpoints
 """
 from typing import List, Optional

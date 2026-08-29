@@ -1,4 +1,4 @@
-﻿"""
+"""
 Neural Cross-Encoder and Multi-Factor Reranker for Memora Context Pipeline
 Combines deep semantic query-document cross-encoding with 4D metadata weighting
 and predictive Experience / Failure-Mode prioritization.

@@ -1,4 +1,4 @@
-﻿"""
+"""
 MEMORA v1 Metrics & Observability Endpoints
 Provides JSON and Prometheus telemetry for SLI monitoring.
 """

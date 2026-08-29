@@ -1,4 +1,4 @@
-﻿"""
+"""
 Database Engine & Session Management for Memora
 Supports PostgreSQL as primary with automatic fallback/test SQLite support.
 """

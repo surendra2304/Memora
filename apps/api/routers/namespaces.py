@@ -1,4 +1,4 @@
-﻿"""
+"""
 Namespace Management & Access Grants Endpoints
 """
 from typing import List, Optional

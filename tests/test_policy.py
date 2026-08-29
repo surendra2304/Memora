@@ -1,4 +1,4 @@
-﻿"""
+"""
 Tests for Namespace Policies and Access Boundaries
 """
 import pytest

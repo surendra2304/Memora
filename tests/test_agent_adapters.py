@@ -1,4 +1,4 @@
-﻿"""
+"""
 Unit and Integration Tests for MEMORA Ecosystem Agent Adapters
 Tests BaseAgentAdapter, AdapterRegistry, 403 Policy Denial Handling, and End-to-End Adapter Workflows.
 """

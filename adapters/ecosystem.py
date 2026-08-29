@@ -1,4 +1,4 @@
-﻿"""
+"""
 Ecosystem Ingestion Adapters for Memora
 Transforms events from FRIDAY, FORGE, NEXUS into canonical memory records.
 """

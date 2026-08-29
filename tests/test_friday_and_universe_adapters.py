@@ -1,4 +1,4 @@
-﻿"""
+"""
 Integration Tests for FRIDAY & AI Universe Specialized Ecosystem Adapters
 Tests FRIDAY user preferences, context session queries, task delegation, and AI Universe model reasoning grounding.
 """

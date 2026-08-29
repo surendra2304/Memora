@@ -1,4 +1,4 @@
-﻿"""
+"""
 Memora API Application Entrypoint
 FastAPI server providing persistent memory and context infrastructure.
 """

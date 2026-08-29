@@ -1,4 +1,4 @@
-﻿from storage.relational.base import Base
+from storage.relational.base import Base
 from storage.relational.session import engine, SessionLocal, get_db, init_db
 from storage.relational.models import (
     Agent,

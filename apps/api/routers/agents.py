@@ -1,4 +1,4 @@
-﻿"""
+"""
 Agent Registration & Identity Endpoints
 """
 from typing import List

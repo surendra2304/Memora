@@ -1,4 +1,4 @@
-﻿"""
+"""
 Context Builder Service for Memora
 Generates curated, token-budgeted, policy-filtered Context Bundles for AI Agents
 with Predictive Experience and Failure-Mode Pre-Fetching.

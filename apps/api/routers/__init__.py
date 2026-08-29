@@ -1,4 +1,4 @@
-﻿from apps.api.routers.health import router as health_router
+from apps.api.routers.health import router as health_router
 from apps.api.routers.agents import router as agents_router
 from apps.api.routers.namespaces import router as namespaces_router
 from apps.api.routers.memories import router as memories_router

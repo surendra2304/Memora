@@ -1,4 +1,4 @@
-﻿"""
+"""
 Adapter Registry for Memora Ecosystem
 Maps agent names to their respective configured adapters and default namespaces.
 """

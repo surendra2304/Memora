@@ -1,4 +1,4 @@
-﻿"""
+"""
 Memory Ingestion, Query, Lifecycle, and Retrieval Endpoints
 """
 from typing import List, Optional

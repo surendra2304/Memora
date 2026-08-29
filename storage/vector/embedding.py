@@ -1,4 +1,4 @@
-﻿"""
+"""
 Local Embedding Generator for Memora Vector Search
 Produces dense vector representations (e.g. all-MiniLM-L6-v2 384-dimensional).
 """

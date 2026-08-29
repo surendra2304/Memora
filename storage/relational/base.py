@@ -1,4 +1,4 @@
-﻿"""
+"""
 SQLAlchemy Base Model and Metadata Definitions
 """
 import uuid

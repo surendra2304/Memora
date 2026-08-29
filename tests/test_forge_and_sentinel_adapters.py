@@ -1,4 +1,4 @@
-﻿"""
+"""
 Integration Tests for FORGE & SENTINEL Specialized Adapters
 Tests architectural decisions, sensitive security findings, explicit promotion to shared namespaces,
 and strict cross-agent private namespace isolation.

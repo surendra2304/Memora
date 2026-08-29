@@ -1,4 +1,4 @@
-﻿"""
+"""
 Forgetting Model and Time-Based Importance Decay for Memora
 Reduces importance of unverified, aging memories and consolidates cold records into archive.
 """

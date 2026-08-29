@@ -1,4 +1,4 @@
-﻿"""
+"""
 Base Agent Adapter for Memora Ecosystem
 Standardizes how external ecosystem agents (FRIDAY, FORGE, FUTURIS, IntelX, MT5, NEXUS, SENTINEL)
 authenticate and interact with the MEMORA Persistent Memory Infrastructure API.

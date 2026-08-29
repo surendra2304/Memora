@@ -1,4 +1,4 @@
-﻿"""
+"""
 Deep Semantic Entity and Relationship Extraction Engine for Memora
 Extracts typed Named Entities (Technologies, People, Organizations, Dates, Modules, Agents, Concepts)
 and semantic Subject-Predicate-Object (SPO) relationship triples.

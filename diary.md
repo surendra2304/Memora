@@ -1,4 +1,4 @@
-﻿# 🧠 Memora — Diary
+# 🧠 Memora — Diary
 
 The full master engineering diary and executive summaries are tracked in [**MEMORA_DIARY.md**](MEMORA_DIARY.md).
 

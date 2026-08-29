@@ -1,4 +1,4 @@
-﻿# 🧠 Memora — Multi-Tier Cognitive Memory Engine
+# 🧠 Memora — Multi-Tier Cognitive Memory Engine
 
 [![CI / Diary Verification](https://github.com/surendra2304/Memora/actions/workflows/verify.yml/badge.svg)](https://github.com/surendra2304/Memora)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)

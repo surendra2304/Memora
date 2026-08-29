@@ -1,4 +1,4 @@
-﻿"""
+"""
 Unit and Integration Tests for Phase 6 Advanced Entity Extraction & Entity Resolution
 Tests Named Entity Recognition (NER), Canonical Entity Resolution, Semantic SPO Triples,
 and Automatic Knowledge Graph Wiring.

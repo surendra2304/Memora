@@ -1,4 +1,4 @@
-﻿"""
+"""
 Contradiction and Supersession Engine for Memora
 Enforces the core rule:
 "Never resolve contradictions using recency alone; use provenance and confidence first."

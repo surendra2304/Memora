@@ -1,4 +1,4 @@
-﻿"""
+"""
 Health Check Endpoints
 """
 from fastapi import APIRouter, Depends

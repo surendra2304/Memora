@@ -1,4 +1,4 @@
-﻿"""
+"""
 Experience Learning Service for Memora
 Synthesizes batches of past task outcomes (successes and failures) into high-importance
 Experience memories (MemoryType.EXPERIENCE) providing predictive operational guidelines and failure mode alerts.

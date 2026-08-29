@@ -1,3 +1,3 @@
-﻿from core.identity.service import IdentityService
+from core.identity.service import IdentityService
 
 __all__ = ["IdentityService"]

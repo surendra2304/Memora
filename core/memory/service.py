@@ -1,4 +1,4 @@
-﻿"""
+"""
 Memory Service
 Coordinates CRUD operations, policy enforcement, lifecycle transitions, supersession, and decay.
 """

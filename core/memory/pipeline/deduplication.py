@@ -1,4 +1,4 @@
-﻿"""
+"""
 Deduplication and Contradiction Detection for Memora Write Pipeline
 """
 from typing import Optional, Tuple, List

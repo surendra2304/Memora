@@ -1,4 +1,4 @@
-﻿"""
+"""
 Vector Store Adapter for Memora
 Interfaces with Qdrant for dense semantic embeddings and similarity search.
 """

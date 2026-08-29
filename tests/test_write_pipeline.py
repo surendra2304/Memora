@@ -1,4 +1,4 @@
-﻿"""
+"""
 Comprehensive Tests for the MEMORA 10-Step Memory Write Pipeline
 """
 import pytest

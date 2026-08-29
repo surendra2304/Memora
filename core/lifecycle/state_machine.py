@@ -1,4 +1,4 @@
-﻿"""
+"""
 Memory Lifecycle State Machine
 Governs valid state transitions:
 CANDIDATE -> ACTIVE -> VERIFIED -> SUPERSEDED / ARCHIVED / DELETED

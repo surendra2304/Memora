@@ -1,4 +1,4 @@
-﻿"""
+"""
 Tests for Canonical Relational Data Models
 """
 import pytest

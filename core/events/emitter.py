@@ -1,4 +1,4 @@
-﻿"""
+"""
 Event Emitter and Pub/Sub Pipeline for Memora
 Publishes lifecycle events (memory.created, memory.updated, memory.shared, memory.superseded, context.generated, access.denied)
 via Redis Pub/Sub with persistent in-memory queue fallback.

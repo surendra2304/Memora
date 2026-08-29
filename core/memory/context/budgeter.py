@@ -1,4 +1,4 @@
-﻿"""
+"""
 Token Budgeting and Hierarchical LLM Compaction Engine for Memora Context Bundles
 Performs semantic clustering and recursive LLM-driven hierarchical summarization
 to fit strict token budgets without losing technical facts, decisions, or provenance.

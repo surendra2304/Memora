@@ -1,4 +1,4 @@
-﻿"""
+"""
 FORGE Specialized Ecosystem Adapter for Memora
 Provides high-level methods for software engineering, architectural decision tracking,
 and project coding constraint retrieval.

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Hybrid Multi-Modal Search Service for Memora
 Combines Dense Semantic Vector Search, Keyword Full-Text Search, Graph Traversal, and Reciprocal Rank Fusion (RRF).
 """

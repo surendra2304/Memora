@@ -1,4 +1,4 @@
-﻿"""
+"""
 Tests for Memory Lifecycle State Transitions
 """
 import pytest

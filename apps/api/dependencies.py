@@ -1,4 +1,4 @@
-﻿"""
+"""
 FastAPI Dependencies for Memora API
 """
 from typing import Optional, Generator

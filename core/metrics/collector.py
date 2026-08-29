@@ -1,4 +1,4 @@
-﻿"""
+"""
 Observability Metrics Engine for Memora
 Tracks Retrieval relevance, Context usefulness, Staleness rate, Contradiction rate,
 Write success rate, Policy denial rate, Latencies, and Phase 6 Advanced Metrics

@@ -1,4 +1,4 @@
-﻿"""
+"""
 MEMORA v1 Context Pipeline Endpoints
 Provides POST /v1/context to build curated, token-budgeted, policy-filtered Context Bundles.
 """

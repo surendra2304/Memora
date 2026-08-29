@@ -1,4 +1,4 @@
-﻿"""
+"""
 Integration Tests for FastAPI Endpoints
 """
 import pytest

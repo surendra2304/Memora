@@ -1,4 +1,4 @@
-﻿"""
+"""
 Integration Tests for Hierarchical LLM Context Summarization
 Simulates 10,000+ token memory retrieval that is successfully compacted
 to fit within a 4,000 token budget while preserving critical facts and provenance.

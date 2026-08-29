@@ -1,9 +1,9 @@
-﻿"""
+"""
 Pydantic Schemas for Memora API & Memory Service
 """
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from storage.relational.models import MemoryType, LifecycleState, NamespaceType
 
 class AgentCreate(BaseModel):
@@ -12,6 +12,8 @@ class AgentCreate(BaseModel):
     role: str = Field(default="worker", description="Role/authority level")
 
 class AgentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     name: str
     description: Optional[str] = None
@@ -19,9 +21,6 @@ class AgentRead(BaseModel):
     parent_agent_id: Optional[str] = None
     bounded_scope: Optional[str] = None
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 class SubAgentCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=128)
@@ -37,6 +36,8 @@ class AccessGrantCreate(BaseModel):
     ttl_hours: Optional[int] = None
 
 class AccessGrantRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     agent_id: str
     namespace_id: str
@@ -45,23 +46,19 @@ class AccessGrantRead(BaseModel):
     expires_at: Optional[datetime] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
-
 class NamespaceCreate(BaseModel):
     path: str = Field(..., min_length=3, max_length=256, description="URI format path (e.g. 'memora://forge/projects/alpha')")
     type: NamespaceType = Field(default=NamespaceType.AGENT_PRIVATE)
     agent_name: Optional[str] = None
 
 class NamespaceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     path: str
     type: NamespaceType
     agent_id: Optional[str] = None
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 class MemoryRecordCreate(BaseModel):
     content_text: str = Field(..., min_length=1)
@@ -84,6 +81,8 @@ class MemoryRecordUpdate(BaseModel):
     provenance: Optional[Dict[str, Any]] = None
 
 class MemoryRecordRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     namespace_id: str
     owner_id: str
@@ -97,9 +96,6 @@ class MemoryRecordRead(BaseModel):
     created_at: datetime
     last_verified_at: Optional[datetime] = None
     superseded_by_id: Optional[str] = None
-
-    class Config:
-        from_attributes = True
 
 class MemoryQuery(BaseModel):
     query_text: Optional[str] = None
@@ -121,12 +117,11 @@ class MemoryTransitionRequest(BaseModel):
     purpose: Optional[str] = None
 
 class AuditLogRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     actor_id: Optional[str] = None
     memory_id: Optional[str] = None
     action: str
     timestamp: datetime
     details: Optional[Dict[str, Any]] = None
-
-    class Config:
-        from_attributes = True

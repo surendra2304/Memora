@@ -1,4 +1,4 @@
-﻿"""
+"""
 Memora Core Configuration
 Manages environment variables, connection URLs, and system constants.
 """

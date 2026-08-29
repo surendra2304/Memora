@@ -1,4 +1,4 @@
-﻿"""
+"""
 Identity and Namespace Resolution Service
 Manages registered ecosystem agents, parent-subagent delegation with bounded contexts,
 and dynamic URI namespace resolution.

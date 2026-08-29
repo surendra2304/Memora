@@ -1,4 +1,4 @@
-﻿from core.memory.service import MemoryService, MemoryNotFoundError, PermissionDeniedError
+from core.memory.service import MemoryService, MemoryNotFoundError, PermissionDeniedError
 from core.memory.schemas import (
     AgentCreate,
     AgentRead,

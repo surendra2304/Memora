@@ -1,4 +1,4 @@
-﻿"""
+"""
 Comprehensive Integration Tests for MEMORA Infrastructure Finalization
 Tests Observability Metrics, Redis/Event Bus, Namespace Policy API, Memory Sharing, and Graceful Degradation.
 """

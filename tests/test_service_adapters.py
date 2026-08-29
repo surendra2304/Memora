@@ -1,4 +1,4 @@
-﻿"""
+"""
 Tests for Core Memory Service and Ecosystem Adapters
 """
 import pytest

@@ -1,4 +1,4 @@
-﻿"""
+"""
 FRIDAY Specialized Ecosystem Adapter for Memora
 Provides high-level methods for executive orchestration, user preference retention,
 session context bundle retrieval, and sub-agent bounded context delegation.

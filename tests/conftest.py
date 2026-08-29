@@ -1,4 +1,4 @@
-﻿"""
+"""
 Pytest Fixtures for Memora Test Suite
 """
 import pytest

@@ -1,4 +1,4 @@
-﻿version: "1.0"
+version: "1.0"
 server:
   base_url: "http://localhost:8000"
   timeout_seconds: 10

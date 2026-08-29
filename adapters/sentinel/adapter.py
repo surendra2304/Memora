@@ -1,4 +1,4 @@
-﻿"""
+"""
 SENTINEL Specialized Ecosystem Adapter for Memora
 Provides cybersecurity auditing, sensitive finding retention, explicit security remediation promotion,
 and bounded security context retrieval.

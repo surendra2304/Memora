@@ -1,4 +1,4 @@
-﻿"""
+"""
 Comprehensive Tests for Identity, Namespace Resolution, and 5D Policy Engine
 """
 from datetime import datetime, timezone, timedelta

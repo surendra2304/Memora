@@ -1,4 +1,4 @@
-﻿"""
+"""
 Policy Engine for Memora
 Evaluates access control across 5 operational dimensions:
 Who, What, Where, Why, How long.

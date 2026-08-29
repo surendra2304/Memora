@@ -1,4 +1,4 @@
-﻿"""
+"""
 AI Universe Specialized Ecosystem Adapter for Memora
 Provides model reasoning grounding against verified canonical memories to eliminate hallucinations.
 """

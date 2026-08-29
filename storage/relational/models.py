@@ -1,4 +1,4 @@
-﻿"""
+"""
 Canonical Relational Data Models for Memora
 Defines Agent, Namespace, AccessGrant, MemoryRecord, MemoryRelationship, and AuditLog with SQLAlchemy 2.0.
 """
