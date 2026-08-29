@@ -9,6 +9,7 @@ from storage.relational.session import get_db
 router = APIRouter(prefix="/health", tags=["Health"])
 
 @router.get("")
+@router.head("")
 def health_check(db: Session = Depends(get_db)):
     db_status = "healthy"
     try:

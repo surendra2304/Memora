@@ -59,6 +59,7 @@ app.include_router(v1_namespaces_router)
 app.include_router(audit_router)
 
 @app.get("/", include_in_schema=False)
+@app.head("/", include_in_schema=False)
 def root_redirect():
     return RedirectResponse(url="/docs")
 
