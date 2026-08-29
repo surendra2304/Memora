@@ -1,0 +1,53 @@
+﻿version: "1.0"
+server:
+  base_url: "http://localhost:8000"
+  timeout_seconds: 10
+
+agents:
+  friday:
+    role: "supervisor"
+    default_namespace: "memora://friday/private"
+    description: "Executive system orchestrator with global oversight"
+    default_token_budget: 8000
+
+  forge:
+    role: "worker"
+    default_namespace: "memora://forge/private"
+    description: "Autonomous code generation and refactoring engine"
+    default_token_budget: 4000
+
+  futuris:
+    role: "forecaster"
+    default_namespace: "memora://futuris/private"
+    description: "Predictive analytics and strategic forecasting engine"
+    default_token_budget: 4000
+
+  intelx:
+    role: "researcher"
+    default_namespace: "memora://intelx/private"
+    description: "Deep internet research and knowledge ingestion agent"
+    default_token_budget: 6000
+
+  mt5:
+    role: "trader"
+    default_namespace: "memora://mt5/private"
+    description: "MetaTrader 5 algorithmic execution and market state memory"
+    default_token_budget: 3000
+
+  nexus:
+    role: "interface"
+    default_namespace: "memora://nexus/private"
+    description: "Frontend UI bridge and user telemetry gateway"
+    default_token_budget: 4000
+
+  sentinel:
+    role: "security"
+    default_namespace: "memora://sentinel/private"
+    description: "Ecosystem policy auditor, access controller, and safety monitor"
+    default_token_budget: 4000
+
+  ai_universe:
+    role: "global"
+    default_namespace: "memora://universe/global"
+    description: "Global shared knowledge repository for all autonomous agents"
+    default_token_budget: 8000
