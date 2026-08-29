@@ -12,7 +12,7 @@
 | **Repository** | [github.com/surendra2304/Memora](https://github.com/surendra2304/Memora) |
 | **Active Branch** | main (Verified Green) |
 | **Host Environment** | Windows 11 Desktop (x64) • Python 3.11.9 |
-| **Specialized Adapters** | `FridayAdapter` (Preferences & Delegation) + `AIUniverseAdapter` (Model Grounding) |
+| **Specialized Adapters** | `ForgeAdapter` (Architecture Decisions) + `SentinelAdapter` (Explicit Promotion) + `FridayAdapter` + `AIUniverseAdapter` |
 | **Ecosystem Adapters** | `BaseAgentAdapter`, `AdapterRegistry`, `adapter_config.yaml` (FRIDAY, FORGE, FUTURIS, IntelX, MT5, NEXUS, SENTINEL) |
 | **Observability** | `MetricsCollector` (Prometheus `/metrics` & JSON `/v1/metrics`) + Event Bus (Redis Pub/Sub) |
 | **Context Pipeline** | `ContextBuilderService` (4D Reranker, Token Budgeting, Fact Dedup, Graph Edges) |
@@ -28,21 +28,21 @@
 
 | Timeline | Milestone / Focus | Status | Diary Log |
 | :--- | :--- | :---: | :---: |
-| **Day 1 — 2026-08-29** | Inception, 5D Policy, Write Pipeline, Context Bundles, Adapters & Friday/AI Universe Specialization (51 Tests) | ✅ Verified | [2026-08-29](diary/2026-08-29.md) |
+| **Day 1 — 2026-08-29** | Inception, 5D Policy, Write Pipeline, Context Bundles, Adapters & Forge/Sentinel Specialization (54 Tests) | ✅ Verified | [2026-08-29](diary/2026-08-29.md) |
 
 ---
 
 ## 📖 Daily Engineering Summaries
 
-### 🚀 [Day 1 — 2026-08-29: FRIDAY & AI Universe Specialized Adapters](diary/2026-08-29.md)
-- **🎯 Focus**: Building specialized ecosystem adapters for **FRIDAY** (`FridayAdapter`: user preferences, session context bundles, and sub-agent delegation) and **AI Universe** (`AIUniverseAdapter`: verified model reasoning grounding against hallucination).
+### 🚀 [Day 1 — 2026-08-29: FORGE & SENTINEL Specialized Adapters with Explicit Promotion](diary/2026-08-29.md)
+- **🎯 Focus**: Building specialized ecosystem adapters for **FORGE** (`ForgeAdapter`: architectural decisions and project coding constraints) and **SENTINEL** (`SentinelAdapter`: confidential security findings and explicit promotion mechanism to shared project stores).
 - **💡 What I Accomplished**:
-  - Implemented `FridayAdapter` with `save_user_preference()`, `get_session_context()`, and `delegate_task_with_context()`.
-  - Implemented `AIUniverseAdapter` with `ground_model_reasoning()` filtering strictly verified canonical memories.
-  - Registered specialized adapter classes dynamically into `AdapterRegistry`.
-  - Authored comprehensive integration tests in `tests/test_friday_and_universe_adapters.py`.
-  - Verified 100% green pass rate across all 51 unit and integration tests in 67s.
-- **🛡️ Fixes & Hardening**: Fixed RRF hybrid search threshold scaling for verified grounding queries.
-- **📊 Test Results**: **51 passed** (100% green pass rate across all 12 test suites in 67s).
+  - Implemented `ForgeAdapter` with `save_architecture_decision()` and `get_coding_constraints()`.
+  - Implemented `SentinelAdapter` with `record_private_finding()`, `publish_approved_remediation()`, and `get_security_context()`.
+  - Enforced Rule 1 "Private by default, shared by explicit promotion": SENTINEL stores raw vulnerability telemetry in `memora://sentinel/private` and delegates access to FORGE on `memora://shared/projects/{id}`.
+  - Authored comprehensive integration tests in `tests/test_forge_and_sentinel_adapters.py`.
+  - Verified 100% green pass rate across all 54 unit and integration tests in 67s.
+- **🛡️ Fixes & Hardening**: Fixed response trace key mapping in adapter test suite.
+- **📊 Test Results**: **54 passed** (100% green pass rate across all 13 test suites in 67s).
 
 ---

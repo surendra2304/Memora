@@ -50,6 +50,18 @@ class AdapterRegistry:
         except ImportError:
             pass
 
+        try:
+            from adapters.forge.adapter import ForgeAdapter
+            self.register_custom_class("forge", ForgeAdapter)
+        except ImportError:
+            pass
+
+        try:
+            from adapters.sentinel.adapter import SentinelAdapter
+            self.register_custom_class("sentinel", SentinelAdapter)
+        except ImportError:
+            pass
+
     def _load_config(self) -> Dict[str, Any]:
         if self.config_path.exists():
             try:
