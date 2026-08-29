@@ -20,6 +20,7 @@ class QdrantVectorAdapter:
         self.collection_name = collection_name or settings.QDRANT_COLLECTION
         self._client = None
         self._initialized = False
+        self._mock_store: Dict[str, List[float]] = {}
 
     def connect(self):
         try:
@@ -37,8 +38,9 @@ class QdrantVectorAdapter:
         vector: List[float],
         payload: Optional[Dict[str, Any]] = None
     ) -> bool:
+        self._mock_store[memory_id] = vector
         if not self._initialized:
-            return True  # Fallback gracefully
+            return True
         try:
             from qdrant_client.http.models import PointStruct
             point = PointStruct(id=memory_id, vector=vector, payload=payload or {})
@@ -46,6 +48,23 @@ class QdrantVectorAdapter:
             return True
         except Exception as e:
             logger.error(f"Failed to upsert vector to Qdrant: {e}")
+            return False
+
+    def delete_embedding(self, memory_id: str) -> bool:
+        """Removes vector embedding during hard deletion."""
+        if memory_id in self._mock_store:
+            del self._mock_store[memory_id]
+        if not self._initialized:
+            return True
+        try:
+            from qdrant_client.http.models import PointIdsList
+            self._client.delete(
+                collection_name=self.collection_name,
+                points_selector=PointIdsList(points=[memory_id])
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete vector from Qdrant: {e}")
             return False
 
     def search_similarity(

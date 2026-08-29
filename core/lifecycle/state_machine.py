@@ -14,6 +14,8 @@ class MemoryLifecycleEngine:
     VALID_TRANSITIONS: Set[Tuple[LifecycleState, LifecycleState]] = {
         # Promotion / Initial Activation
         (LifecycleState.CANDIDATE, LifecycleState.ACTIVE),
+        (LifecycleState.CANDIDATE, LifecycleState.VERIFIED),
+        (LifecycleState.CANDIDATE, LifecycleState.SUPERSEDED),
         (LifecycleState.CANDIDATE, LifecycleState.DELETED),
         (LifecycleState.CANDIDATE, LifecycleState.ARCHIVED),
 
