@@ -17,11 +17,11 @@ from apps.api.routers import (
     memories_router,
     audit_router,
     v1_memories_router,
+    v1_context_router,
 )
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize database tables and vector connection
     init_db()
     vector_adapter.connect()
     yield
@@ -48,6 +48,7 @@ app.include_router(agents_router)
 app.include_router(namespaces_router)
 app.include_router(memories_router)
 app.include_router(v1_memories_router)
+app.include_router(v1_context_router)
 app.include_router(audit_router)
 
 @app.get("/", include_in_schema=False)
