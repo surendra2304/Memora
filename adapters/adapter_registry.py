@@ -34,6 +34,22 @@ class AdapterRegistry:
         self._instances: Dict[str, BaseAgentAdapter] = {}
         self._custom_adapter_classes: Dict[str, Type[BaseAgentAdapter]] = {}
 
+        # Lazy register specialized classes
+        self._register_default_specialized_classes()
+
+    def _register_default_specialized_classes(self):
+        try:
+            from adapters.friday.adapter import FridayAdapter
+            self.register_custom_class("friday", FridayAdapter)
+        except ImportError:
+            pass
+
+        try:
+            from adapters.ai_universe.adapter import AIUniverseAdapter
+            self.register_custom_class("ai_universe", AIUniverseAdapter)
+        except ImportError:
+            pass
+
     def _load_config(self) -> Dict[str, Any]:
         if self.config_path.exists():
             try:
@@ -86,6 +102,11 @@ class AdapterRegistry:
 
         adapter_cls = self._custom_adapter_classes.get(normalized_name, BaseAgentAdapter)
         adapter = adapter_cls(
+            base_url=resolved_base_url,
+            api_key=api_key,
+            default_namespace=cfg.get("default_namespace", f"memora://{normalized_name}/private"),
+            http_client=http_client
+        ) if adapter_cls != BaseAgentAdapter else adapter_cls(
             agent_name=normalized_name,
             base_url=resolved_base_url,
             api_key=api_key,

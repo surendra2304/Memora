@@ -6,6 +6,8 @@
     MemoraSecurityViolationError
 )
 from adapters.adapter_registry import AdapterRegistry, adapter_registry
+from adapters.friday.adapter import FridayAdapter
+from adapters.ai_universe.adapter import AIUniverseAdapter
 from adapters.ecosystem import EcosystemMemoryAdapter
 
 __all__ = [
@@ -16,5 +18,7 @@ __all__ = [
     "MemoraSecurityViolationError",
     "AdapterRegistry",
     "adapter_registry",
+    "FridayAdapter",
+    "AIUniverseAdapter",
     "EcosystemMemoryAdapter",
 ]
