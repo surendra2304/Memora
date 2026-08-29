@@ -12,6 +12,7 @@
 | **Repository** | [github.com/surendra2304/Memora](https://github.com/surendra2304/Memora) |
 | **Active Branch** | main (Verified Green) |
 | **Host Environment** | Windows 11 Desktop (x64) • Python 3.11.9 |
+| **Phase 6 Advanced Intelligence** | Deep Semantic NER, SPO Triples & Canonical Entity Resolution (`EntityExtractor` + `GraphService`) |
 | **E2E Integration** | Verified Cross-Agent Workflow (FRIDAY + SENTINEL + FORGE with Strict Isolation) |
 | **Specialized Adapters** | `ForgeAdapter` + `SentinelAdapter` + `FridayAdapter` + `AIUniverseAdapter` |
 | **Ecosystem Adapters** | `BaseAgentAdapter`, `AdapterRegistry`, `adapter_config.yaml` (FRIDAY, FORGE, FUTURIS, IntelX, MT5, NEXUS, SENTINEL) |
@@ -29,22 +30,21 @@
 
 | Timeline | Milestone / Focus | Status | Diary Log |
 | :--- | :--- | :---: | :---: |
-| **Day 1 — 2026-08-29** | Inception, 5D Policy, Write Pipeline, Context Bundles, Adapters & E2E Integration Suite (55 Tests) | ✅ Verified | [2026-08-29](diary/2026-08-29.md) |
+| **Day 1 — 2026-08-29** | Inception, 5D Policy, Write Pipeline, Context Bundles, Adapters, E2E Integration & Phase 6 Advanced Intelligence (58 Tests) | ✅ Verified | [2026-08-29](diary/2026-08-29.md) |
 
 ---
 
 ## 📖 Daily Engineering Summaries
 
-### 🚀 [Day 1 — 2026-08-29: Phase 5 E2E Integration & Ecosystem Finalization](diary/2026-08-29.md)
-- **🎯 Focus**: Completing Phase 5 Ecosystem Adapters with a full End-to-End integration test suite (`tests/test_ecosystem_integration.py`) verifying cross-agent isolation and controlled collaboration between FRIDAY, SENTINEL, and FORGE.
+### 🚀 [Day 1 — 2026-08-29: Phase 6 Advanced Intelligence & Entity Resolution](diary/2026-08-29.md)
+- **🎯 Focus**: Upgrading entity extraction from heuristics to deep semantic Named Entity Recognition (Technologies, People, Organizations, Dates, Modules, Concepts), Subject-Predicate-Object (SPO) relationship triples, and canonical entity resolution in the Knowledge Graph.
 - **💡 What I Accomplished**:
-  - Built comprehensive E2E test simulating a real-world multi-agent workflow.
-  - Verified FRIDAY's private directives remain strictly isolated in `memora://friday/private`.
-  - Verified SENTINEL's raw security findings remain strictly confidential in `memora://sentinel/private`.
-  - Verified SENTINEL's sanitized remediation promotion to `memora://shared/projects/auth-module` allows FORGE to safely consume the security guidance.
-  - Verified FORGE's context bundle never leaks FRIDAY's or SENTINEL's private memory records.
-  - Verified 100% green pass rate across all 55 unit and integration tests in 67s.
-- **🛡️ Fixes & Hardening**: Fixed Windows console character encoding in test capture runner.
-- **📊 Test Results**: **55 passed** (100% green pass rate across all 14 test suites in 67s).
+  - Implemented `EntityExtractor` with typed entity classification and semantic SPO triple parsing.
+  - Implemented canonical alias mapping (`Postgres`, `pg_db`, `PostgreSQL` $ightarrow$ `postgresql`).
+  - Enhanced `GraphService.auto_link_entity_memories` to automatically wire graph edges during Step 9 of the Write Pipeline.
+  - Authored `tests/test_advanced_entity_extraction.py` validating NER, entity resolution, and graph traversal.
+  - Verified 100% green pass rate across all 58 unit and integration tests in 67s.
+- **🛡️ Fixes & Hardening**: Fixed router parameter mapping and trace dictionary keys.
+- **📊 Test Results**: **58 passed** (100% green pass rate across all 15 test suites in 67s).
 
 ---

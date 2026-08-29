@@ -1,32 +1,30 @@
 ﻿"""
-MEMORA 10-Step Deterministic Memory Write Pipeline
-Orchestrates memory ingestion through 10 sequential validation, enrichment, and storage steps.
+Memory Write Service for Memora
+Executes the deterministic 10-Step Memory Write Pipeline before persisting memory records.
 """
-import time
 from typing import Optional, Dict, Any
+from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 import hashlib
-from sqlalchemy.orm import Session
+import time
+import logging
 
-from storage.relational.models import (
-    Agent,
-    Namespace,
-    NamespaceType,
-    MemoryRecord,
-    MemoryType,
-    LifecycleState,
-    AuditLog
-)
+from storage.relational.models import MemoryRecord, MemoryType, LifecycleState, NamespaceType
 from storage.vector.qdrant_adapter import vector_adapter
 from storage.vector.embedding import EmbeddingGenerator
 from core.identity.service import IdentityService
 from core.policy.engine import PolicyEngine, PolicyDecision
-from core.memory.pipeline.secret_scanner import SecretScanner, SecretDetectedSecurityViolation
-from core.memory.pipeline.entity_extractor import EntityExtractor
-from core.memory.pipeline.deduplication import DeduplicationEngine, DeduplicationResult
-from core.memory.service import PermissionDeniedError
 from core.metrics.collector import metrics_collector
 from core.events.emitter import event_emitter
+from core.memory.pipeline.secret_scanner import SecretScanner, SecretLeakageError
+from core.memory.pipeline.entity_extractor import EntityExtractor
+from core.memory.pipeline.deduplication import DeduplicationEngine
+from core.memory.service import PermissionDeniedError
+
+logger = logging.getLogger(__name__)
+
+class MemoryPipelineError(Exception):
+    pass
 
 class MemoryWriteResult:
     def __init__(
@@ -41,13 +39,30 @@ class MemoryWriteResult:
         self.is_duplicate = is_duplicate
         self.duplicate_of_id = duplicate_of_id
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.record.id,
+            "namespace_id": self.record.namespace_id,
+            "owner_id": self.record.owner_id,
+            "memory_type": self.record.memory_type.value,
+            "content_text": self.record.content_text,
+            "confidence": self.record.confidence,
+            "importance": self.record.importance,
+            "lifecycle_state": self.record.lifecycle_state.value,
+            "created_at": self.record.created_at.isoformat() if self.record.created_at else None,
+            "is_duplicate": self.is_duplicate,
+            "duplicate_of_id": self.duplicate_of_id,
+            "step_trace": self.step_outputs
+        }
+
 class MemoryWriteService:
     @classmethod
     def execute_pipeline(
         cls,
         db: Session,
         content_text: str,
-        caller_name: str,
+        caller_name: Optional[str] = None,
+        actor_name: Optional[str] = None,
         target_namespace_path: Optional[str] = None,
         memory_type: Optional[MemoryType] = None,
         source: str = "api",
@@ -58,25 +73,32 @@ class MemoryWriteService:
         allow_duplicates: bool = False
     ) -> MemoryWriteResult:
         start_time = time.time()
-        step_trace = {}
+        step_trace: Dict[str, Any] = {}
+        resolved_actor_name = caller_name or actor_name or "system"
 
         try:
             # -------------------------------------------------------------
             # STEP 1: RECEIVE MEMORY EVENT
             # -------------------------------------------------------------
-            step_trace["step_1_receive_event"] = {"status": "success", "event_summary": f"Received {len(content_text)} chars from {caller_name}"}
+            if not content_text or not content_text.strip():
+                raise MemoryPipelineError("Content text cannot be empty.")
+            
+            step_trace["step_1_receive_event"] = {
+                "raw_length": len(content_text),
+                "source": source,
+                "target_namespace_path": target_namespace_path,
+                "requested_type": memory_type.value if memory_type else None
+            }
 
             # -------------------------------------------------------------
             # STEP 2: AUTHENTICATE CALLER AND RESOLVE NAMESPACE
             # -------------------------------------------------------------
-            actor = IdentityService.get_agent_by_name(db, caller_name)
+            actor = IdentityService.get_agent_by_name(db, resolved_actor_name)
             if not actor:
-                actor = IdentityService.register_agent(db, caller_name)
+                actor = IdentityService.register_agent(db, name=resolved_actor_name, role="worker")
 
-            if not target_namespace_path:
-                target_namespace_path = f"memora://{actor.name}/private"
-
-            namespace = IdentityService.resolve_namespace(db, target_namespace_path, owner_agent_id=actor.id)
+            target_path = target_namespace_path or f"memora://{actor.name}/private"
+            namespace = IdentityService.resolve_namespace(db, target_path, owner_agent_id=actor.id)
             step_trace["step_2_authenticate_and_resolve"] = {
                 "actor_id": actor.id,
                 "actor_name": actor.name,
@@ -108,7 +130,7 @@ class MemoryWriteService:
             }
 
             # -------------------------------------------------------------
-            # STEP 5: EXTRACT ENTITIES AND RELATIONSHIPS
+            # STEP 5: EXTRACT ENTITIES AND RELATIONSHIPS (DEEP EXTRACTION)
             # -------------------------------------------------------------
             extracted_meta = EntityExtractor.extract_entities_and_relationships(normalized_content)
             step_trace["step_5_extract_entities"] = extracted_meta
@@ -161,13 +183,13 @@ class MemoryWriteService:
                 action="write",
                 purpose=purpose
             )
-            if not policy_decision:
+            if not policy_decision.allowed:
                 raise PermissionDeniedError(policy_decision.reason)
 
             step_trace["step_8_apply_policy"] = policy_decision.to_dict()
 
             # -------------------------------------------------------------
-            # STEP 9: PERSIST TO POSTGRESQL AND QUEUE VECTOR INDEXING
+            # STEP 9: PERSIST TO POSTGRESQL, VECTOR INDEX & KNOWLEDGE GRAPH
             # -------------------------------------------------------------
             combined_provenance = {
                 **(provenance or {}),
@@ -192,6 +214,18 @@ class MemoryWriteService:
             db.commit()
             db.refresh(record)
 
+            # Knowledge Graph Entity Resolution & Auto-Linking
+            graph_links = []
+            try:
+                from core.memory.graph_service import GraphService
+                linked_edges = GraphService.auto_link_entity_memories(db, record, extracted_meta)
+                graph_links = [
+                    {"target_id": edge.target_memory_id, "type": edge.relationship_type, "weight": edge.weight}
+                    for edge in linked_edges if edge
+                ]
+            except Exception as e:
+                logger.debug(f"Graph auto-linking skipped: {e}")
+
             # Graceful Vector Upsert
             vector_indexed = False
             try:
@@ -207,7 +241,9 @@ class MemoryWriteService:
             step_trace["step_9_persistence"] = {
                 "memory_id": record.id,
                 "db_persisted": True,
-                "vector_indexed": vector_indexed
+                "vector_indexed": vector_indexed,
+                "graph_links_created": len(graph_links),
+                "graph_links": graph_links
             }
 
             # -------------------------------------------------------------
@@ -237,19 +273,20 @@ class MemoryWriteService:
             )
 
             step_trace["step_10_emit_event_and_audit"] = {
-                "event": "memory.created",
-                "audit_log_id": audit_entry.id
+                "event_emitted": "memory.created",
+                "audit_logged": True,
+                "audit_id": audit_entry.id
             }
+            step_trace["step_10_emit_and_audit"] = step_trace["step_10_emit_event_and_audit"]
 
-            elapsed_ms = (time.time() - start_time) * 1000
-            metrics_collector.record_write(success=True, is_contradiction=False, latency_ms=elapsed_ms)
+            metrics_collector.record_write(success=True, is_contradiction=False, latency_ms=(time.time() - start_time) * 1000)
 
             return MemoryWriteResult(
                 record=record,
                 step_outputs=step_trace,
                 is_duplicate=False
             )
+
         except Exception as e:
-            elapsed_ms = (time.time() - start_time) * 1000
-            metrics_collector.record_write(success=False, is_contradiction=False, latency_ms=elapsed_ms)
+            metrics_collector.record_write(success=False, is_contradiction=False, latency_ms=(time.time() - start_time) * 1000)
             raise

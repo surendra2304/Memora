@@ -10,6 +10,9 @@ class SecretDetectedSecurityViolation(Exception):
         self.secret_types = secret_types
         super().__init__(f"Security Violation: Content contains unmasked secrets/credentials: {', '.join(secret_types)}")
 
+# Alias for backwards compatibility
+SecretLeakageError = SecretDetectedSecurityViolation
+
 class SecretScanner:
     SECRET_PATTERNS: List[Tuple[str, re.Pattern]] = [
         ("Google API Key", re.compile(r"AIza[0-9A-Za-z-_]{30,40}")),
