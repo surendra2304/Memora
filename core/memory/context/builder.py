@@ -125,6 +125,7 @@ class ContextBuilderService:
         stopwords = {"the", "a", "an", "is", "are", "and", "or", "in", "on", "at", "to", "for", "of", "with", "by", "how", "do", "we"}
         meaningful_q = q_tokens - stopwords
 
+        predictive_hits = 0
         for exp in exp_candidates:
             if exp.id in existing_result_ids:
                 continue
@@ -142,6 +143,10 @@ class ContextBuilderService:
                     )
                 )
                 existing_result_ids.add(exp.id)
+                predictive_hits += 1
+
+        if predictive_hits > 0:
+            metrics_collector.record_predictive_hit()
 
         # -------------------------------------------------------------
         # 3. MULTI-FACTOR NEURAL CROSS-ENCODER RERANKING (WITH EXPERIENCE BOOST)
@@ -165,6 +170,9 @@ class ContextBuilderService:
             if decision.allowed:
                 policy_filtered.append(item)
 
+        # Calculate raw uncompressed tokens
+        raw_tokens = sum(ContextBudgeter.estimate_tokens(i.record.content_text) for i in policy_filtered)
+
         # -------------------------------------------------------------
         # 5. TOKEN BUDGETING & HIERARCHICAL LLM COMPACTION
         # -------------------------------------------------------------
@@ -173,6 +181,10 @@ class ContextBuilderService:
             max_tokens=token_budget,
             query=task_query
         )
+
+        if compaction_strategy == "summarized":
+            tokens_saved = max(0, raw_tokens - total_tokens)
+            metrics_collector.record_compaction(tokens_saved)
 
         included_memory_ids = []
         for m in budgeted_memories:

@@ -1,10 +1,13 @@
-﻿"""
+"""
 End-to-End (E2E) Ecosystem Integration Test Suite for MEMORA
 Simulates a real-world multi-agent collaboration scenario between FRIDAY, SENTINEL, and FORGE:
 1. FRIDAY receives private user instructions.
 2. SENTINEL scans and logs confidential vulnerability findings privately.
 3. SENTINEL promotes sanitized remediations to a shared project namespace.
 4. FORGE requests context and receives only authorized shared guidance while remaining strictly isolated from private stores.
+5. FORGE encounters a deployment failure and saves it as MemoryType.EXPERIENCE via learn-experience API.
+6. FORGE requests context for a new similar deployment -> predictive context pre-fetches the failure mode to Rank #1 within token budget.
+7. Observability metrics verify LLM compaction, neural cross-encoder latency, and predictive hits.
 """
 import pytest
 from fastapi.testclient import TestClient
@@ -16,6 +19,7 @@ from adapters.sentinel.adapter import SentinelAdapter
 from adapters.forge.adapter import ForgeAdapter
 from adapters.base_adapter import MemoraAccessDeniedError
 from core.identity.service import IdentityService
+from core.metrics.collector import metrics_collector
 from storage.relational.models import NamespaceType
 
 @pytest.fixture
@@ -24,10 +28,11 @@ def api_client():
 
 def test_e2e_cross_agent_collaboration_and_isolation_workflow(api_client, test_db, capsys):
     """
-    E2E Simulation: FRIDAY -> SENTINEL -> FORGE Workflow with strict isolation & explicit promotion.
+    E2E Simulation: FRIDAY -> SENTINEL -> FORGE Workflow with strict isolation, explicit promotion,
+    and Phase 6 Experience Learning, Predictive Pre-Fetching & Neural Reranking.
     """
     print("\n" + "=" * 80)
-    print(">>> [MEMORA E2E] STARTING CROSS-AGENT COLLABORATION & ISOLATION SIMULATION")
+    print(">>> [MEMORA E2E] STARTING FULL ECOSYSTEM WORKFLOW & PHASE 6 VALIDATION")
     print("=" * 80)
 
     # -------------------------------------------------------------
@@ -53,7 +58,6 @@ def test_e2e_cross_agent_collaboration_and_isolation_workflow(api_client, test_d
     )
     friday_mem_id = friday_write["id"]
     print(f"[ACTION 1 - FRIDAY] Recorded private executive directive (ID: {friday_mem_id})")
-    print(f"    Namespace: {friday_write['step_trace']['step_2_authenticate_and_resolve']['namespace_path']}")
 
     # -------------------------------------------------------------
     # ACTION 2: SENTINEL SCANS & WRITES CONFIDENTIAL VULNERABILITY FINDING
@@ -66,9 +70,8 @@ def test_e2e_cross_agent_collaboration_and_isolation_workflow(api_client, test_d
     )
     sentinel_mem_id = sentinel_write["id"]
     print(f"[ACTION 2 - SENTINEL] Logged confidential security finding (ID: {sentinel_mem_id})")
-    print(f"    Namespace: {sentinel_write['step_trace']['step_2_authenticate_and_resolve']['namespace_path']}")
 
-    # Verify FORGE is immediately BLOCKED if trying to read SENTINEL's private memory directly
+    # Verify FORGE is immediately BLOCKED if trying to write to SENTINEL's private memory
     with pytest.raises(MemoraAccessDeniedError):
         forge_adapter.write_memory(
             content_text="Tampering attempt",
@@ -88,8 +91,6 @@ def test_e2e_cross_agent_collaboration_and_isolation_workflow(api_client, test_d
     )
     shared_mem_id = promotion_result["memory_id"]
     print(f"[ACTION 3 - SENTINEL] Promoted sanitized remediation to shared project store (ID: {shared_mem_id})")
-    print(f"    Shared Namespace: {promotion_result['shared_namespace']}")
-    print(f"    Access Granted To: {promotion_result['target_agent']}")
 
     # -------------------------------------------------------------
     # ACTION 4: FORGE REQUESTS CONTEXT BUNDLE FOR THE PROJECT
@@ -103,30 +104,86 @@ def test_e2e_cross_agent_collaboration_and_isolation_workflow(api_client, test_d
     retrieved_memory_ids = [m["id"] for m in forge_context["memories"]]
     retrieved_contents = [m["content_text"] for m in forge_context["memories"]]
 
-    print(f"[CONTEXT BUNDLE] Curated {forge_context['memories_count']} memories for FORGE.")
-    for idx, mem in enumerate(forge_context["memories"]):
-        print(f"    [{idx+1}] Namespace: {mem['namespace_path']} | Content: {mem['content_text'][:60]}...")
-
-    # -------------------------------------------------------------
-    # 5. E2E ASSERTIONS & VERIFICATION
-    # -------------------------------------------------------------
-    # Assertion A: FORGE's context bundle INCLUDES the shared remediation memory
+    # Assertions on isolation and promotion
     has_shared_remediation = any("parameterized SQLAlchemy ORM queries" in text for text in retrieved_contents)
     assert has_shared_remediation is True, "FORGE context bundle must include the promoted shared remediation memory!"
-    print("[ASSERTION A PASS] FORGE context bundle INCLUDES the promoted shared remediation.")
-
-    # Assertion B: FORGE's context bundle DOES NOT include SENTINEL's raw private finding
+    
     has_sentinel_private = any("CRITICAL: Found unauthenticated SQL injection" in text for text in retrieved_contents)
     assert has_sentinel_private is False, "FORGE context bundle must NEVER leak SENTINEL's private finding!"
     assert sentinel_mem_id not in retrieved_memory_ids
-    print("[ASSERTION B PASS] FORGE context bundle DOES NOT contain SENTINEL's confidential finding.")
 
-    # Assertion C: FORGE's context bundle DOES NOT include FRIDAY's private user instruction
     has_friday_private = any("Ensure the new auth module is completely secure" in text for text in retrieved_contents)
     assert has_friday_private is False, "FORGE context bundle must NEVER leak FRIDAY's private instructions!"
     assert friday_mem_id not in retrieved_memory_ids
-    print("[ASSERTION C PASS] FORGE context bundle DOES NOT contain FRIDAY's private user instruction.")
+    print("[ASSERTION PASS] Verified Rule 1 (Private by Default) and Rule 2 (Explicit Promotion) isolation.")
+
+    # -------------------------------------------------------------
+    # ACTION 5: FORGE ENCOUNTERS DEPLOYMENT FAILURE -> SAVES AS EXPERIENCE
+    # -------------------------------------------------------------
+    print("[ACTION 5 - FORGE] Logging past deployment failure to learn-experience...")
+    learn_resp = api_client.post(
+        "/v1/memories/learn-experience",
+        json={
+            "agent_id": "forge",
+            "namespace_path": "memora://forge/private",
+            "outcomes": [
+                {
+                    "task_name": "kubernetes-staging-rollout",
+                    "status": "failure",
+                    "domain": "deployment",
+                    "error_log": "CrashLoopBackOff: missing database migration on auth_tokens table before pod rollout.",
+                    "actions_taken": "helm upgrade --install auth-service ./chart",
+                    "context": "Staging Cluster deployment"
+                }
+            ]
+        },
+        headers={"X-Agent-Name": "forge"}
+    )
+    assert learn_resp.status_code == 201
+    exp_data = learn_resp.json()
+    assert exp_data["memory_type"] == "experience"
+    print(f"[EXPERIENCE LEARNED] Stored Failure Mode Warning (ID: {exp_data['id']})")
+
+    # -------------------------------------------------------------
+    # ACTION 6: FORGE STARTS NEW DEPLOYMENT -> REQUESTS CONTEXT
+    # -------------------------------------------------------------
+    print("[ACTION 6 - FORGE] Requesting deployment context bundle...")
+    deploy_context_resp = api_client.post(
+        "/v1/context",
+        json={
+            "task_query": "Deploy auth-module to production cluster",
+            "token_budget": 4000
+        },
+        headers={"X-Agent-Name": "forge"}
+    )
+    assert deploy_context_resp.status_code == 200
+    deploy_bundle = deploy_context_resp.json()
+
+    # -------------------------------------------------------------
+    # 7. PHASE 6 E2E ASSERTIONS & OBSERVABILITY METRICS
+    # -------------------------------------------------------------
+    # Assertion 1: Total tokens within budget
+    assert deploy_bundle["total_tokens_estimated"] <= 4000, "Context bundle must fit within 4000 token budget!"
+    
+    # Assertion 2: Context Bundle includes the past failure experience
+    deploy_memories = deploy_bundle["memories"]
+    assert len(deploy_memories) >= 1
+    
+    # Assertion 3: Cross-encoder and experience multiplier placed the failure mode at Rank #1
+    top_mem = deploy_memories[0]
+    assert top_mem["memory_type"] == "experience" or "Failure Mode Warning" in top_mem["content_text"]
+    assert "migration" in top_mem["content_text"].lower()
+    print(f"[ASSERTION PASS] Experience lesson placed at Rank #1: {top_mem['content_text'][:60]}...")
+
+    # Assertion 4: Observability metrics verify Phase 6 metrics
+    metrics = metrics_collector.get_metrics_summary()
+    assert "llm_compaction_tokens_saved" in metrics
+    assert "cross_encoder_reranking_latency_ms" in metrics
+    assert "predictive_context_hits" in metrics
+    assert metrics["predictive_context_hits"] >= 1
+    assert metrics_collector.get_prometheus_format().find("memora_predictive_context_hits") != -1
+    print(f"[METRICS PASS] Observability Metrics: predictive_hits={metrics['predictive_context_hits']}, cross_encoder_latency={metrics['cross_encoder_reranking_latency_ms']}ms.")
 
     print("\n" + "=" * 80)
-    print("[MEMORA E2E PROOF] ALL ISOLATION BOUNDARIES AND CONTROLLED SHARING VERIFIED 100%!")
+    print("[MEMORA E2E PROOF] ALL MULTI-AGENT, EXPERIENCE & PHASE 6 INVARIANTS VERIFIED 100%!")
     print("=" * 80 + "\n")

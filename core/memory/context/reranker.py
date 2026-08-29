@@ -5,12 +5,14 @@ and predictive Experience / Failure-Mode prioritization.
 """
 import os
 import math
+import time
 import re
 import logging
 from typing import List, Tuple, Optional, Dict, Any
 from datetime import datetime, timezone
 from storage.relational.models import MemoryRecord, MemoryType
 from core.memory.search_service import SearchResultItem
+from core.metrics.collector import metrics_collector
 
 logger = logging.getLogger(__name__)
 
@@ -50,22 +52,27 @@ class NeuralCrossEncoderEngine:
         if not texts:
             return []
 
+        start_time = time.time()
         model = cls.get_model()
+        scores = []
+
         if model is not None:
             try:
                 pairs = [[query, text] for text in texts]
                 raw_scores = model.predict(pairs)
-                normalized = []
                 for s in raw_scores:
                     val = float(s)
                     score = 1.0 / (1.0 + math.exp(-val)) if (val < 0 or val > 1) else max(0.0, min(1.0, val))
-                    normalized.append(score)
-                return normalized
+                    scores.append(score)
             except Exception as e:
                 logger.warning(f"CrossEncoder inference failed ({e}). Falling back to semantic overlap.")
+                scores = [cls._compute_semantic_interaction(query, text) for text in texts]
+        else:
+            scores = [cls._compute_semantic_interaction(query, text) for text in texts]
 
-        # High-precision semantic interaction cross-encoder
-        return [cls._compute_semantic_interaction(query, text) for text in texts]
+        elapsed_ms = (time.time() - start_time) * 1000
+        metrics_collector.record_cross_encoder_latency(elapsed_ms)
+        return scores
 
     @staticmethod
     def _compute_semantic_interaction(query: str, text: str) -> float:

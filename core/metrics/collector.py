@@ -1,7 +1,8 @@
 ﻿"""
 Observability Metrics Engine for Memora
 Tracks Retrieval relevance, Context usefulness, Staleness rate, Contradiction rate,
-Write success rate, Policy denial rate, and Latencies.
+Write success rate, Policy denial rate, Latencies, and Phase 6 Advanced Metrics
+(llm_compaction_tokens_saved, cross_encoder_reranking_latency_ms, predictive_context_hits).
 """
 import time
 from typing import Dict, Any, List
@@ -18,6 +19,11 @@ class MetricsCollector:
         self.policy_evaluations = 0
         self.policy_denials = 0
         self.contradictions_detected = 0
+
+        # Phase 6 Advanced Metrics
+        self.llm_compaction_tokens_saved = 0
+        self.predictive_context_hits = 0
+        self.cross_encoder_latencies_ms: deque = deque(maxlen=max_history)
 
         # Rolling sample deques
         self.relevance_scores: deque = deque(maxlen=max_history)
@@ -53,6 +59,17 @@ class MetricsCollector:
         if latency_ms > 0:
             self.latencies_ms.append(latency_ms)
 
+    def record_compaction(self, tokens_saved: int):
+        if tokens_saved > 0:
+            self.llm_compaction_tokens_saved += tokens_saved
+
+    def record_cross_encoder_latency(self, latency_ms: float):
+        if latency_ms > 0:
+            self.cross_encoder_latencies_ms.append(latency_ms)
+
+    def record_predictive_hit(self):
+        self.predictive_context_hits += 1
+
     def _percentile(self, values: List[float], p: float) -> float:
         if not values:
             return 0.0
@@ -80,6 +97,9 @@ class MetricsCollector:
         p95 = self._percentile(lat_list, 0.95)
         p99 = self._percentile(lat_list, 0.99)
 
+        ce_lat_list = list(self.cross_encoder_latencies_ms)
+        ce_avg = sum(ce_lat_list) / len(ce_lat_list) if ce_lat_list else 0.0
+
         return {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "write_success_rate": round(write_rate, 4),
@@ -90,6 +110,9 @@ class MetricsCollector:
             "staleness_rate": round(staleness_rate, 4),
             "total_writes": self.write_attempts,
             "total_policy_evaluations": self.policy_evaluations,
+            "llm_compaction_tokens_saved": self.llm_compaction_tokens_saved,
+            "cross_encoder_reranking_latency_ms": round(ce_avg, 2),
+            "predictive_context_hits": self.predictive_context_hits,
             "latencies_ms": {
                 "p50": p50,
                 "p95": p95,
@@ -118,6 +141,15 @@ class MetricsCollector:
             f"# HELP memora_staleness_rate Percentage of retrieved memories > 30 days old",
             f"# TYPE memora_staleness_rate gauge",
             f"memora_staleness_rate {s['staleness_rate']}",
+            f"# HELP memora_llm_compaction_tokens_saved Total tokens saved via LLM summarization compaction",
+            f"# TYPE memora_llm_compaction_tokens_saved counter",
+            f"memora_llm_compaction_tokens_saved {s['llm_compaction_tokens_saved']}",
+            f"# HELP memora_cross_encoder_reranking_latency_ms Average latency of neural cross-encoder in milliseconds",
+            f"# TYPE memora_cross_encoder_reranking_latency_ms gauge",
+            f"memora_cross_encoder_reranking_latency_ms {s['cross_encoder_reranking_latency_ms']}",
+            f"# HELP memora_predictive_context_hits Number of times experience memories were predictively injected",
+            f"# TYPE memora_predictive_context_hits counter",
+            f"memora_predictive_context_hits {s['predictive_context_hits']}",
             f"# HELP memora_latency_ms API latency in milliseconds",
             f"# TYPE memora_latency_ms summary",
             f'memora_latency_ms{{quantile="0.5"}} {s["latencies_ms"]["p50"]}',
