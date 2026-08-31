@@ -21,5 +21,5 @@ def health_check(db: Session = Depends(get_db)):
         "status": "healthy" if db_status == "healthy" else "degraded",
         "service": "memora-api",
         "database": db_status,
-        "version": "0.1.0"
+        "version": "2.0.0"
     }

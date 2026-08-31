@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
 
     # Database
-    DATABASE_URL: str = "postgresql+psycopg2://memora_user:memora_password@localhost:5432/memora_db"
+    DATABASE_URL: str = "sqlite:///./data/memora.db"
     SQLITE_FALLBACK_URL: str = "sqlite:///./data/memora.db"
     USE_SQLITE_FALLBACK: bool = True
     DB_ECHO: bool = False

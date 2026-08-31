@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="MEMORA API",
     description="Persistent Memory & Context Infrastructure Layer for AI Agent Ecosystems",
-    version="0.1.0",
+    version="2.0.0",
     lifespan=lifespan
 )
 
