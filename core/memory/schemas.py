@@ -52,6 +52,7 @@ class AccessGrantRead(BaseModel):
 class NamespaceCreate(BaseModel):
     path: str = Field(..., min_length=3, max_length=256, description="URI format path (e.g. 'memora://forge/projects/alpha')")
     type: NamespaceType = Field(default=NamespaceType.AGENT_PRIVATE)
+    agent_id: Optional[str] = None
     agent_name: Optional[str] = None
 
 class NamespaceRead(BaseModel):
