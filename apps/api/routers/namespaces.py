@@ -26,13 +26,22 @@ def list_namespaces(agent_id: Optional[str] = None, db: Session = Depends(get_db
 
 @router.post("/grants", response_model=AccessGrantRead, status_code=status.HTTP_201_CREATED)
 def grant_namespace_access(grant_in: AccessGrantCreate, db: Session = Depends(get_db)):
+    target_ns_id = grant_in.namespace_id
+    if not target_ns_id and grant_in.namespace_path:
+        ns = IdentityService.get_namespace_by_path(db, grant_in.namespace_path)
+        if not ns:
+            ns = IdentityService.resolve_namespace(db, grant_in.namespace_path)
+        target_ns_id = ns.id
+
     grant = IdentityService.grant_access(
         db,
         agent_id=grant_in.agent_id,
-        namespace_id=grant_in.namespace_id,
+        agent_name=grant_in.agent_name,
+        namespace_id=target_ns_id,
         actions=grant_in.actions,
         purpose=grant_in.purpose,
-        expires_at=grant_in.expires_at
+        expires_at=grant_in.expires_at,
+        ttl_hours=grant_in.ttl_hours
     )
     return grant
 

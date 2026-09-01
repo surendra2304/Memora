@@ -241,3 +241,28 @@ def test_audit_trail_logging_on_every_policy_evaluation(test_db):
     approved_log = next(l for l in logs if l.action == "policy_approved" and l.actor_id == agent2.id)
     assert approved_log.details["allowed"] is True
     assert approved_log.details["dimensions"]["why"]["purpose"] == "legitimate_read"
+
+def test_policy_action_permission_gating(test_db):
+    """
+    Test granular action capability gating: read grant cannot delete or supersede.
+    """
+    agent = IdentityService.register_agent(test_db, "auditor")
+    target_ns = IdentityService.resolve_namespace(test_db, "memora://shared/compliance", default_type=NamespaceType.PROJECT_PRIVATE)
+
+    # Grant read-only access
+    IdentityService.grant_access(
+        test_db,
+        agent_id=agent.id,
+        namespace_id=target_ns.id,
+        actions=["read", "query"],
+        purpose="Compliance audit"
+    )
+
+    # Read/Query allowed
+    assert PolicyEngine.evaluate_access(test_db, agent, target_ns, "read").allowed is True
+    assert PolicyEngine.evaluate_access(test_db, agent, target_ns, "query").allowed is True
+
+    # Write, Verify, Supersede, Delete rejected
+    assert PolicyEngine.evaluate_access(test_db, agent, target_ns, "write").allowed is False
+    assert PolicyEngine.evaluate_access(test_db, agent, target_ns, "verify").allowed is False
+    assert PolicyEngine.evaluate_access(test_db, agent, target_ns, "delete").allowed is False

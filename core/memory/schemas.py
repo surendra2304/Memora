@@ -29,10 +29,13 @@ class SubAgentCreate(BaseModel):
     bounded_scope: str = Field(..., description="Target bounded namespace subtree (e.g. 'memora://forge/projects/app-17')")
 
 class AccessGrantCreate(BaseModel):
-    agent_name: str
-    namespace_path: str
+    agent_id: Optional[str] = None
+    agent_name: Optional[str] = None
+    namespace_id: Optional[str] = None
+    namespace_path: Optional[str] = None
     actions: List[str] = Field(default_factory=lambda: ["read"])
     purpose: Optional[str] = None
+    expires_at: Optional[datetime] = None
     ttl_hours: Optional[int] = None
 
 class AccessGrantRead(BaseModel):

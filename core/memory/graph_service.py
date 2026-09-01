@@ -73,7 +73,7 @@ class GraphService:
         # Find existing active memories with overlapping text/entities
         existing_records = db.query(MemoryRecord).filter(
             MemoryRecord.id != memory_record.id,
-            MemoryRecord.lifecycle_state.in_(["active", "verified"])
+            MemoryRecord.lifecycle_state.in_([LifecycleState.ACTIVE, LifecycleState.VERIFIED])
         ).order_by(MemoryRecord.created_at.desc()).limit(50).all()
 
         created_edges = []

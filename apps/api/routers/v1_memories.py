@@ -142,7 +142,7 @@ def write_memory_event(
             )
         )
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=422,
             detail={"error": "SecurityPolicyViolation", "message": str(e), "flagged_secrets": e.secret_types}
         )
     except PermissionDeniedError as e:

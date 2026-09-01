@@ -165,3 +165,27 @@ def test_api_v1_memories_secret_rejection(client: TestClient):
     assert resp.status_code == 422
     err_data = resp.json()
     assert "SecurityPolicyViolation" in str(err_data)
+
+def test_api_v1_memories_edge_cases_empty_and_unicode(client: TestClient):
+    """
+    Test edge cases: empty strings, whitespace, and special unicode handling.
+    """
+    # 1. Empty payload rejection
+    empty_payload = {
+        "content_text": "   ",
+        "target_namespace_path": "memora://friday/private"
+    }
+    resp = client.post("/v1/memories", json=empty_payload, headers={"X-Agent-Name": "friday"})
+    assert resp.status_code == 400 or resp.status_code == 422
+
+    # 2. Rich Unicode & Multilingual Payload
+    unicode_payload = {
+        "content_text": "⚡ 🧠 Memora 认知记忆引擎: 支持多语言 (Japanese: 記憶, Hindi: स्मृति, Arabic: ذاكرة) and mathematical formulas: E = mc².",
+        "target_namespace_path": "memora://friday/private",
+        "memory_type": "semantic"
+    }
+    uni_resp = client.post("/v1/memories", json=unicode_payload, headers={"X-Agent-Name": "friday"})
+    assert uni_resp.status_code == 201
+    uni_data = uni_resp.json()
+    assert "Memora 认知记忆引擎" in uni_data["content_text"]
+    assert uni_data["memory_type"] == "semantic"

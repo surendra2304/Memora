@@ -127,8 +127,11 @@ class AccessGrant(Base):
             return False
         now = datetime.now(timezone.utc)
         if self.expires_at.tzinfo is None:
-            return datetime.utcnow() > self.expires_at
-        return now > self.expires_at
+            # Assume UTC if naive
+            exp = self.expires_at.replace(tzinfo=timezone.utc)
+        else:
+            exp = self.expires_at
+        return now > exp
 
     def __repr__(self) -> str:
         return f"<AccessGrant(id={self.id}, agent_id={self.agent_id}, namespace_id={self.namespace_id})>"
