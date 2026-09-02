@@ -24,9 +24,11 @@ def _ensure_sqlite_dir(url: str):
 
 def create_db_engine():
     db_url = settings.DATABASE_URL
-    try:
-        if db_url.startswith("postgresql"):
-            # Test if postgres is available
+    turso_token = settings.TURSO_AUTH_TOKEN or os.getenv("TURSO_AUTH_TOKEN", "")
+
+    # 1. PostgreSQL connection
+    if db_url.startswith("postgresql"):
+        try:
             engine = create_engine(
                 db_url,
                 pool_pre_ping=True,
@@ -39,21 +41,41 @@ def create_db_engine():
                 conn.execute(text("SELECT 1"))
             logger.info("Successfully connected to PostgreSQL database.")
             return engine
-    except Exception as e:
-        if settings.USE_SQLITE_FALLBACK:
+        except Exception as e:
+            if settings.USE_SQLITE_FALLBACK:
+                fallback_url = settings.SQLITE_FALLBACK_URL
+                _ensure_sqlite_dir(fallback_url)
+                logger.warning(f"PostgreSQL unavailable ({e}). Falling back to SQLite: {fallback_url}")
+                return create_engine(
+                    fallback_url,
+                    connect_args={"check_same_thread": False},
+                    echo=settings.DB_ECHO
+                )
+            raise e
+
+    # 2. Turso cloud database connection (libsql:// or https://)
+    if "turso.io" in db_url or db_url.startswith("libsql://"):
+        try:
+            # Format SQLite driver URL for Turso / libSQL
+            clean_url = db_url.replace("libsql://", "sqlite+https://") if db_url.startswith("libsql://") else f"sqlite+{db_url}"
+            if turso_token and "authToken" not in clean_url:
+                clean_url = f"{clean_url}?authToken={turso_token}&secure=true"
+            engine = create_engine(clean_url, echo=settings.DB_ECHO)
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            logger.info("Successfully connected to Turso cloud database.")
+            return engine
+        except Exception as e:
             fallback_url = settings.SQLITE_FALLBACK_URL
             _ensure_sqlite_dir(fallback_url)
-            logger.warning(f"PostgreSQL unavailable ({e}). Falling back to SQLite: {fallback_url}")
-            fallback_engine = create_engine(
+            logger.warning(f"Turso cloud direct driver unavailable ({e}). Falling back to local SQLite: {fallback_url}")
+            return create_engine(
                 fallback_url,
                 connect_args={"check_same_thread": False},
                 echo=settings.DB_ECHO
             )
-            return fallback_engine
-        else:
-            raise e
 
-    # Default to sqlite if specified directly
+    # 3. Standard SQLite connection
     _ensure_sqlite_dir(db_url)
     return create_engine(
         db_url,

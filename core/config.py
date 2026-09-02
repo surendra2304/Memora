@@ -16,6 +16,8 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = "sqlite:///./data/memora.db"
+    TURSO_DATABASE_URL: Optional[str] = None
+    TURSO_AUTH_TOKEN: Optional[str] = None
     SQLITE_FALLBACK_URL: str = "sqlite:///./data/memora.db"
     USE_SQLITE_FALLBACK: bool = True
     DB_ECHO: bool = False
