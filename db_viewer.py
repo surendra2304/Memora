@@ -3,6 +3,7 @@ Turso Cloud & Local Database Inspection CLI for Memora
 """
 import os
 import sys
+import json
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 import pandas as pd
@@ -12,19 +13,24 @@ pd.set_option("display.max_rows", None)
 pd.set_option("display.width", 1000)
 pd.set_option("display.max_colwidth", None)
 
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
-
 load_dotenv()
 
 def get_engine():
-    # If user explicitly specifies a local sqlite file
     if len(sys.argv) > 1 and (sys.argv[1].endswith(".db") or sys.argv[1].endswith(".sqlite")):
         target_db = sys.argv[1]
         print(f"[*] Reading from local file: {target_db}")
         return create_engine(f"sqlite:///{target_db}")
 
     db_url = os.getenv("DATABASE_URL", "sqlite:///./data/memora.db")
+    turso_token = os.getenv("TURSO_AUTH_TOKEN", "")
+
+    if "turso.io" in db_url or db_url.startswith("libsql://"):
+        clean_url = db_url.replace("libsql://", "sqlite+https://") if db_url.startswith("libsql://") else f"sqlite+{db_url}"
+        if turso_token and "authToken" not in clean_url:
+            clean_url = f"{clean_url}?authToken={turso_token}&secure=true"
+        print("[*] Connecting to live Turso Cloud DB...")
+        return create_engine(clean_url)
+
     print(f"[*] Connecting to database: {db_url}")
     return create_engine(db_url)
 
@@ -63,6 +69,41 @@ def show_all_memories_clearly():
             print(f"    Memory    : {row['memory_content'].strip()}")
             print("-" * 90)
 
+def show_events(limit=25):
+    query = f"""
+        SELECT 
+            COALESCE(a.name, 'SYSTEM') AS agent,
+            l.action,
+            l.timestamp,
+            l.details
+        FROM audit_logs l
+        LEFT JOIN agents a ON l.actor_id = a.id
+        ORDER BY l.timestamp DESC
+        LIMIT {limit};
+    """
+    with engine.connect() as conn:
+        df = pd.read_sql(text(query), conn)
+        print("\n" + "="*90)
+        print(f"RECENT EVENTS & SECURITY AUDIT LOGS (LAST {len(df)})")
+        print("="*90)
+        for idx, row in df.iterrows():
+            details = row['details']
+            if isinstance(details, str):
+                try:
+                    details = json.loads(details)
+                except Exception:
+                    pass
+            
+            allowed = details.get("allowed") if isinstance(details, dict) else "N/A"
+            rule = details.get("rule_matched") if isinstance(details, dict) else "N/A"
+            reason = details.get("reason") if isinstance(details, dict) else str(details)
+
+            print(f"\n[{idx+1}] ACTION: {row['action'].upper()} | AGENT: {row['agent'].upper()} | ALLOWED: {allowed}")
+            print(f"    Rule Matched : {rule}")
+            print(f"    Timestamp    : {row['timestamp']}")
+            print(f"    Reason       : {reason}")
+            print("-" * 90)
+
 def show_agent_summary():
     query = """
         SELECT 
@@ -85,7 +126,7 @@ def show_agent_summary():
 
 def print_summary():
     print("\n" + "="*50)
-    print("TURSO DATABASE SUMMARY")
+    print("DATABASE SUMMARY")
     print("="*50)
     tables = [
         "agents", "namespaces", "memory_records",
@@ -133,7 +174,9 @@ def interactive_shell():
 if __name__ == "__main__":
     arg = sys.argv[1] if len(sys.argv) > 1 else "memories"
     
-    if arg == "agents":
+    if arg in ["events", "audit", "logs"]:
+        show_events(25)
+    elif arg == "agents":
         show_agents()
     elif arg == "namespaces":
         show_namespaces()
