@@ -3,6 +3,7 @@ Hybrid Multi-Modal Search Service for Memora
 Combines Dense Semantic Vector Search, Keyword Full-Text Search, Graph Traversal, and Reciprocal Rank Fusion (RRF).
 """
 from typing import List, Optional, Dict, Any
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, func
 
@@ -56,32 +57,38 @@ class SearchService:
         db: Session,
         query_text: str,
         actor_name: Optional[str] = None,
+        tenant_id: Optional[str] = None,
         namespace_path: Optional[str] = None,
         memory_types: Optional[List[MemoryType]] = None,
         min_score: float = 0.0,
         limit: int = 10,
         include_superseded: bool = False,
         include_archived: bool = False,
+        include_expired: bool = False,
         vector_weight: float = 0.50,
         keyword_weight: float = 0.35,
         graph_weight: float = 0.15,
+        entity_boost_weight: float = 0.10,
+        purpose: Optional[str] = None,
         rrf_k: int = 60
     ) -> List[SearchResultItem]:
         actor = IdentityService.get_agent_by_name(db, actor_name) if actor_name else None
+        resolved_tenant: str = str(tenant_id or (getattr(actor, "tenant_id", "default") if actor else "default"))
 
         # -------------------------------------------------------------
-        # 1. SEMANTIC VECTOR SEARCH
+        # 1. SEMANTIC VECTOR SEARCH (STRICT TENANT ISOLATION)
         # -------------------------------------------------------------
         query_vector = EmbeddingGenerator.generate_embedding(query_text)
         vector_hits = vector_adapter.search_similarity(
             query_vector=query_vector,
+            tenant_id=resolved_tenant,
             limit=limit * 3,
             score_threshold=0.30
         )
         vector_ranks = {hit.memory_id: (rank + 1, hit.score) for rank, hit in enumerate(vector_hits)}
 
         # -------------------------------------------------------------
-        # 2. KEYWORD / FULL-TEXT SEARCH
+        # 2. KEYWORD / FULL-TEXT SEARCH (STRICT TENANT ISOLATION)
         # -------------------------------------------------------------
         allowed_states = [LifecycleState.ACTIVE, LifecycleState.VERIFIED, LifecycleState.CANDIDATE]
         if include_superseded:
@@ -90,6 +97,7 @@ class SearchService:
             allowed_states.append(LifecycleState.ARCHIVED)
 
         kw_query = db.query(MemoryRecord).join(Namespace).filter(
+            MemoryRecord.tenant_id == resolved_tenant,
             MemoryRecord.lifecycle_state.in_(allowed_states)
         )
         if namespace_path:
@@ -125,12 +133,33 @@ class SearchService:
 
         records = db.query(MemoryRecord).filter(
             MemoryRecord.id.in_(all_candidate_ids),
+            MemoryRecord.tenant_id == resolved_tenant,
             MemoryRecord.lifecycle_state.in_(allowed_states)
         ).all()
         record_map = {r.id: r for r in records}
 
+        now_utc = datetime.now(timezone.utc)
+        def _to_utc(dt: Optional[datetime]) -> Optional[datetime]:
+            if dt is None:
+                return None
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+
         scored_results: List[SearchResultItem] = []
         for mem_id, record in record_map.items():
+            # Temporal validity filter: valid_from <= now <= valid_until and expires_at > now
+            if not include_expired:
+                exp = _to_utc(record.expires_at)
+                v_from = _to_utc(record.valid_from)
+                v_until = _to_utc(record.valid_until)
+                if exp and now_utc > exp:
+                    continue
+                if v_from and now_utc < v_from:
+                    continue
+                if v_until and now_utc > v_until:
+                    continue
+
             # Policy Gate Check
             if actor:
                 decision = PolicyEngine.evaluate_access(
@@ -138,6 +167,7 @@ class SearchService:
                     actor=actor,
                     namespace=record.namespace,
                     action="read",
+                    purpose=purpose,
                     memory_id=record.id,
                     log_audit=False
                 )
@@ -162,8 +192,18 @@ class SearchService:
                 rrf_score += graph_weight * g_boost
                 reasons.append(f"Graph connection boost (+{g_boost:.2f})")
 
-            # Scale RRF score to 0.0-1.0 range
-            normalized_final = min(1.0, rrf_score * (rrf_k / 2))
+            # Entity boost
+            entity_boost = 0.0
+            if record.entities:
+                query_lower = query_text.lower()
+                for ent in record.entities:
+                    if ent.lower() in query_lower:
+                        entity_boost += entity_boost_weight
+                        reasons.append(f"Entity match boost: '{ent}' (+{entity_boost_weight:.2f})")
+                        break
+
+            # Scale RRF score to 0.0-1.0 range + entity boost
+            normalized_final = min(1.0, (rrf_score * (rrf_k / 2)) + entity_boost)
 
             if normalized_final >= min_score:
                 scored_results.append(
@@ -177,5 +217,13 @@ class SearchService:
                     )
                 )
 
-        scored_results.sort(key=lambda x: x.final_score, reverse=True)
+        # Deterministic sort with tie-breaking: (-final_score, -confidence, -created_at timestamp, id)
+        scored_results.sort(
+            key=lambda x: (
+                -round(x.final_score, 4),
+                -round(x.record.confidence, 4),
+                -(x.record.created_at.timestamp() if x.record.created_at else 0.0),
+                x.record.id
+            )
+        )
         return scored_results[:limit]

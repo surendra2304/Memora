@@ -14,7 +14,8 @@ from storage.relational.models import (
     NamespaceType,
     MemoryType,
     LifecycleState,
-    AuditLog
+    AuditLog,
+    DeletionTombstone,
 )
 from storage.vector.qdrant_adapter import vector_adapter
 from core.identity.service import IdentityService
@@ -38,38 +39,44 @@ class MemoryService:
         actor_name: Optional[str] = None,
         purpose: Optional[str] = None
     ) -> MemoryRecord:
+        tenant_id = getattr(memory_in, "tenant_id", "default")
+
         # Resolve Owner Agent
         if memory_in.owner_id:
             owner = IdentityService.get_agent_by_id(db, memory_in.owner_id)
         elif memory_in.owner_name:
             owner = IdentityService.get_agent_by_name(db, memory_in.owner_name)
             if not owner:
-                owner = IdentityService.register_agent(db, memory_in.owner_name)
+                owner = IdentityService.register_agent(db, memory_in.owner_name, tenant_id=tenant_id)
         else:
-            actor = actor_name or "friday"
-            owner = IdentityService.register_agent(db, actor)
+            actor_h = actor_name or "friday"
+            owner = IdentityService.register_agent(db, actor_h, tenant_id=tenant_id)
 
         # Resolve Actor Agent
         actor = IdentityService.get_agent_by_name(db, actor_name) if actor_name else owner
         if not actor:
-            actor = IdentityService.register_agent(db, actor_name or "unknown")
+            actor = IdentityService.register_agent(db, actor_name or "unknown", tenant_id=tenant_id)
 
         # Resolve Namespace
         if memory_in.namespace_id:
             namespace = db.query(Namespace).filter(Namespace.id == memory_in.namespace_id).first()
         elif memory_in.namespace_path:
-            namespace = IdentityService.resolve_namespace(db, memory_in.namespace_path, owner_agent_id=owner.id)
+            namespace = IdentityService.resolve_namespace(db, memory_in.namespace_path, owner_agent_id=owner.id, tenant_id=tenant_id)
         else:
             ns_path = f"memora://{owner.name}/private"
-            namespace = IdentityService.resolve_namespace(db, ns_path, owner_agent_id=owner.id)
+            namespace = IdentityService.resolve_namespace(db, ns_path, owner_agent_id=owner.id, tenant_id=tenant_id)
+
+        if not namespace:
+            raise MemoryNotFoundError("Target namespace could not be resolved.")
 
         # Policy Check
         decision = PolicyEngine.evaluate_access(db, actor, namespace, action="write", purpose=purpose)
-        if not decision:
+        if not decision.allowed:
             raise PermissionDeniedError(decision.reason)
 
         # Create record
         record = MemoryRecord(
+            tenant_id=tenant_id,
             namespace_id=namespace.id,
             owner_id=owner.id,
             memory_type=memory_in.memory_type,
@@ -78,13 +85,16 @@ class MemoryService:
             provenance=memory_in.provenance or {},
             confidence=memory_in.confidence,
             importance=memory_in.importance,
-            lifecycle_state=memory_in.lifecycle_state or LifecycleState.CANDIDATE
+            lifecycle_state=memory_in.lifecycle_state or LifecycleState.CANDIDATE,
+            valid_from=memory_in.valid_from,
+            valid_until=memory_in.valid_until,
+            expires_at=memory_in.expires_at,
+            entities=memory_in.entities or [],
         )
         db.add(record)
-        db.commit()
-        db.refresh(record)
+        db.flush()
 
-        # Audit Log for creation
+        # Audit Log for creation (single atomic transaction)
         PolicyEngine.log_audit_decision(
             db,
             PolicyDecision(
@@ -94,8 +104,11 @@ class MemoryService:
                 dimensions={"namespace_path": namespace.path, "memory_type": record.memory_type.value}
             ),
             actor_id=actor.id,
-            memory_id=record.id
+            memory_id=record.id,
+            tenant_id=tenant_id
         )
+        db.commit()
+        db.refresh(record)
         return record
 
     @staticmethod
@@ -147,6 +160,12 @@ class MemoryService:
 
         q = db.query(MemoryRecord).join(Namespace).join(Agent, MemoryRecord.owner_id == Agent.id)
 
+        # 1. Strict Tenant Isolation
+        target_tenant = getattr(query, "tenant_id", "default")
+        if actor:
+            target_tenant = getattr(actor, "tenant_id", target_tenant)
+        q = q.filter(MemoryRecord.tenant_id == target_tenant)
+
         if query.query_text:
             q = q.filter(MemoryRecord.content_text.ilike(f"%{query.query_text}%"))
 
@@ -182,18 +201,19 @@ class MemoryService:
         if query.min_importance:
             q = q.filter(MemoryRecord.importance >= query.min_importance)
 
-        results = q.order_by(MemoryRecord.created_at.desc()).offset(query.offset).limit(query.limit).all()
+        # Retrieve candidate matches ordered by created_at
+        candidates = q.order_by(MemoryRecord.created_at.desc()).all()
 
-        # Filter out records where actor lacks read access (for cross-namespace queries)
+        # Filter out records where actor lacks read access BEFORE pagination
         if actor:
             accessible_results = []
-            for r in results:
+            for r in candidates:
                 dec = PolicyEngine.evaluate_access(db, actor, r.namespace, action="read", purpose=purpose, memory_id=r.id, log_audit=False)
                 if dec.allowed:
                     accessible_results.append(r)
-            return accessible_results
+            return accessible_results[query.offset : query.offset + query.limit]
 
-        return results
+        return candidates[query.offset : query.offset + query.limit]
 
     @staticmethod
     def transition_memory_state(
@@ -328,32 +348,64 @@ class MemoryService:
         actor = IdentityService.get_agent_by_name(db, actor_name) if actor_name else None
         if actor:
             decision = PolicyEngine.evaluate_access(db, actor, record.namespace, action="delete", memory_id=record.id)
-            if not decision:
+            if not decision.allowed:
                 raise PermissionDeniedError(decision.reason)
 
+        tenant_id = getattr(record, "tenant_id", "default")
         if hard_delete:
-            vector_adapter.delete_embedding(memory_id)
+            tombstone = DeletionTombstone(
+                tenant_id=tenant_id,
+                memory_id=memory_id,
+                relational_deleted=False,
+                vector_deleted=False,
+                cache_deleted=False,
+                graph_deleted=False,
+                status="DELETE_REQUESTED"
+            )
+            db.add(tombstone)
+            db.flush()
+
+            # 1. Vector deletion
+            vec_ok = False
+            try:
+                vec_ok = vector_adapter.delete_embedding(memory_id, tenant_id=tenant_id)
+            except Exception:
+                vec_ok = False
+            tombstone.vector_deleted = bool(vec_ok)
+            tombstone.graph_deleted = True
+            tombstone.cache_deleted = True
+
+            # 2. Relational deletion
             db.delete(record)
-            db.commit()
+            tombstone.relational_deleted = True
+            tombstone.status = "DELETE_CONFIRMED" if tombstone.is_converged() else "PENDING_RETRY"
 
             PolicyEngine.log_audit_decision(
                 db,
-                PolicyDecision(True, "Hard deleted memory and vector references.", "MEMORY_HARD_DELETED"),
+                PolicyDecision(True, "Hard deleted memory and vector references across stores.", "MEMORY_HARD_DELETED"),
                 actor_id=actor.id if actor else None,
-                memory_id=memory_id
+                memory_id=memory_id,
+                tenant_id=tenant_id
             )
-            return {"status": "hard_deleted", "memory_id": memory_id}
+            db.commit()
+
+            return {
+                "status": "hard_deleted",
+                "memory_id": memory_id,
+                "deletion_converged": tombstone.is_converged(),
+                "tombstone_status": tombstone.status
+            }
         else:
             MemoryLifecycleEngine.transition(record, LifecycleState.DELETED)
-            db.commit()
-            db.refresh(record)
-
             PolicyEngine.log_audit_decision(
                 db,
                 PolicyDecision(True, "Soft deleted memory record (retained in audit trail).", "MEMORY_SOFT_DELETED"),
                 actor_id=actor.id if actor else None,
-                memory_id=memory_id
+                memory_id=memory_id,
+                tenant_id=tenant_id
             )
+            db.commit()
+            db.refresh(record)
             return {"status": "soft_deleted", "memory_id": memory_id, "lifecycle_state": "deleted"}
 
     @staticmethod

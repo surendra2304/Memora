@@ -16,12 +16,14 @@ class IdentityService:
         description: Optional[str] = None,
         role: str = "worker",
         parent_agent_id: Optional[str] = None,
-        bounded_scope: Optional[str] = None
+        bounded_scope: Optional[str] = None,
+        tenant_id: str = "default"
     ) -> Agent:
         agent_name = name.lower()
-        agent = db.query(Agent).filter(Agent.name == agent_name).first()
+        agent = db.query(Agent).filter(Agent.name == agent_name, Agent.tenant_id == tenant_id).first()
         if not agent:
             agent = Agent(
+                tenant_id=tenant_id,
                 name=agent_name,
                 description=description,
                 role=role,
@@ -39,11 +41,12 @@ class IdentityService:
                     db,
                     path=private_path,
                     agent_id=agent.id,
-                    ns_type=NamespaceType.AGENT_PRIVATE
+                    ns_type=NamespaceType.AGENT_PRIVATE,
+                    tenant_id=tenant_id
                 )
             else:
                 # Subagent gets access to its bounded scope namespace
-                IdentityService.resolve_namespace(db, bounded_scope, default_type=NamespaceType.PROJECT_PRIVATE)
+                IdentityService.resolve_namespace(db, bounded_scope, default_type=NamespaceType.PROJECT_PRIVATE, tenant_id=tenant_id)
         return agent
 
     @staticmethod
@@ -52,11 +55,13 @@ class IdentityService:
         parent_agent_name: str,
         subagent_name: str,
         bounded_scope: str,
-        description: Optional[str] = None
+        description: Optional[str] = None,
+        tenant_id: str = "default"
     ) -> Agent:
         parent = IdentityService.get_agent_by_name(db, parent_agent_name)
+        resolved_tenant = getattr(parent, "tenant_id", tenant_id) if parent else tenant_id
         if not parent:
-            parent = IdentityService.register_agent(db, parent_agent_name)
+            parent = IdentityService.register_agent(db, parent_agent_name, tenant_id=resolved_tenant)
 
         if not bounded_scope.startswith("memora://"):
             bounded_scope = f"memora://{bounded_scope.lstrip('/')}"
@@ -68,16 +73,18 @@ class IdentityService:
             description=description or f"Sub-agent of {parent.name} bounded to {bounded_scope}",
             role="subagent",
             parent_agent_id=parent.id,
-            bounded_scope=bounded_scope
+            bounded_scope=bounded_scope,
+            tenant_id=resolved_tenant
         )
 
-        target_ns = IdentityService.resolve_namespace(db, bounded_scope, default_type=NamespaceType.PROJECT_PRIVATE)
+        target_ns = IdentityService.resolve_namespace(db, bounded_scope, default_type=NamespaceType.PROJECT_PRIVATE, tenant_id=resolved_tenant)
         IdentityService.grant_access(
             db,
             agent_id=subagent.id,
             namespace_id=target_ns.id,
             actions=["read", "write", "query"],
-            purpose=f"Bounded subtask execution for parent {parent.name}"
+            purpose=f"Bounded sub-agent access for {bounded_scope}",
+            tenant_id=resolved_tenant
         )
         return subagent
 
@@ -98,16 +105,18 @@ class IdentityService:
         db: Session,
         path: str,
         ns_type: NamespaceType,
-        agent_id: Optional[str] = None
+        agent_id: Optional[str] = None,
+        tenant_id: str = "default"
     ) -> Namespace:
         if not path.startswith("memora://"):
             path = f"memora://{path.lstrip('/')}"
 
-        existing = db.query(Namespace).filter(Namespace.path == path).first()
+        existing = db.query(Namespace).filter(Namespace.path == path, Namespace.tenant_id == tenant_id).first()
         if existing:
             return existing
 
         namespace = Namespace(
+            tenant_id=tenant_id,
             path=path,
             type=ns_type,
             agent_id=agent_id
@@ -122,12 +131,13 @@ class IdentityService:
         db: Session,
         path: str,
         default_type: NamespaceType = NamespaceType.PROJECT_PRIVATE,
-        owner_agent_id: Optional[str] = None
+        owner_agent_id: Optional[str] = None,
+        tenant_id: str = "default"
     ) -> Namespace:
         if not path.startswith("memora://"):
             path = f"memora://{path.lstrip('/')}"
 
-        ns = db.query(Namespace).filter(Namespace.path == path).first()
+        ns = db.query(Namespace).filter(Namespace.path == path, Namespace.tenant_id == tenant_id).first()
         if ns:
             return ns
 
@@ -147,18 +157,19 @@ class IdentityService:
             db,
             path=path,
             ns_type=ns_type,
-            agent_id=owner_agent_id
+            agent_id=owner_agent_id,
+            tenant_id=tenant_id
         )
 
     @staticmethod
-    def get_namespace_by_path(db: Session, path: str) -> Optional[Namespace]:
+    def get_namespace_by_path(db: Session, path: str, tenant_id: str = "default") -> Optional[Namespace]:
         if not path.startswith("memora://"):
             path = f"memora://{path.lstrip('/')}"
-        return db.query(Namespace).filter(Namespace.path == path).first()
+        return db.query(Namespace).filter(Namespace.path == path, Namespace.tenant_id == tenant_id).first()
 
     @staticmethod
-    def list_namespaces(db: Session, agent_id: Optional[str] = None) -> List[Namespace]:
-        query = db.query(Namespace)
+    def list_namespaces(db: Session, agent_id: Optional[str] = None, tenant_id: str = "default") -> List[Namespace]:
+        query = db.query(Namespace).filter(Namespace.tenant_id == tenant_id)
         if agent_id:
             query = query.filter((Namespace.agent_id == agent_id) | (Namespace.type.in_([NamespaceType.UNIVERSE_GLOBAL, NamespaceType.PUBLIC])))
         return query.all()
@@ -172,12 +183,13 @@ class IdentityService:
         actions: Optional[List[str]] = None,
         purpose: Optional[str] = None,
         expires_at: Optional[datetime] = None,
-        ttl_hours: Optional[int] = None
+        ttl_hours: Optional[int] = None,
+        tenant_id: str = "default"
     ) -> AccessGrant:
         if not agent_id and agent_name:
             agent = IdentityService.get_agent_by_name(db, agent_name)
             if not agent:
-                agent = IdentityService.register_agent(db, agent_name)
+                agent = IdentityService.register_agent(db, agent_name, tenant_id=tenant_id)
             resolved_agent_id = agent.id
         elif agent_id:
             # Check if agent_id is actually an agent name
@@ -185,7 +197,7 @@ class IdentityService:
             if not agent:
                 agent = IdentityService.get_agent_by_name(db, agent_id)
             if not agent:
-                agent = IdentityService.register_agent(db, agent_id)
+                agent = IdentityService.register_agent(db, agent_id, tenant_id=tenant_id)
             resolved_agent_id = agent.id
         else:
             raise ValueError("Either agent_id or agent_name must be provided.")
@@ -194,6 +206,7 @@ class IdentityService:
             expires_at = datetime.now(timezone.utc) + timedelta(hours=ttl_hours)
 
         grant = db.query(AccessGrant).filter(
+            AccessGrant.tenant_id == tenant_id,
             AccessGrant.agent_id == resolved_agent_id,
             AccessGrant.namespace_id == namespace_id
         ).first()
@@ -205,6 +218,7 @@ class IdentityService:
             grant.expires_at = expires_at
         else:
             grant = AccessGrant(
+                tenant_id=tenant_id,
                 agent_id=resolved_agent_id,
                 namespace_id=namespace_id,
                 actions=action_list,

@@ -97,6 +97,7 @@ class ContextBuilderService:
                 query_text=task_query,
                 actor_name=actor.name,
                 namespace_path=namespace_path,
+                purpose=purpose,
                 limit=max_candidates
             )
         except Exception as e:
@@ -106,6 +107,7 @@ class ContextBuilderService:
                 query_text=task_query,
                 actor_name=actor.name,
                 namespace_path=namespace_path,
+                purpose=purpose,
                 limit=max_candidates,
                 vector_weight=0.0,
                 keyword_weight=0.85,

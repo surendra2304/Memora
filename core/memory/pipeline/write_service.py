@@ -63,6 +63,7 @@ class MemoryWriteService:
         content_text: str,
         caller_name: Optional[str] = None,
         actor_name: Optional[str] = None,
+        tenant_id: Optional[str] = None,
         target_namespace_path: Optional[str] = None,
         memory_type: Optional[MemoryType] = None,
         source: str = "api",
@@ -70,7 +71,10 @@ class MemoryWriteService:
         confidence: Optional[float] = None,
         importance: Optional[float] = None,
         purpose: Optional[str] = None,
-        allow_duplicates: bool = False
+        allow_duplicates: bool = False,
+        valid_from: Optional[datetime] = None,
+        valid_until: Optional[datetime] = None,
+        expires_at: Optional[datetime] = None
     ) -> MemoryWriteResult:
         start_time = time.time()
         step_trace: Dict[str, Any] = {}
@@ -91,15 +95,17 @@ class MemoryWriteService:
             }
 
             # -------------------------------------------------------------
-            # STEP 2: AUTHENTICATE CALLER AND RESOLVE NAMESPACE
+            # STEP 2: AUTHENTICATE CALLER AND RESOLVE NAMESPACE (TENANT ISOLATED)
             # -------------------------------------------------------------
             actor = IdentityService.get_agent_by_name(db, resolved_actor_name)
+            resolved_tenant: str = str(tenant_id or (getattr(actor, "tenant_id", "default") if actor else "default"))
             if not actor:
-                actor = IdentityService.register_agent(db, name=resolved_actor_name, role="worker")
+                actor = IdentityService.register_agent(db, name=resolved_actor_name, role="worker", tenant_id=resolved_tenant)
 
             target_path = target_namespace_path or f"memora://{actor.name}/private"
-            namespace = IdentityService.resolve_namespace(db, target_path, owner_agent_id=actor.id)
+            namespace = IdentityService.resolve_namespace(db, target_path, owner_agent_id=actor.id, tenant_id=resolved_tenant)
             step_trace["step_2_authenticate_and_resolve"] = {
+                "tenant_id": resolved_tenant,
                 "actor_id": actor.id,
                 "actor_name": actor.name,
                 "namespace_id": namespace.id,
@@ -133,6 +139,7 @@ class MemoryWriteService:
             # STEP 5: EXTRACT ENTITIES AND RELATIONSHIPS (DEEP EXTRACTION)
             # -------------------------------------------------------------
             extracted_meta = EntityExtractor.extract_entities_and_relationships(normalized_content)
+            extracted_entities = extracted_meta.get("entities", []) if isinstance(extracted_meta, dict) else []
             step_trace["step_5_extract_entities"] = extracted_meta
 
             # -------------------------------------------------------------
@@ -164,7 +171,7 @@ class MemoryWriteService:
             # STEP 7: ASSIGN CONFIDENCE, IMPORTANCE, AND RETENTION METADATA
             # -------------------------------------------------------------
             computed_confidence = confidence if confidence is not None else 1.0
-            computed_importance = importance if importance is not None else (0.8 if extracted_meta["triples"] else 0.5)
+            computed_importance = importance if importance is not None else (0.8 if extracted_meta.get("triples") else 0.5)
             retention_tier = "HOT" if computed_importance >= 0.75 else "STANDARD"
 
             step_trace["step_7_assign_metadata"] = {
@@ -189,30 +196,35 @@ class MemoryWriteService:
             step_trace["step_8_apply_policy"] = policy_decision.to_dict()
 
             # -------------------------------------------------------------
-            # STEP 9: PERSIST TO POSTGRESQL, VECTOR INDEX & KNOWLEDGE GRAPH
+            # STEP 9: PERSIST TO DATABASE, VECTOR INDEX & KNOWLEDGE GRAPH
             # -------------------------------------------------------------
             combined_provenance = {
                 **(provenance or {}),
                 "content_sha256": content_hash,
                 "extracted_entities": extracted_meta,
                 "retention_tier": retention_tier,
-                "pipeline_version": "1.0.0"
+                "pipeline_version": "2.0.0"
             }
 
             record = MemoryRecord(
+                tenant_id=resolved_tenant,
                 namespace_id=namespace.id,
                 owner_id=actor.id,
                 memory_type=resolved_type,
                 content_text=normalized_content,
+                content_hash=content_hash,
+                entities=extracted_entities,
                 source=source,
                 provenance=combined_provenance,
                 confidence=computed_confidence,
                 importance=computed_importance,
-                lifecycle_state=LifecycleState.ACTIVE
+                lifecycle_state=LifecycleState.ACTIVE,
+                valid_from=valid_from,
+                valid_until=valid_until,
+                expires_at=expires_at
             )
             db.add(record)
-            db.commit()
-            db.refresh(record)
+            db.flush()
 
             # Knowledge Graph Entity Resolution & Auto-Linking
             graph_links = []
@@ -226,13 +238,14 @@ class MemoryWriteService:
             except Exception as e:
                 logger.debug(f"Graph auto-linking skipped: {e}")
 
-            # Graceful Vector Upsert
+            # Graceful Vector Upsert with tenant isolation
             vector_indexed = False
             try:
                 dense_embedding = EmbeddingGenerator.generate_embedding(normalized_content)
                 vector_indexed = vector_adapter.upsert_embedding(
                     memory_id=record.id,
                     vector=dense_embedding,
+                    tenant_id=resolved_tenant,
                     payload={"namespace_path": namespace.path, "memory_type": resolved_type.value, "owner": actor.name}
                 )
             except Exception as e:
@@ -240,6 +253,7 @@ class MemoryWriteService:
 
             step_trace["step_9_persistence"] = {
                 "memory_id": record.id,
+                "tenant_id": resolved_tenant,
                 "db_persisted": True,
                 "vector_indexed": vector_indexed,
                 "graph_links_created": len(graph_links),
@@ -247,11 +261,12 @@ class MemoryWriteService:
             }
 
             # -------------------------------------------------------------
-            # STEP 10: EMIT EVENT AND LOG AUDIT TRAIL
+            # STEP 10: EMIT EVENT AND LOG AUDIT TRAIL (ONE ATOMIC COMMIT)
             # -------------------------------------------------------------
             event_payload = {
                 "event": "memory.created",
                 "memory_id": record.id,
+                "tenant_id": resolved_tenant,
                 "owner": actor.name,
                 "namespace": namespace.path,
                 "type": record.memory_type.value,
@@ -269,8 +284,13 @@ class MemoryWriteService:
                     dimensions={"event": event_payload}
                 ),
                 actor_id=actor.id,
-                memory_id=record.id
+                memory_id=record.id,
+                tenant_id=resolved_tenant
             )
+
+            # Atomic commit of record, relationships, and audit trail
+            db.commit()
+            db.refresh(record)
 
             step_trace["step_10_emit_event_and_audit"] = {
                 "event_emitted": "memory.created",

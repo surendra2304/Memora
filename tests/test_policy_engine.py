@@ -118,7 +118,17 @@ def test_rule_2_explicit_access_grant_and_shared_namespace(test_db):
     # FORGE cannot write (only granted read/query)
     assert PolicyEngine.evaluate_access(test_db, forge, shared_ns, "write").allowed is False
 
-    # FRIDAY (supervisor) has access
+    # FRIDAY (supervisor) without grant is denied (default deny, no name bypass)
+    assert PolicyEngine.evaluate_access(test_db, friday, shared_ns, "read").allowed is False
+
+    # Explicitly grant access to FRIDAY for supervisor oversight
+    IdentityService.grant_access(
+        test_db,
+        agent_id=friday.id,
+        namespace_id=shared_ns.id,
+        actions=["read", "write"],
+        purpose="Supervisor audit and oversight"
+    )
     assert PolicyEngine.evaluate_access(test_db, friday, shared_ns, "read").allowed is True
 
 def test_subagent_bounded_context_isolation(test_db):

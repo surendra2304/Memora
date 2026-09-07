@@ -22,9 +22,20 @@ from core.identity.service import IdentityService
 from core.metrics.collector import metrics_collector
 from storage.relational.models import NamespaceType
 
+from storage.relational.session import get_db
+
 @pytest.fixture
-def api_client():
-    return TestClient(app)
+def api_client(test_db):
+    def override_get_db():
+        try:
+            yield test_db
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
 
 def test_e2e_cross_agent_collaboration_and_isolation_workflow(api_client, test_db, capsys):
     """

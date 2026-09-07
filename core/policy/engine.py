@@ -62,13 +62,15 @@ class PolicyEngine:
         }
 
         # -------------------------------------------------------------
-        # SUPERVISOR GLOBAL BYPASS (FRIDAY / SUPERVISOR ROLE)
+        # DIMENSION 0: STRICT TENANT ISOLATION
         # -------------------------------------------------------------
-        if actor.name.lower() in ["friday", "supervisor", "admin"] or actor.role in ["supervisor", "admin"]:
+        actor_tenant = getattr(actor, "tenant_id", "default")
+        namespace_tenant = getattr(namespace, "tenant_id", "default")
+        if actor_tenant != namespace_tenant:
             decision = PolicyDecision(
-                allowed=True,
-                reason=f"Agent '{actor.name}' is an ecosystem supervisor with global oversight permissions.",
-                rule_matched="RULE_0_SUPERVISOR_GLOBAL_ACCESS",
+                allowed=False,
+                reason=f"Tenant mismatch: Actor tenant '{actor_tenant}' cannot access namespace tenant '{namespace_tenant}'.",
+                rule_matched="RULE_TENANT_MISMATCH",
                 dimensions=dims
             )
             cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
@@ -111,15 +113,54 @@ class PolicyEngine:
                 )
                 cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
                 return decision
-            else:
+
+            # Check for explicit access grant before denying
+            grant = db.query(AccessGrant).filter(
+                AccessGrant.tenant_id == actor_tenant,
+                AccessGrant.agent_id == actor.id,
+                AccessGrant.namespace_id == namespace.id
+            ).first()
+
+            if grant:
+                if grant.is_expired():
+                    decision = PolicyDecision(
+                        allowed=False,
+                        reason=f"Access grant for agent '{actor.name}' on namespace '{namespace.path}' expired at {grant.expires_at}.",
+                        rule_matched="RULE_2_ACCESS_GRANT_EXPIRED",
+                        dimensions=dims
+                    )
+                    cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
+                    return decision
+
+
+                if action not in grant.actions and "*" not in grant.actions:
+                    decision = PolicyDecision(
+                        allowed=False,
+                        reason=f"Access grant does not permit action '{action}'. Permitted: {grant.actions}",
+                        rule_matched="RULE_2_ACTION_UNAUTHORIZED",
+                        dimensions=dims
+                    )
+                    cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
+                    return decision
+
+                purpose_str = f" for purpose '{purpose}'" if purpose else ""
                 decision = PolicyDecision(
-                    allowed=False,
-                    reason=f"Private namespace '{namespace.path}' is private to another agent and isolated. Agent '{actor.name}' cannot access it without promotion.",
-                    rule_matched="RULE_1_PRIVATE_BY_DEFAULT_PROMOTION_REQUIRED",
+                    allowed=True,
+                    reason=f"Agent '{actor.name}' has explicit grant for private namespace '{namespace.path}'{purpose_str}.",
+                    rule_matched="RULE_1_EXPLICIT_GRANT_ACCESS",
                     dimensions=dims
                 )
                 cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
                 return decision
+
+            decision = PolicyDecision(
+                allowed=False,
+                reason=f"Private namespace '{namespace.path}' is private to another agent and isolated. Agent '{actor.name}' cannot access it without promotion.",
+                rule_matched="RULE_1_PRIVATE_BY_DEFAULT_PROMOTION_REQUIRED",
+                dimensions=dims
+            )
+            cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
+            return decision
 
         # -------------------------------------------------------------
         # DIMENSION 3: UNIVERSE GLOBAL & PUBLIC NAMESPACES
@@ -127,7 +168,7 @@ class PolicyEngine:
         if namespace.type in [NamespaceType.UNIVERSE_GLOBAL, NamespaceType.PUBLIC]:
             decision = PolicyDecision(
                 allowed=True,
-                reason=f"Namespace '{namespace.path}' is {namespace.type.value} and openly readable.",
+                reason=f"Namespace '{namespace.path}' is {namespace.type.value} and openly readable within tenant '{actor_tenant}'.",
                 rule_matched="PUBLIC_OR_GLOBAL_ACCESS",
                 dimensions=dims
             )
@@ -148,6 +189,7 @@ class PolicyEngine:
             return decision
 
         grant = db.query(AccessGrant).filter(
+            AccessGrant.tenant_id == actor_tenant,
             AccessGrant.agent_id == actor.id,
             AccessGrant.namespace_id == namespace.id
         ).first()
@@ -162,6 +204,7 @@ class PolicyEngine:
                 )
                 cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
                 return decision
+
 
             if action not in grant.actions and "*" not in grant.actions:
                 decision = PolicyDecision(
@@ -211,10 +254,21 @@ class PolicyEngine:
         db: Session,
         decision: PolicyDecision,
         actor_id: Optional[str] = None,
-        memory_id: Optional[str] = None
+        memory_id: Optional[str] = None,
+        tenant_id: Optional[str] = None
     ) -> AuditLog:
         action_name = "policy_approved" if decision.allowed else "policy_denied"
+        resolved_tenant = tenant_id or "default"
+        if actor_id and not tenant_id:
+            try:
+                actor_row = db.query(Agent.tenant_id).filter(Agent.id == actor_id).first()
+                if actor_row and actor_row[0]:
+                    resolved_tenant = actor_row[0]
+            except Exception:
+                pass
+
         audit_entry = AuditLog(
+            tenant_id=resolved_tenant,
             actor_id=actor_id,
             memory_id=memory_id,
             action=action_name,
@@ -226,6 +280,8 @@ class PolicyEngine:
             }
         )
         db.add(audit_entry)
-        db.commit()
-        db.refresh(audit_entry)
+        try:
+            db.flush()
+        except Exception:
+            pass
         return audit_entry

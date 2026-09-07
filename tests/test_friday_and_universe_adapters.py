@@ -12,9 +12,20 @@ from adapters.ai_universe.adapter import AIUniverseAdapter
 from core.identity.service import IdentityService
 from storage.relational.models import MemoryType, LifecycleState, NamespaceType
 
+from storage.relational.session import get_db
+
 @pytest.fixture
-def mock_client():
-    return TestClient(app)
+def mock_client(test_db):
+    def override_get_db():
+        try:
+            yield test_db
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
 
 def test_friday_adapter_instantiation_from_registry(mock_client):
     """
@@ -62,7 +73,10 @@ def test_friday_delegate_task_with_bounded_context(mock_client, test_db):
     friday_adapter: FridayAdapter = adapter_registry.get_adapter("friday", http_client=mock_client)
 
     target_scope = "memora://friday/projects/data-pipeline"
-    proj_ns = IdentityService.resolve_namespace(test_db, target_scope, default_type=NamespaceType.PROJECT_PRIVATE)
+    friday = IdentityService.get_agent_by_name(test_db, "friday")
+    if not friday:
+        friday = IdentityService.register_agent(test_db, "friday")
+    proj_ns = IdentityService.resolve_namespace(test_db, target_scope, owner_agent_id=friday.id, default_type=NamespaceType.PROJECT_PRIVATE)
     
     # Register sub-agent with bounded scope
     IdentityService.register_subagent(

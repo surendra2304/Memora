@@ -25,7 +25,14 @@ def test_policy_boundaries(test_db):
     assert PolicyEngine.evaluate_access(test_db, agent_b, private_ns, "read").allowed is False
     assert PolicyEngine.evaluate_access(test_db, agent_b, private_ns, "write").allowed is False
 
-    # Supervisor (friday) can access private namespace
+    # Supervisor without grant is rejected by default deny (no hardcoded bypass)
+    assert PolicyEngine.evaluate_access(test_db, supervisor, private_ns, "read").allowed is False
+
+    # Supervisor with explicit grant can access
+    from storage.relational.models import AccessGrant
+    grant = AccessGrant(agent_id=supervisor.id, namespace_id=private_ns.id, actions=["read"])
+    test_db.add(grant)
+    test_db.commit()
     assert PolicyEngine.evaluate_access(test_db, supervisor, private_ns, "read").allowed is True
 
     # Global namespace accessible by all agents

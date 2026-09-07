@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MEMORA — Ecosystem Memory Explorer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            dark: {
+              900: '#07090e',
+              850: '#0b0f17',
+              800: '#111827',
+              750: '#1a2234',
+              700: '#232d42',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #07090e;
+      color: #e2e8f0;
+      font-family: 'Inter', sans-serif;
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: rgba(15, 23, 42, 0.6);
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 9999px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+      background: #475569;
+    }
+    .glass-card {
+      background: rgba(17, 24, 39, 0.65);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+    }
+    .glass-card:hover {
+      border-color: rgba(99, 102, 241, 0.35);
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col antialiased">
+
+  <!-- Top Navigation Bar -->
+  <header class="bg-dark-850/90 backdrop-blur-md border-b border-dark-700/80 sticky top-0 z-40">
+    <div class="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+      
+      <!-- Brand & Status -->
+      <div class="flex items-center space-x-3 shrink-0">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-cyan-500 flex items-center justify-center shadow-lg shadow-indigo-600/20 text-white font-bold text-xl">
+          🧠
+        </div>
+        <div>
+          <div class="flex items-center space-x-2">
+            <span class="font-extrabold text-lg text-white tracking-tight">MEMORA</span>
+            <span class="text-xs px-2 py-0.5 rounded-full font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">v2.0</span>
+            <span class="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              Turso Cloud DB
+            </span>
+          </div>
+          <p class="text-xs text-slate-400 hidden sm:block">Unified Agent Memory & Knowledge Fabric</p>
+        </div>
+      </div>
+
+      <!-- Center Search Bar -->
+      <div class="flex-1 max-w-xl mx-4">
+        <div class="relative">
+          <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400 text-sm">
+            🔍
+          </span>
+          <input 
+            type="text" 
+            id="search-box"
+            placeholder="Search memory text, namespaces, or keywords in real-time..." 
+            class="w-full pl-10 pr-4 py-2 bg-dark-900 border border-dark-700 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition font-sans"
+            oninput="handleSearch(this.value)"
+          />
+        </div>
+      </div>
+
+      <!-- Right Header Actions -->
+      <div class="flex items-center space-x-3 shrink-0">
+        <div class="hidden md:flex items-center space-x-2 text-xs font-mono text-slate-400 bg-dark-900 px-3 py-1.5 rounded-lg border border-dark-700">
+          <span>Memories: <strong id="header-total-count" class="text-indigo-400">0</strong></span>
+          <span class="text-slate-600">|</span>
+          <span>Agents: <strong id="header-agent-count" class="text-cyan-400">0</strong></span>
+        </div>
+        <button onclick="refreshData()" title="Reload memories" class="p-2 rounded-lg bg-dark-800 hover:bg-dark-750 text-slate-300 hover:text-white border border-dark-700 transition">
+          🔄
+        </button>
+        <a href="/docs" target="_blank" class="text-xs px-3 py-2 rounded-lg bg-dark-800 hover:bg-dark-700 text-slate-300 hover:text-white border border-dark-700 font-mono transition">
+          Swagger /docs ↗
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container: Sidebar + Content -->
+  <div class="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full flex flex-col md:flex-row gap-6">
+
+    <!-- LEFT SIDEBAR: AGENTS DIRECTORY -->
+    <aside class="w-full md:w-72 shrink-0 space-y-5">
+      <div class="glass-card rounded-2xl p-4 border border-dark-700/80">
+        <div class="flex items-center justify-between mb-3 px-1">
+          <h2 class="text-xs font-bold tracking-wider text-slate-400 uppercase">Agents Directory</h2>
+          <span class="text-[11px] font-mono text-slate-500" id="agents-loaded-tag">0 agents</span>
+        </div>
+
+        <!-- All Agents Filter Button -->
+        <button 
+          onclick="selectAgent('ALL')"
+          id="agent-btn-all"
+          class="agent-filter-btn w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition mb-2 bg-indigo-600/20 text-indigo-300 border border-indigo-500/40"
+        >
+          <div class="flex items-center space-x-2.5">
+            <span class="text-base">🌐</span>
+            <span class="font-semibold">All Agents</span>
+          </div>
+          <span class="px-2 py-0.5 rounded-full text-xs font-mono bg-indigo-500/30 text-indigo-200" id="count-all">0</span>
+        </button>
+
+        <!-- Dynamic Agent List -->
+        <div id="agent-list" class="space-y-1.5 custom-scrollbar max-h-[calc(100vh-280px)] overflow-y-auto pr-1">
+          <div class="text-xs text-slate-500 py-4 text-center">Loading agents...</div>
+        </div>
+      </div>
+
+      <!-- Quick Tips Box -->
+      <div class="p-4 rounded-2xl bg-dark-850 border border-dark-700/60 text-xs text-slate-400 space-y-2">
+        <div class="flex items-center space-x-1.5 text-slate-300 font-semibold">
+          <span>💡</span>
+          <span>Organized View Tips</span>
+        </div>
+        <p>• Click any agent above to isolate their private & shared memories.</p>
+        <p>• Click type pills to filter by <strong class="text-slate-300">Decisions</strong>, <strong class="text-slate-300">Experiences</strong>, etc.</p>
+        <p>• Use the search bar to find matching keywords instantly.</p>
+      </div>
+    </aside>
+
+    <!-- MAIN FEED: MEMORIES DISPLAY -->
+    <main class="flex-1 min-w-0 space-y-4">
+
+      <!-- View Controls & Type Filter Bar -->
+      <div class="glass-card rounded-2xl p-4 border border-dark-700/80 space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          
+          <!-- Current Active Selection Title -->
+          <div class="flex items-center space-x-2">
+            <span class="text-xl" id="active-icon">🌐</span>
+            <div>
+              <h1 class="text-base font-bold text-white flex items-center gap-2">
+                <span id="active-view-title">All Memories</span>
+                <span class="text-xs font-mono px-2 py-0.5 rounded-md bg-dark-750 text-slate-300 border border-dark-700" id="filtered-count-badge">0</span>
+              </h1>
+              <p class="text-xs text-slate-400 font-mono" id="active-view-subtitle">Displaying memories from all ecosystem agents</p>
+            </div>
+          </div>
+
+          <!-- Grouping Toggle -->
+          <div class="flex items-center space-x-2 text-xs">
+            <span class="text-slate-400 font-medium">Layout:</span>
+            <div class="bg-dark-900 p-1 rounded-xl border border-dark-700 flex items-center space-x-1">
+              <button onclick="setLayout('cards')" id="layout-cards-btn" class="px-2.5 py-1 rounded-lg font-medium transition bg-indigo-600 text-white shadow">
+                Cards
+              </button>
+              <button onclick="setLayout('table')" id="layout-table-btn" class="px-2.5 py-1 rounded-lg font-medium transition text-slate-400 hover:text-white">
+                Compact Table
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Type Filter Pills -->
+        <div class="pt-2 border-t border-dark-700/60 flex items-center space-x-2 overflow-x-auto pb-1 custom-scrollbar" id="type-pills">
+          <button onclick="selectType('ALL')" class="type-pill-btn shrink-0 px-3 py-1 rounded-lg text-xs font-medium bg-slate-700 text-white transition" data-type="ALL">All Types</button>
+          <button onclick="selectType('episodic')" class="type-pill-btn shrink-0 px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-900 border border-dark-700 transition" data-type="episodic">Episodic</button>
+          <button onclick="selectType('decision')" class="type-pill-btn shrink-0 px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-900 border border-dark-700 transition" data-type="decision">Decision</button>
+          <button onclick="selectType('experience')" class="type-pill-btn shrink-0 px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-900 border border-dark-700 transition" data-type="experience">Experience</button>
+          <button onclick="selectType('procedural')" class="type-pill-btn shrink-0 px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-900 border border-dark-700 transition" data-type="procedural">Procedural</button>
+          <button onclick="selectType('preference')" class="type-pill-btn shrink-0 px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-900 border border-dark-700 transition" data-type="preference">Preference</button>
+          <button onclick="selectType('project')" class="type-pill-btn shrink-0 px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-900 border border-dark-700 transition" data-type="project">Project</button>
+          <button onclick="selectType('semantic')" class="type-pill-btn shrink-0 px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-900 border border-dark-700 transition" data-type="semantic">Semantic</button>
+        </div>
+      </div>
+
+      <!-- MEMORIES LIST CONTAINER (CARDS VIEW) -->
+      <div id="memories-container" class="space-y-3">
+        <div class="p-12 text-center text-slate-500 font-mono text-sm">
+          Loading memories from Turso cloud database...
+        </div>
+      </div>
+
+      <!-- COMPACT TABLE VIEW CONTAINER (HIDDEN BY DEFAULT) -->
+      <div id="memories-table-container" class="hidden glass-card rounded-2xl overflow-hidden border border-dark-700/80">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-dark-900/80 text-slate-400 uppercase tracking-wider font-mono border-b border-dark-700">
+              <tr>
+                <th class="py-3 px-4">Agent</th>
+                <th class="py-3 px-4">Type</th>
+                <th class="py-3 px-4">Memory Content</th>
+                <th class="py-3 px-4">Namespace Scope</th>
+                <th class="py-3 px-4">Confidence</th>
+                <th class="py-3 px-4">Created</th>
+              </tr>
+            </thead>
+            <tbody id="memories-table-body" class="divide-y divide-dark-700/60 font-sans">
+              <!-- Populated by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Detail Modal -->
+  <div id="detail-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm hidden" onclick="if(event.target===this) closeModal()">
+    <div class="glass-card rounded-2xl max-w-2xl w-full p-6 border border-dark-700 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-start justify-between">
+        <div>
+          <span class="text-xs font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300" id="modal-type">Type</span>
+          <h3 class="text-lg font-bold text-white mt-1" id="modal-title">Memory Details</h3>
+        </div>
+        <button onclick="closeModal()" class="text-slate-400 hover:text-white text-xl">✕</button>
+      </div>
+      <div class="p-4 rounded-xl bg-dark-900 border border-dark-700 text-sm font-sans text-slate-200 leading-relaxed" id="modal-content">
+      </div>
+      <div class="grid grid-cols-2 gap-3 text-xs font-mono text-slate-400">
+        <div><strong>Agent:</strong> <span id="modal-agent" class="text-slate-200"></span></div>
+        <div><strong>State:</strong> <span id="modal-state" class="text-slate-200"></span></div>
+        <div><strong>Namespace:</strong> <span id="modal-namespace" class="text-slate-200"></span></div>
+        <div><strong>Created:</strong> <span id="modal-created" class="text-slate-200"></span></div>
+        <div><strong>Confidence:</strong> <span id="modal-confidence" class="text-indigo-400"></span></div>
+        <div><strong>Importance:</strong> <span id="modal-importance" class="text-cyan-400"></span></div>
+      </div>
+      <div class="pt-3 border-t border-dark-700 flex justify-end">
+        <button onclick="closeModal()" class="px-4 py-1.5 rounded-lg bg-dark-800 hover:bg-dark-700 text-slate-200 text-xs font-medium transition">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Client JavaScript Logic -->
+  <script>
+    let state = {
+      memories: [],
+      agents: [],
+      selectedAgent: 'ALL',
+      selectedType: 'ALL',
+      searchQuery: '',
+      currentLayout: 'cards'
+    };
+
+    const AGENT_META = {
+      friday: { icon: '🤖', color: 'text-indigo-400', border: 'border-indigo-500/40', badge: 'bg-indigo-500/20 text-indigo-300', desc: 'Supervisor' },
+      forge: { icon: '🛠️', color: 'text-amber-400', border: 'border-amber-500/40', badge: 'bg-amber-500/20 text-amber-300', desc: 'Engineering' },
+      sentinel: { icon: '🛡️', color: 'text-rose-400', border: 'border-rose-500/40', badge: 'bg-rose-500/20 text-rose-300', desc: 'Security' },
+      inference: { icon: '⚡', color: 'text-cyan-400', border: 'border-cyan-500/40', badge: 'bg-cyan-500/20 text-cyan-300', desc: 'AI Gateway' },
+      cortex: { icon: '🌐', color: 'text-emerald-400', border: 'border-emerald-500/40', badge: 'bg-emerald-500/20 text-emerald-300', desc: 'Web Ops' },
+      intelx: { icon: '🔬', color: 'text-purple-400', border: 'border-purple-500/40', badge: 'bg-purple-500/20 text-purple-300', desc: 'Deep Research' },
+      futuris: { icon: '🔮', color: 'text-fuchsia-400', border: 'border-fuchsia-500/40', badge: 'bg-fuchsia-500/20 text-fuchsia-300', desc: 'Forecasting' },
+      stratex: { icon: '📈', color: 'text-green-400', border: 'border-green-500/40', badge: 'bg-green-500/20 text-green-300', desc: 'Trading' },
+      nexus: { icon: '⚡', color: 'text-teal-400', border: 'border-teal-500/40', badge: 'bg-teal-500/20 text-teal-300', desc: 'UI Subsystem' }
+    };
+
+    const TYPE_META = {
+      decision: { color: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30' },
+      experience: { color: 'bg-rose-500/15 text-rose-300 border-rose-500/30' },
+      procedural: { color: 'bg-purple-500/15 text-purple-300 border-purple-500/30' },
+      preference: { color: 'bg-amber-500/15 text-amber-300 border-amber-500/30' },
+      episodic: { color: 'bg-blue-500/15 text-blue-300 border-blue-500/30' },
+      semantic: { color: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' },
+      project: { color: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30' }
+    };
+
+    async function loadData() {
+      try {
+        const resp = await fetch('/api/dashboard/overview');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        state.memories = data.memories || [];
+        state.agents = data.agents || [];
+
+        // Update counts
+        document.getElementById('header-total-count').innerText = state.memories.length;
+        document.getElementById('header-agent-count').innerText = state.agents.length;
+        document.getElementById('count-all').innerText = state.memories.length;
+        document.getElementById('agents-loaded-tag').innerText = `${state.agents.length} active`;
+
+        renderAgentsSidebar();
+        applyFiltersAndRender();
+      } catch (err) {
+        console.error('Failed to load overview:', err);
+        document.getElementById('memories-container').innerHTML = `
+          <div class="glass-card rounded-2xl p-12 text-center text-rose-400 border border-rose-500/30">
+            <p class="font-bold text-base mb-1">Failed to connect to Memora API</p>
+            <p class="text-xs font-mono text-slate-400">${err.message}</p>
+          </div>
+        `;
+      }
+    }
+
+    function renderAgentsSidebar() {
+      const container = document.getElementById('agent-list');
+      
+      container.innerHTML = state.agents.map(a => {
+        const meta = AGENT_META[a.name.toLowerCase()] || { icon: '🤖', color: 'text-slate-300', border: 'border-slate-700', badge: 'bg-slate-800 text-slate-400', desc: a.role };
+        const isSelected = state.selectedAgent.toLowerCase() === a.name.toLowerCase();
+        const activeClass = isSelected 
+          ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/40 shadow-sm' 
+          : 'bg-dark-900/60 hover:bg-dark-750 text-slate-300 border-dark-700/60';
+
+        return `
+          <button 
+            onclick="selectAgent('${escapeHtml(a.name)}')"
+            class="agent-filter-btn w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm transition border ${activeClass}"
+            id="agent-btn-${a.name}"
+          >
+            <div class="flex items-center space-x-2.5 min-w-0">
+              <span class="text-base shrink-0">${meta.icon}</span>
+              <div class="text-left min-w-0">
+                <div class="font-bold uppercase tracking-wide text-xs truncate ${isSelected ? 'text-white' : meta.color}">${escapeHtml(a.name)}</div>
+                <div class="text-[10px] text-slate-500 truncate">${escapeHtml(meta.desc)}</div>
+              </div>
+            </div>
+            <span class="px-2 py-0.5 rounded-full text-xs font-mono ${a.memory_count > 0 ? 'bg-dark-750 text-slate-200 border border-dark-700' : 'text-slate-600'}">
+              ${a.memory_count}
+            </span>
+          </button>
+        `;
+      }).join('');
+    }
+
+    function selectAgent(agentName) {
+      state.selectedAgent = agentName;
+      
+      // Update sidebar styling
+      document.getElementById('agent-btn-all').className = agentName === 'ALL'
+        ? 'agent-filter-btn w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition mb-2 bg-indigo-600/20 text-indigo-300 border border-indigo-500/40'
+        : 'agent-filter-btn w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition mb-2 bg-dark-900/60 hover:bg-dark-750 text-slate-300 border border-dark-700/60';
+
+      renderAgentsSidebar();
+      applyFiltersAndRender();
+    }
+
+    function selectType(typeName) {
+      state.selectedType = typeName;
+      document.querySelectorAll('.type-pill-btn').forEach(btn => {
+        if (btn.dataset.type.toLowerCase() === typeName.toLowerCase()) {
+          btn.className = 'type-pill-btn shrink-0 px-3 py-1 rounded-lg text-xs font-semibold bg-indigo-600 text-white shadow transition';
+        } else {
+          btn.className = 'type-pill-btn shrink-0 px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-900 border border-dark-700 transition';
+        }
+      });
+      applyFiltersAndRender();
+    }
+
+    function handleSearch(query) {
+      state.searchQuery = query.trim().toLowerCase();
+      applyFiltersAndRender();
+    }
+
+    function setLayout(layout) {
+      state.currentLayout = layout;
+      document.getElementById('layout-cards-btn').className = layout === 'cards' 
+        ? 'px-2.5 py-1 rounded-lg font-medium transition bg-indigo-600 text-white shadow'
+        : 'px-2.5 py-1 rounded-lg font-medium transition text-slate-400 hover:text-white';
+      
+      document.getElementById('layout-table-btn').className = layout === 'table'
+        ? 'px-2.5 py-1 rounded-lg font-medium transition bg-indigo-600 text-white shadow'
+        : 'px-2.5 py-1 rounded-lg font-medium transition text-slate-400 hover:text-white';
+
+      applyFiltersAndRender();
+    }
+
+    function applyFiltersAndRender() {
+      let filtered = state.memories;
+
+      // Agent Filter
+      if (state.selectedAgent !== 'ALL') {
+        filtered = filtered.filter(m => m.owner_name && m.owner_name.toLowerCase() === state.selectedAgent.toLowerCase());
+      }
+
+      // Type Filter
+      if (state.selectedType !== 'ALL') {
+        filtered = filtered.filter(m => m.memory_type && m.memory_type.toLowerCase() === state.selectedType.toLowerCase());
+      }
+
+      // Search Filter
+      if (state.searchQuery) {
+        const q = state.searchQuery;
+        filtered = filtered.filter(m => 
+          (m.content_text && m.content_text.toLowerCase().includes(q)) ||
+          (m.namespace_path && m.namespace_path.toLowerCase().includes(q)) ||
+          (m.owner_name && m.owner_name.toLowerCase().includes(q)) ||
+          (m.memory_type && m.memory_type.toLowerCase().includes(q))
+        );
+      }
+
+      // Update Header Titles
+      const isAll = state.selectedAgent === 'ALL';
+      const meta = AGENT_META[state.selectedAgent.toLowerCase()] || { icon: '🤖', desc: 'Agent' };
+      document.getElementById('active-icon').innerText = isAll ? '🌐' : meta.icon;
+      document.getElementById('active-view-title').innerText = isAll ? 'All Memories' : `${state.selectedAgent.toUpperCase()} Memories`;
+      document.getElementById('active-view-subtitle').innerText = isAll 
+        ? 'Displaying memories across all registered ecosystem agents' 
+        : `Showing partitioned memories owned by ${state.selectedAgent.toUpperCase()} (${meta.desc})`;
+      document.getElementById('filtered-count-badge').innerText = `${filtered.length} memories`;
+
+      if (state.currentLayout === 'cards') {
+        document.getElementById('memories-container').classList.remove('hidden');
+        document.getElementById('memories-table-container').classList.add('hidden');
+        renderCardsView(filtered);
+      } else {
+        document.getElementById('memories-container').classList.add('hidden');
+        document.getElementById('memories-table-container').classList.remove('hidden');
+        renderTableView(filtered);
+      }
+    }
+
+    function renderCardsView(memories) {
+      const container = document.getElementById('memories-container');
+      if (memories.length === 0) {
+        container.innerHTML = `
+          <div class="glass-card rounded-2xl p-12 text-center text-slate-500 font-mono text-sm space-y-2">
+            <span class="text-3xl">📭</span>
+            <p class="font-medium text-slate-300">No memory records match this filter</p>
+            <p class="text-xs text-slate-500">Try selecting another agent or resetting the search query.</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = memories.map((m, idx) => {
+        const meta = AGENT_META[m.owner_name.toLowerCase()] || { icon: '🤖', color: 'text-slate-300', badge: 'bg-slate-800 text-slate-400' };
+        const typeMeta = TYPE_META[m.memory_type.toLowerCase()] || { color: 'bg-slate-800 text-slate-400 border-slate-700' };
+        const dateFormatted = m.created_at ? new Date(m.created_at).toLocaleString() : 'Recent';
+
+        return `
+          <div class="glass-card rounded-2xl p-5 transition hover:shadow-xl hover:shadow-indigo-500/5 space-y-3 cursor-pointer" onclick="openModal(${idx})">
+            <!-- Card Header -->
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="flex items-center space-x-2">
+                <span class="text-lg">${meta.icon}</span>
+                <span class="font-bold text-xs uppercase tracking-wider px-2 py-0.5 rounded-lg bg-dark-900 border border-dark-700 ${meta.color}">
+                  ${escapeHtml(m.owner_name)}
+                </span>
+                <span class="text-[11px] font-mono uppercase px-2 py-0.5 rounded-full border ${typeMeta.color}">
+                  ${escapeHtml(m.memory_type)}
+                </span>
+                <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  ${escapeHtml(m.lifecycle_state)}
+                </span>
+              </div>
+              <span class="text-xs font-mono text-slate-500">${dateFormatted}</span>
+            </div>
+
+            <!-- Content -->
+            <div class="text-sm font-sans text-slate-200 leading-relaxed font-normal bg-dark-900/50 p-3 rounded-xl border border-dark-700/60">
+              ${escapeHtml(m.content_text)}
+            </div>
+
+            <!-- Card Footer -->
+            <div class="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs font-mono text-slate-400">
+              <div class="flex items-center space-x-1.5 truncate max-w-md">
+                <span class="text-slate-600">📁</span>
+                <span class="truncate text-slate-400 hover:text-indigo-400 transition" title="${escapeHtml(m.namespace_path)}">${escapeHtml(m.namespace_path)}</span>
+              </div>
+              <div class="flex items-center space-x-3 shrink-0">
+                <span class="bg-dark-900 px-2 py-0.5 rounded border border-dark-700">conf: <strong class="text-indigo-400">${(m.confidence || 1.0).toFixed(2)}</strong></span>
+                <span class="bg-dark-900 px-2 py-0.5 rounded border border-dark-700">imp: <strong class="text-cyan-400">${(m.importance || 0.8).toFixed(2)}</strong></span>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderTableView(memories) {
+      const tbody = document.getElementById('memories-table-body');
+      if (memories.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-slate-500">No matching memories found.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = memories.map((m, idx) => {
+        const meta = AGENT_META[m.owner_name.toLowerCase()] || { icon: '🤖', color: 'text-slate-300' };
+        const typeMeta = TYPE_META[m.memory_type.toLowerCase()] || { color: 'bg-slate-800 text-slate-400 border-slate-700' };
+        const dateFormatted = m.created_at ? new Date(m.created_at).toLocaleDateString() : 'Recent';
+
+        return `
+          <tr class="hover:bg-dark-750/50 transition cursor-pointer" onclick="openModal(${idx})">
+            <td class="py-3 px-4 font-bold uppercase tracking-wider ${meta.color} whitespace-nowrap">
+              ${meta.icon} ${escapeHtml(m.owner_name)}
+            </td>
+            <td class="py-3 px-4 whitespace-nowrap">
+              <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full border ${typeMeta.color}">
+                ${escapeHtml(m.memory_type)}
+              </span>
+            </td>
+            <td class="py-3 px-4 text-slate-200 max-w-md truncate">
+              ${escapeHtml(m.content_text)}
+            </td>
+            <td class="py-3 px-4 font-mono text-slate-400 truncate max-w-xs">
+              ${escapeHtml(m.namespace_path)}
+            </td>
+            <td class="py-3 px-4 font-mono text-indigo-400 whitespace-nowrap">
+              ${(m.confidence || 1.0).toFixed(2)}
+            </td>
+            <td class="py-3 px-4 font-mono text-slate-500 whitespace-nowrap">
+              ${dateFormatted}
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function openModal(index) {
+      const m = state.memories[index];
+      if (!m) return;
+
+      document.getElementById('modal-title').innerText = `Memory ID: ${m.id}`;
+      document.getElementById('modal-type').innerText = m.memory_type;
+      document.getElementById('modal-content').innerText = m.content_text;
+      document.getElementById('modal-agent').innerText = `${m.owner_name} (${m.owner_role})`;
+      document.getElementById('modal-state').innerText = m.lifecycle_state;
+      document.getElementById('modal-namespace').innerText = m.namespace_path;
+      document.getElementById('modal-created').innerText = m.created_at ? new Date(m.created_at).toLocaleString() : 'N/A';
+      document.getElementById('modal-confidence').innerText = (m.confidence || 1.0).toFixed(2);
+      document.getElementById('modal-importance').innerText = (m.importance || 0.8).toFixed(2);
+
+      document.getElementById('detail-modal').classList.remove('hidden');
+    }
+
+    function closeModal() {
+      document.getElementById('detail-modal').classList.add('hidden');
+    }
+
+    function refreshData() {
+      loadData();
+    }
+
+    function escapeHtml(text) {
+      if (!text) return '';
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    window.addEventListener('DOMContentLoaded', loadData);
+  </script>
+</body>
+</html>

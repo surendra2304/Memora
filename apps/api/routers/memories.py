@@ -5,7 +5,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from storage.relational.session import get_db
-from storage.relational.models import MemoryType, LifecycleState
+from storage.relational.models import MemoryType, LifecycleState, MemoryRecord, Agent, Namespace
 from core.memory.service import (
     MemoryService,
     MemoryNotFoundError,
@@ -20,6 +20,21 @@ from core.memory.schemas import (
 from apps.api.dependencies import get_actor_header, get_purpose_header
 
 router = APIRouter(prefix="/memories", tags=["Memories"])
+
+@router.get("", response_model=List[MemoryRecordRead])
+def list_memories(
+    owner_name: Optional[str] = None,
+    memory_type: Optional[MemoryType] = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_db)
+):
+    query = db.query(MemoryRecord)
+    if owner_name:
+        query = query.join(Agent, MemoryRecord.owner_id == Agent.id).filter(Agent.name == owner_name.lower())
+    if memory_type:
+        query = query.filter(MemoryRecord.memory_type == memory_type)
+    return query.order_by(MemoryRecord.created_at.desc()).offset(offset).limit(limit).all()
 
 @router.post("", response_model=MemoryRecordRead, status_code=status.HTTP_201_CREATED)
 def ingest_memory(
