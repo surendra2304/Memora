@@ -26,10 +26,88 @@ from apps.api.routers import (
     v1_namespaces_router,
 )
 
+import os
+import requests
+
+def sync_from_turso_if_empty():
+    from storage.relational.session import SessionLocal
+    db = SessionLocal()
+    try:
+        if db.query(MemoryRecord).count() > 0:
+            return
+        turso_url = os.getenv("TURSO_DATABASE_URL", settings.DATABASE_URL)
+        turso_token = os.getenv("TURSO_AUTH_TOKEN", settings.TURSO_AUTH_TOKEN)
+        if not (turso_url and turso_token and "turso.io" in turso_url):
+            return
+
+        pipeline_url = f"{turso_url.rstrip('/')}/v2/pipeline"
+        headers = {"Authorization": f"Bearer {turso_token}", "Content-Type": "application/json"}
+        payload = {
+            "requests": [
+                {"type": "execute", "stmt": {"sql": "SELECT id, name, description, created_at, role, parent_agent_id, bounded_scope FROM agents"}},
+                {"type": "execute", "stmt": {"sql": "SELECT id, path, type, agent_id, created_at FROM namespaces"}},
+                {"type": "execute", "stmt": {"sql": "SELECT id, namespace_id, owner_id, memory_type, content_text, source, provenance, confidence, importance, lifecycle_state, created_at, last_verified_at, superseded_by_id FROM memory_records"}}
+            ]
+        }
+        resp = requests.post(pipeline_url, headers=headers, json=payload, timeout=10)
+        if resp.status_code != 200:
+            return
+        results = resp.json().get("results", [])
+        if len(results) < 3:
+            return
+
+        for row in results[0]["response"]["result"]["rows"]:
+            aid = row[0]["value"]
+            if not db.query(Agent).filter(Agent.id == aid).first():
+                db.add(Agent(
+                    id=aid,
+                    name=row[1]["value"],
+                    description=row[2]["value"] if row[2] else None,
+                    role=row[4]["value"] if row[4] else "worker",
+                    parent_agent_id=row[5]["value"] if row[5] else None,
+                    bounded_scope=row[6]["value"] if row[6] else None,
+                    tenant_id="default"
+                ))
+        db.commit()
+
+        for row in results[1]["response"]["result"]["rows"]:
+            nid = row[0]["value"]
+            if not db.query(Namespace).filter(Namespace.id == nid).first():
+                db.add(Namespace(
+                    id=nid,
+                    path=row[1]["value"],
+                    type=row[2]["value"],
+                    agent_id=row[3]["value"] if row[3] else None,
+                    tenant_id="default"
+                ))
+        db.commit()
+
+        for row in results[2]["response"]["result"]["rows"]:
+            mid = row[0]["value"]
+            if not db.query(MemoryRecord).filter(MemoryRecord.id == mid).first():
+                db.add(MemoryRecord(
+                    id=mid,
+                    namespace_id=row[1]["value"],
+                    owner_id=row[2]["value"],
+                    memory_type=row[3]["value"],
+                    content_text=row[4]["value"],
+                    source=row[5]["value"] if row[5] else "api",
+                    confidence=float(row[7]["value"]) if row[7]["value"] is not None else 1.0,
+                    importance=float(row[8]["value"]) if row[8]["value"] is not None else 0.8,
+                    lifecycle_state=row[9]["value"] if row[9] else "active",
+                    tenant_id="default"
+                ))
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Initialize database tables, vector connection, and event bus
     init_db()
+    sync_from_turso_if_empty()
     vector_adapter.connect()
     event_emitter.connect()
     yield
@@ -66,6 +144,71 @@ def dashboard_overview(db: Session = Depends(get_db)):
     agents = db.query(Agent).all()
     namespaces = db.query(Namespace).all()
     records = db.query(MemoryRecord).order_by(MemoryRecord.created_at.desc()).all()
+
+    # If local database has no records (e.g. freshly booted Docker container), fetch directly from Turso Cloud
+    if not records:
+        turso_url = os.getenv("TURSO_DATABASE_URL", settings.DATABASE_URL)
+        turso_token = os.getenv("TURSO_AUTH_TOKEN", settings.TURSO_AUTH_TOKEN)
+        if turso_url and turso_token and "turso.io" in turso_url:
+            try:
+                pipeline_url = f"{turso_url.rstrip('/')}/v2/pipeline"
+                headers = {"Authorization": f"Bearer {turso_token}", "Content-Type": "application/json"}
+                payload = {
+                    "requests": [
+                        {"type": "execute", "stmt": {"sql": "SELECT m.id, a.name, a.role, n.path, m.memory_type, m.content_text, m.confidence, m.importance, m.lifecycle_state, m.created_at FROM memory_records m LEFT JOIN agents a ON m.owner_id = a.id LEFT JOIN namespaces n ON m.namespace_id = n.id ORDER BY m.created_at DESC"}},
+                        {"type": "execute", "stmt": {"sql": "SELECT id, name, role, bounded_scope FROM agents"}},
+                        {"type": "execute", "stmt": {"sql": "SELECT id, path, type FROM namespaces"}}
+                    ]
+                }
+                resp = requests.post(pipeline_url, headers=headers, json=payload, timeout=8)
+                if resp.status_code == 200:
+                    results = resp.json().get("results", [])
+                    if len(results) >= 3:
+                        mem_rows = results[0].get("response", {}).get("result", {}).get("rows", [])
+                        agent_rows = results[1].get("response", {}).get("result", {}).get("rows", [])
+                        ns_rows = results[2].get("response", {}).get("result", {}).get("rows", [])
+
+                        t_memories = []
+                        agent_counts = {}
+                        for r in mem_rows:
+                            owner_name = r[1]["value"] if r[1] else "unknown"
+                            agent_counts[owner_name] = agent_counts.get(owner_name, 0) + 1
+                            t_memories.append({
+                                "id": r[0]["value"],
+                                "owner_name": owner_name,
+                                "owner_role": r[2]["value"] if r[2] else "worker",
+                                "namespace_path": r[3]["value"] if r[3] else "memora://global",
+                                "memory_type": r[4]["value"] if r[4] else "episodic",
+                                "content_text": r[5]["value"] if r[5] else "",
+                                "confidence": float(r[6]["value"]) if r[6] and r[6]["value"] is not None else 1.0,
+                                "importance": float(r[7]["value"]) if r[7] and r[7]["value"] is not None else 0.8,
+                                "lifecycle_state": r[8]["value"] if r[8] else "active",
+                                "created_at": r[9]["value"] if r[9] else None,
+                                "entities": [],
+                                "tenant_id": "default"
+                            })
+
+                        t_agents = []
+                        for r in agent_rows:
+                            name = r[1]["value"]
+                            t_agents.append({
+                                "id": r[0]["value"],
+                                "name": name,
+                                "role": r[2]["value"] if r[2] else "worker",
+                                "bounded_scope": r[3]["value"] if r[3] else None,
+                                "memory_count": agent_counts.get(name, 0)
+                            })
+                        t_agents.sort(key=lambda x: x["memory_count"], reverse=True)
+
+                        return {
+                            "total_memories": len(t_memories),
+                            "total_agents": len(t_agents),
+                            "total_namespaces": len(ns_rows),
+                            "agents": t_agents,
+                            "memories": t_memories
+                        }
+            except Exception:
+                pass
 
     agent_map = {a.id: a for a in agents}
     ns_map = {n.id: n for n in namespaces}
