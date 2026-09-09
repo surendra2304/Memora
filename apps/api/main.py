@@ -283,8 +283,8 @@ def dashboard_overview(db: Session = Depends(get_db)):
 
 STATIC_INDEX = Path(__file__).resolve().parent / "static" / "index.html"
 
-@app.get("/", response_class=HTMLResponse, include_in_schema=False)
-@app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
+@app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse, include_in_schema=False)
+@app.api_route("/dashboard", methods=["GET", "HEAD"], response_class=HTMLResponse, include_in_schema=False)
 def dashboard():
     if STATIC_INDEX.exists():
         return HTMLResponse(content=STATIC_INDEX.read_text(encoding="utf-8"))
