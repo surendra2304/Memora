@@ -90,6 +90,11 @@ def sync_from_turso():
                 ))
         db.commit()
 
+        turso_mem_ids = {row[0]["value"] for row in results[2]["response"]["result"]["rows"]}
+        if turso_mem_ids:
+            db.query(MemoryRecord).filter(~MemoryRecord.id.in_(turso_mem_ids)).delete(synchronize_session=False)
+            db.commit()
+
         for row in results[2]["response"]["result"]["rows"]:
             mid = row[0]["value"]
             owner_id = row[2]["value"]
