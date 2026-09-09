@@ -34,14 +34,25 @@ class EventEmitter:
         self._redis_connected = False
 
     def connect(self):
+        redis_url = getattr(settings, "REDIS_URL", "")
+        if not redis_url or redis_url.lower() in ("none", "disabled", "false", ""):
+            logger.info("Redis not configured. Event Bus running in local in-memory mode.")
+            self._redis_connected = False
+            return
+
+        if "localhost" in redis_url and getattr(settings, "MEMORA_ENV", "").lower() == "production":
+            logger.info("Render cloud environment detected without external Redis. Event Bus running in local in-memory mode.")
+            self._redis_connected = False
+            return
+
         try:
             import redis
-            self._redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True, socket_timeout=1.5)
+            self._redis_client = redis.Redis.from_url(redis_url, decode_responses=True, socket_timeout=1.5)
             self._redis_client.ping()
             self._redis_connected = True
             logger.info("Connected to Redis for Memora Event Bus.")
         except Exception as e:
-            logger.warning(f"Could not connect to Redis: {e}. Event Bus will run in local in-memory fallback mode.")
+            logger.info(f"Redis unavailable ({e}). Event Bus running in local in-memory mode.")
             self._redis_connected = False
 
     def publish(self, event_type: str, payload: Dict[str, Any]) -> MemoraEvent:

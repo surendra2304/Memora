@@ -31,13 +31,19 @@ class QdrantVectorAdapter:
         self._mock_store: Dict[str, Dict[str, Any]] = {}
 
     def connect(self):
+        # In cloud without dedicated Qdrant instance, operate in internal vector mode
+        if "localhost" in self.url and getattr(settings, "MEMORA_ENV", "").lower() == "production":
+            logger.info("Operating in internal dense vector mode.")
+            self._initialized = False
+            return
+
         try:
             from qdrant_client import QdrantClient
-            self._client = QdrantClient(url=self.url, timeout=3.0)
+            self._client = QdrantClient(url=self.url, timeout=2.0, check_compatibility=False)
             self._initialized = True
             logger.info(f"Connected to Qdrant at {self.url}")
         except Exception as e:
-            logger.warning(f"Could not connect to Qdrant vector database: {e}. Vector operations will operate in fallback mode.")
+            logger.info(f"Qdrant vector database operating in internal fallback mode: {e}")
             self._initialized = False
 
     def is_production(self) -> bool:
