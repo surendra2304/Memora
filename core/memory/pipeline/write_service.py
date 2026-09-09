@@ -292,6 +292,13 @@ class MemoryWriteService:
             db.commit()
             db.refresh(record)
 
+            # Non-blocking Turso Cloud DB write-through sync
+            try:
+                from storage.relational.turso_sync import push_memory_to_turso_async
+                push_memory_to_turso_async(record, agent=actor, namespace=namespace)
+            except Exception as e:
+                logger.debug(f"Turso cloud sync skipped: {e}")
+
             step_trace["step_10_emit_event_and_audit"] = {
                 "event_emitted": "memory.created",
                 "audit_logged": True,

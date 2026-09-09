@@ -27,6 +27,7 @@ from core.memory.search_service import SearchService, SearchResultItem
 from core.policy.engine import PolicyEngine, PolicyDecision
 from core.events.emitter import event_emitter
 from core.memory.experience_service import ExperienceLearnerService, LearnExperienceRequest
+from core.memory.pipeline.preference_extractor import PreferenceExtractor
 from apps.api.dependencies import get_actor_header, get_purpose_header
 
 router = APIRouter(prefix="/v1/memories", tags=["v1 Memories"])
@@ -404,3 +405,84 @@ def trigger_memory_decay(
         archive_threshold=archive_thresh,
         actor_name=actor_name
     )
+
+
+class RecordInteractionRequest(BaseModel):
+    agent_name: Optional[str] = Field(default=None, description="Subsystem agent name")
+    user_text: str = Field(..., description="User input utterance or prompt")
+    agent_text: Optional[str] = Field(default="", description="Agent output response or action")
+    event_type: str = Field(default="dialogue", description="Event classification")
+    tags: Optional[List[str]] = Field(default_factory=list)
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+
+@router.post("/record-interaction", status_code=status.HTTP_201_CREATED)
+def record_interaction_endpoint(
+    req: RecordInteractionRequest,
+    actor_name: str = Depends(get_actor_header),
+    purpose: Optional[str] = Depends(get_purpose_header),
+    db: Session = Depends(get_db)
+):
+    calling_agent = (req.agent_name or actor_name).lower()
+    created_records = []
+    extracted_facts = []
+
+    try:
+        # 1. Automatic Fact & Preference Extraction
+        facts = PreferenceExtractor.extract_facts(req.user_text)
+        for fact in facts:
+            try:
+                write_res = MemoryWriteService.execute_pipeline(
+                    db=db,
+                    content_text=fact.normalized_fact,
+                    caller_name=calling_agent,
+                    memory_type=MemoryType.SEMANTIC,
+                    source=f"agent:{calling_agent}",
+                    provenance={
+                        "category": fact.category,
+                        "entities": fact.entities,
+                        "raw_statement": fact.raw_statement,
+                        "event_type": req.event_type
+                    },
+                    confidence=fact.confidence,
+                    importance=fact.importance,
+                    purpose=purpose or "Autonomous user preference extraction",
+                    allow_duplicates=False
+                )
+                created_records.append(write_res.record.id)
+                extracted_facts.append(fact.to_dict())
+            except Exception as e:
+                pass  # Duplicate or policy error, continue
+
+        # 2. Episodic Turn Recording
+        try:
+            episodic_content = f"User: {req.user_text} | Assistant: {req.agent_text}" if req.agent_text else f"User: {req.user_text}"
+            write_res = MemoryWriteService.execute_pipeline(
+                db=db,
+                content_text=episodic_content,
+                caller_name=calling_agent,
+                memory_type=MemoryType.EPISODIC,
+                source=f"agent:{calling_agent}",
+                provenance={
+                    "event_type": req.event_type,
+                    "tags": req.tags,
+                    "metadata": req.metadata
+                },
+                confidence=1.0,
+                importance=0.7,
+                purpose=purpose or "Autonomous interaction logging",
+                allow_duplicates=False
+            )
+            created_records.append(write_res.record.id)
+        except Exception as e:
+            pass
+
+        return {
+            "status": "success",
+            "agent": calling_agent,
+            "recorded_count": len(created_records),
+            "memory_ids": created_records,
+            "extracted_facts": extracted_facts
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
