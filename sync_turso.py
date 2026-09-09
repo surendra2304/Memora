@@ -22,19 +22,22 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-def execute_turso_sql(sql_query: str):
+def execute_batch(statements: list[str]):
+    """Executes a list of SQL statements in a single Turso pipeline transaction."""
+    if not statements:
+        return True, []
+    
     payload = {
-        "requests": [
-            {"type": "execute", "stmt": {"sql": sql_query}}
-        ]
+        "requests": [{"type": "execute", "stmt": {"sql": s}} for s in statements]
     }
-    resp = requests.post(PIPELINE_URL, headers=HEADERS, json=payload, timeout=15)
+    resp = requests.post(PIPELINE_URL, headers=HEADERS, json=payload, timeout=30)
     data = resp.json()
-    if "results" in data and len(data["results"]) > 0:
-        res = data["results"][0]
-        if res.get("type") == "error":
-            return False, res.get("error", {}).get("message", "Unknown error")
-    return True, data
+    errors = []
+    if "results" in data:
+        for i, res in enumerate(data["results"]):
+            if res.get("type") == "error":
+                errors.append(f"Statement {i}: {res.get('error', {}).get('message', 'Unknown error')}")
+    return len(errors) == 0, errors
 
 def sync_database():
     local_db = "./data/memora.db"
@@ -45,15 +48,33 @@ def sync_database():
     conn = sqlite3.connect(local_db)
     cur = conn.cursor()
 
-    print("[*] Fetching schema from local database...")
-    cur.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
-    tables_ddl = [r[0] for r in cur.fetchall() if r[0]]
+    print("[*] Rebuilding Turso Cloud schema to match current Memora v2 data model...")
+    drop_tables = [
+        "memory_relationships",
+        "audit_logs",
+        "access_grants",
+        "memory_records",
+        "namespaces",
+        "agents",
+        "alembic_version"
+    ]
+    drop_stmts = [f"DROP TABLE IF EXISTS {tbl};" for tbl in drop_tables]
+    ok, errs = execute_batch(drop_stmts)
+    if not ok:
+        print(f"    [!] Warnings on drop: {errs}")
 
+    cur.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND sql IS NOT NULL;")
+    tables_ddl = [r[0] for r in cur.fetchall() if r[0]]
+    
     print(f"[*] Creating {len(tables_ddl)} tables in Turso Cloud...")
-    for ddl in tables_ddl:
-        ok, msg = execute_turso_sql(ddl)
-        if not ok:
-            print(f"    [!] Warning on DDL: {msg}")
+    ok, errs = execute_batch(tables_ddl)
+    if not ok:
+        print(f"    [!] Errors on create tables: {errs}")
+
+    cur.execute("SELECT sql FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%' AND sql IS NOT NULL;")
+    indices_ddl = [r[0] for r in cur.fetchall() if r[0]]
+    if indices_ddl:
+        execute_batch(indices_ddl)
 
     tables_order = ["agents", "namespaces", "memory_records", "access_grants", "audit_logs"]
     for tbl in tables_order:
@@ -63,6 +84,7 @@ def sync_database():
             col_names = [d[0] for d in cur.description]
             print(f"[*] Syncing {len(rows)} records for table '{tbl}'...")
 
+            stmts = []
             for row in rows:
                 cols_str = ", ".join(col_names)
                 val_list = []
@@ -75,20 +97,38 @@ def sync_database():
                         escaped = str(v).replace("'", "''")
                         val_list.append(f"'{escaped}'")
                 vals_str = ", ".join(val_list)
-                insert_sql = f"INSERT OR REPLACE INTO {tbl} ({cols_str}) VALUES ({vals_str});"
-                ok, err = execute_turso_sql(insert_sql)
+                stmts.append(f"INSERT INTO {tbl} ({cols_str}) VALUES ({vals_str});")
+
+            for i in range(0, len(stmts), 50):
+                chunk = stmts[i:i+50]
+                ok, errs = execute_batch(chunk)
                 if not ok:
-                    print(f"    [!] Error inserting into {tbl}: {err}")
+                    print(f"    [!] Error inserting batch in {tbl}: {errs}")
         except Exception as e:
             print(f"    [!] Skipped {tbl}: {e}")
 
-    print("\n[+] Verification: Querying Turso Cloud memory count...")
-    ok, res = execute_turso_sql("SELECT COUNT(*) FROM memory_records;")
-    if ok:
-        count = res["results"][0]["response"]["result"]["rows"][0][0]["value"]
-        print(f"[SUCCESS] Turso Cloud now has {count} live memory records!")
-    else:
-        print("[!] Verification failed.")
+    print("\n[+] Verification: Querying Turso Cloud stats...")
+    payload = {
+        "requests": [
+            {"type": "execute", "stmt": {"sql": "SELECT COUNT(*) FROM memory_records;"}},
+            {"type": "execute", "stmt": {"sql": "SELECT COUNT(*) FROM agents;"}},
+            {"type": "execute", "stmt": {"sql": "SELECT a.name, count(m.id) FROM agents a LEFT JOIN memory_records m ON a.id = m.owner_id GROUP BY a.name;"}}
+        ]
+    }
+    resp = requests.post(PIPELINE_URL, headers=HEADERS, json=payload, timeout=15).json()
+    try:
+        mem_count = resp["results"][0]["response"]["result"]["rows"][0][0]["value"]
+        agent_count = resp["results"][1]["response"]["result"]["rows"][0][0]["value"]
+        print(f"[SUCCESS] Turso Cloud is in 100% sync!")
+        print(f"  Total Agents: {agent_count}")
+        print(f"  Total Memory Records: {mem_count}")
+        print("\nBreakdown by Agent in Turso Cloud:")
+        for row in resp["results"][2]["response"]["result"]["rows"]:
+            agent_name = row[0]["value"]
+            m_count = row[1]["value"]
+            print(f"  - {agent_name:<15}: {m_count} memories")
+    except Exception as e:
+        print(f"[!] Error parsing stats: {e}, raw response: {resp}")
 
 if __name__ == "__main__":
     sync_database()

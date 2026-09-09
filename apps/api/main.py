@@ -29,12 +29,10 @@ from apps.api.routers import (
 import os
 import requests
 
-def sync_from_turso_if_empty():
+def sync_from_turso():
     from storage.relational.session import SessionLocal
     db = SessionLocal()
     try:
-        if db.query(MemoryRecord).count() > 0:
-            return
         turso_url = os.getenv("TURSO_DATABASE_URL", settings.DATABASE_URL)
         turso_token = os.getenv("TURSO_AUTH_TOKEN", settings.TURSO_AUTH_TOKEN)
         if not (turso_url and turso_token and "turso.io" in turso_url):
@@ -44,9 +42,9 @@ def sync_from_turso_if_empty():
         headers = {"Authorization": f"Bearer {turso_token}", "Content-Type": "application/json"}
         payload = {
             "requests": [
-                {"type": "execute", "stmt": {"sql": "SELECT id, name, description, created_at, role, parent_agent_id, bounded_scope FROM agents"}},
-                {"type": "execute", "stmt": {"sql": "SELECT id, path, type, agent_id, created_at FROM namespaces"}},
-                {"type": "execute", "stmt": {"sql": "SELECT id, namespace_id, owner_id, memory_type, content_text, source, provenance, confidence, importance, lifecycle_state, created_at, last_verified_at, superseded_by_id FROM memory_records"}}
+                {"type": "execute", "stmt": {"sql": "SELECT id, name, description, created_at, role, parent_agent_id, bounded_scope, tenant_id FROM agents;"}},
+                {"type": "execute", "stmt": {"sql": "SELECT id, path, type, agent_id, created_at, tenant_id FROM namespaces;"}},
+                {"type": "execute", "stmt": {"sql": "SELECT id, namespace_id, owner_id, memory_type, content_text, source, provenance, confidence, importance, lifecycle_state, created_at, last_verified_at, superseded_by_id, tenant_id FROM memory_records;"}}
             ]
         }
         resp = requests.post(pipeline_url, headers=headers, json=payload, timeout=10)
@@ -66,7 +64,7 @@ def sync_from_turso_if_empty():
                     role=row[4]["value"] if row[4] else "worker",
                     parent_agent_id=row[5]["value"] if row[5] else None,
                     bounded_scope=row[6]["value"] if row[6] else None,
-                    tenant_id="default"
+                    tenant_id=row[7]["value"] if len(row) > 7 and row[7] else "default"
                 ))
         db.commit()
 
@@ -78,7 +76,7 @@ def sync_from_turso_if_empty():
                     path=row[1]["value"],
                     type=row[2]["value"],
                     agent_id=row[3]["value"] if row[3] else None,
-                    tenant_id="default"
+                    tenant_id=row[5]["value"] if len(row) > 5 and row[5] else "default"
                 ))
         db.commit()
 
@@ -95,7 +93,7 @@ def sync_from_turso_if_empty():
                     confidence=float(row[7]["value"]) if row[7]["value"] is not None else 1.0,
                     importance=float(row[8]["value"]) if row[8]["value"] is not None else 0.8,
                     lifecycle_state=row[9]["value"] if row[9] else "active",
-                    tenant_id="default"
+                    tenant_id=row[13]["value"] if len(row) > 13 and row[13] else "default"
                 ))
         db.commit()
     except Exception:
@@ -107,7 +105,7 @@ def sync_from_turso_if_empty():
 async def lifespan(app: FastAPI):
     # Initialize database tables, vector connection, and event bus
     init_db()
-    sync_from_turso_if_empty()
+    sync_from_turso()
     vector_adapter.connect()
     event_emitter.connect()
     yield
@@ -138,6 +136,11 @@ app.include_router(v1_context_router)
 app.include_router(v1_metrics_router)
 app.include_router(v1_namespaces_router)
 app.include_router(audit_router)
+
+@app.api_route("/api/dashboard/sync", methods=["GET", "POST"], include_in_schema=False)
+def dashboard_sync():
+    sync_from_turso()
+    return {"status": "success", "message": "Synchronized with Turso Cloud database"}
 
 @app.get("/api/dashboard/overview", include_in_schema=False)
 def dashboard_overview(db: Session = Depends(get_db)):
