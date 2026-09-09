@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MEMORA — Ecosystem Memory Explorer</title>
+  <title>FRIDAY UNIVERSE — Memora Knowledge Fabric</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script>
     tailwind.config = {
       darkMode: 'class',
@@ -19,11 +19,12 @@
           },
           colors: {
             dark: {
-              900: '#07090e',
-              850: '#0b0f17',
-              800: '#111827',
-              750: '#1a2234',
-              700: '#232d42',
+              950: '#04060a',
+              900: '#080d1a',
+              850: '#0e1626',
+              800: '#141f36',
+              750: '#1c2b4a',
+              700: '#263960',
             }
           }
         }
@@ -32,7 +33,7 @@
   </script>
   <style>
     body {
-      background-color: #07090e;
+      background-color: #04060a;
       color: #e2e8f0;
       font-family: 'Inter', sans-serif;
     }
@@ -41,50 +42,55 @@
       height: 6px;
     }
     .custom-scrollbar::-webkit-scrollbar-track {
-      background: rgba(15, 23, 42, 0.6);
+      background: rgba(14, 22, 38, 0.6);
     }
     .custom-scrollbar::-webkit-scrollbar-thumb {
-      background: #334155;
+      background: #263960;
       border-radius: 9999px;
     }
     .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-      background: #475569;
+      background: #3b82f6;
     }
     .glass-card {
-      background: rgba(17, 24, 39, 0.65);
-      backdrop-filter: blur(10px);
-      border: 1px solid rgba(255, 255, 255, 0.07);
+      background: rgba(14, 22, 38, 0.7);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
     }
     .glass-card:hover {
-      border-color: rgba(99, 102, 241, 0.35);
+      border-color: rgba(99, 102, 241, 0.4);
+    }
+    .agent-card-active {
+      border-color: #6366f1 !important;
+      background: rgba(99, 102, 241, 0.12) !important;
+      box-shadow: 0 0 20px rgba(99, 102, 241, 0.25);
     }
   </style>
 </head>
-<body class="min-h-screen flex flex-col antialiased">
+<body class="min-h-screen flex flex-col antialiased selection:bg-indigo-500 selection:text-white custom-scrollbar">
 
-  <!-- Top Navigation Bar -->
-  <header class="bg-dark-850/90 backdrop-blur-md border-b border-dark-700/80 sticky top-0 z-40">
-    <div class="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+  <!-- Top Navigation Header -->
+  <header class="bg-dark-900/90 backdrop-blur-md border-b border-dark-750/80 sticky top-0 z-40">
+    <div class="max-w-[1680px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
       
-      <!-- Brand & Status -->
-      <div class="flex items-center space-x-3 shrink-0">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-cyan-500 flex items-center justify-center shadow-lg shadow-indigo-600/20 text-white font-bold text-xl">
+      <!-- Brand & Universe Logo -->
+      <div class="flex items-center space-x-3.5 shrink-0">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-blue-600 to-cyan-400 flex items-center justify-center shadow-lg shadow-indigo-600/30 text-white font-bold text-xl">
           🧠
         </div>
         <div>
           <div class="flex items-center space-x-2">
-            <span class="font-extrabold text-lg text-white tracking-tight">MEMORA</span>
-            <span class="text-xs px-2 py-0.5 rounded-full font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">v2.0</span>
-            <span class="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+            <span class="font-extrabold text-lg text-white tracking-tight">FRIDAY UNIVERSE</span>
+            <span class="text-[11px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold">MEMORA v2</span>
+            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
               <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-              Turso Cloud DB
+              Turso Cloud
             </span>
           </div>
-          <p class="text-xs text-slate-400 hidden sm:block">Unified Agent Memory & Knowledge Fabric</p>
+          <p class="text-xs text-slate-400">Autonomous Agent Persistent Memory & Context Knowledge Fabric</p>
         </div>
       </div>
 
-      <!-- Center Search Bar -->
+      <!-- Real-Time Search Bar -->
       <div class="flex-1 max-w-xl mx-4">
         <div class="relative">
           <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400 text-sm">
@@ -93,290 +99,534 @@
           <input 
             type="text" 
             id="search-box"
-            placeholder="Search memory text, namespaces, or keywords in real-time..." 
-            class="w-full pl-10 pr-4 py-2 bg-dark-900 border border-dark-700 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition font-sans"
+            placeholder="Search memory text, entities, agents, namespaces..." 
+            class="w-full pl-10 pr-4 py-2 bg-dark-950 border border-dark-750 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition font-sans"
             oninput="handleSearch(this.value)"
           />
         </div>
       </div>
 
-      <!-- Right Header Actions -->
-      <div class="flex items-center space-x-3 shrink-0">
-        <div class="hidden md:flex items-center space-x-2 text-xs font-mono text-slate-400 bg-dark-900 px-3 py-1.5 rounded-lg border border-dark-700">
-          <span>Memories: <strong id="header-total-count" class="text-indigo-400">0</strong></span>
-          <span class="text-slate-600">|</span>
-          <span>Agents: <strong id="header-agent-count" class="text-cyan-400">0</strong></span>
-        </div>
-        <button onclick="refreshData()" title="Reload memories" class="p-2 rounded-lg bg-dark-800 hover:bg-dark-750 text-slate-300 hover:text-white border border-dark-700 transition">
-          🔄
+      <!-- Header Action Controls -->
+      <div class="flex items-center space-x-2.5 shrink-0">
+        <button 
+          onclick="syncTursoCloud()" 
+          id="sync-btn"
+          class="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-xl bg-dark-850 hover:bg-dark-750 border border-dark-700 text-xs font-semibold text-slate-200 hover:text-white transition shadow-sm"
+          title="Synchronize memory database with Turso Cloud"
+        >
+          <span id="sync-icon" class="text-indigo-400 text-sm">🔄</span>
+          <span id="sync-text">Sync Turso DB</span>
         </button>
-        <a href="/docs" target="_blank" class="text-xs px-3 py-2 rounded-lg bg-dark-800 hover:bg-dark-700 text-slate-300 hover:text-white border border-dark-700 font-mono transition">
-          Swagger /docs ↗
+
+        <button 
+          onclick="exportMemoriesJSON()" 
+          class="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-dark-850 hover:bg-dark-750 border border-dark-700 text-xs font-medium text-slate-300 hover:text-white transition"
+          title="Export all memories as JSON backup"
+        >
+          <span>📥</span>
+          <span>Export</span>
+        </button>
+
+        <a 
+          href="/docs" 
+          target="_blank" 
+          class="inline-flex items-center space-x-1 px-3 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-xs font-semibold text-indigo-300 hover:text-white transition"
+        >
+          <span>API Docs</span>
+          <span>↗</span>
         </a>
       </div>
     </div>
   </header>
 
-  <!-- Main Container: Sidebar + Content -->
-  <div class="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full flex flex-col md:flex-row gap-6">
+  <!-- Notification Toast Container -->
+  <div id="toast" class="fixed bottom-6 right-6 z-50 transform translate-y-24 opacity-0 transition-all duration-300 pointer-events-none flex items-center space-x-3 px-4 py-3 rounded-xl shadow-2xl bg-dark-850 border text-xs font-mono"></div>
 
-    <!-- LEFT SIDEBAR: AGENTS DIRECTORY -->
-    <aside class="w-full md:w-72 shrink-0 space-y-5">
-      <div class="glass-card rounded-2xl p-4 border border-dark-700/80">
-        <div class="flex items-center justify-between mb-3 px-1">
-          <h2 class="text-xs font-bold tracking-wider text-slate-400 uppercase">Agents Directory</h2>
-          <span class="text-[11px] font-mono text-slate-500" id="agents-loaded-tag">0 agents</span>
+  <!-- Main Container -->
+  <main class="flex-1 max-w-[1680px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- Executive KPI Statistics Bar -->
+    <section class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="glass-card rounded-2xl p-4 flex items-center justify-between">
+        <div>
+          <p class="text-xs font-mono uppercase tracking-wider text-slate-400">Total Memories</p>
+          <p class="text-2xl font-black text-white mt-1" id="stat-memories">-</p>
+          <p class="text-[11px] text-emerald-400 font-mono mt-0.5">● 100% Persisted</p>
         </div>
+        <div class="w-12 h-12 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-xl text-indigo-400">
+          💾
+        </div>
+      </div>
 
-        <!-- All Agents Filter Button -->
+      <div class="glass-card rounded-2xl p-4 flex items-center justify-between">
+        <div>
+          <p class="text-xs font-mono uppercase tracking-wider text-slate-400">FRIDAY Agents</p>
+          <p class="text-2xl font-black text-white mt-1" id="stat-agents">9 / 9</p>
+          <p class="text-[11px] text-indigo-400 font-mono mt-0.5">● Official Ecosystem</p>
+        </div>
+        <div class="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-xl text-blue-400">
+          🤖
+        </div>
+      </div>
+
+      <div class="glass-card rounded-2xl p-4 flex items-center justify-between">
+        <div>
+          <p class="text-xs font-mono uppercase tracking-wider text-slate-400">Namespaces</p>
+          <p class="text-2xl font-black text-white mt-1" id="stat-namespaces">-</p>
+          <p class="text-[11px] text-cyan-400 font-mono mt-0.5">● Private & Shared</p>
+        </div>
+        <div class="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-xl text-cyan-400">
+          📁
+        </div>
+      </div>
+
+      <div class="glass-card rounded-2xl p-4 flex items-center justify-between">
+        <div>
+          <p class="text-xs font-mono uppercase tracking-wider text-slate-400">Policy Shield</p>
+          <p class="text-2xl font-black text-emerald-400 mt-1">ACTIVE</p>
+          <p class="text-[11px] text-slate-400 font-mono mt-0.5">5D Matrix Default-Deny</p>
+        </div>
+        <div class="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-xl text-emerald-400">
+          🛡️
+        </div>
+      </div>
+    </section>
+
+    <!-- Official FRIDAY Universe Agents Grid (Interactive Directory) -->
+    <section class="space-y-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center space-x-2">
+          <span class="text-lg">🌌</span>
+          <h2 class="font-bold text-sm uppercase tracking-wider text-slate-200">FRIDAY Universe Agents Directory</h2>
+          <span class="text-xs px-2 py-0.5 rounded-full font-mono bg-dark-800 text-slate-400 border border-dark-750">9 Official Agents</span>
+        </div>
         <button 
           onclick="selectAgent('ALL')"
-          id="agent-btn-all"
-          class="agent-filter-btn w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition mb-2 bg-indigo-600/20 text-indigo-300 border border-indigo-500/40"
+          id="btn-all-agents"
+          class="text-xs font-medium px-3 py-1 rounded-lg bg-indigo-600 text-white shadow-sm transition hover:bg-indigo-500"
         >
-          <div class="flex items-center space-x-2.5">
-            <span class="text-base">🌐</span>
-            <span class="font-semibold">All Agents</span>
-          </div>
-          <span class="px-2 py-0.5 rounded-full text-xs font-mono bg-indigo-500/30 text-indigo-200" id="count-all">0</span>
+          View All Agents
         </button>
-
-        <!-- Dynamic Agent List -->
-        <div id="agent-list" class="space-y-1.5 custom-scrollbar max-h-[calc(100vh-280px)] overflow-y-auto pr-1">
-          <div class="text-xs text-slate-500 py-4 text-center">Loading agents...</div>
-        </div>
       </div>
 
-      <!-- Quick Tips Box -->
-      <div class="p-4 rounded-2xl bg-dark-850 border border-dark-700/60 text-xs text-slate-400 space-y-2">
-        <div class="flex items-center space-x-1.5 text-slate-300 font-semibold">
-          <span>💡</span>
-          <span>Organized View Tips</span>
-        </div>
-        <p>• Click any agent above to isolate their private & shared memories.</p>
-        <p>• Click type pills to filter by <strong class="text-slate-300">Decisions</strong>, <strong class="text-slate-300">Experiences</strong>, etc.</p>
-        <p>• Use the search bar to find matching keywords instantly.</p>
+      <div class="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9 gap-3" id="agents-grid">
+        <!-- Injected dynamically by JS -->
       </div>
-    </aside>
+    </section>
 
-    <!-- MAIN FEED: MEMORIES DISPLAY -->
-    <main class="flex-1 min-w-0 space-y-4">
-
-      <!-- View Controls & Type Filter Bar -->
-      <div class="glass-card rounded-2xl p-4 border border-dark-700/80 space-y-3">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          
-          <!-- Current Active Selection Title -->
-          <div class="flex items-center space-x-2">
-            <span class="text-xl" id="active-icon">🌐</span>
-            <div>
-              <h1 class="text-base font-bold text-white flex items-center gap-2">
-                <span id="active-view-title">All Memories</span>
-                <span class="text-xs font-mono px-2 py-0.5 rounded-md bg-dark-750 text-slate-300 border border-dark-700" id="filtered-count-badge">0</span>
-              </h1>
-              <p class="text-xs text-slate-400 font-mono" id="active-view-subtitle">Displaying memories from all ecosystem agents</p>
-            </div>
-          </div>
-
-          <!-- Grouping Toggle -->
-          <div class="flex items-center space-x-2 text-xs">
-            <span class="text-slate-400 font-medium">Layout:</span>
-            <div class="bg-dark-900 p-1 rounded-xl border border-dark-700 flex items-center space-x-1">
-              <button onclick="setLayout('cards')" id="layout-cards-btn" class="px-2.5 py-1 rounded-lg font-medium transition bg-indigo-600 text-white shadow">
-                Cards
-              </button>
-              <button onclick="setLayout('table')" id="layout-table-btn" class="px-2.5 py-1 rounded-lg font-medium transition text-slate-400 hover:text-white">
-                Compact Table
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Type Filter Pills -->
-        <div class="pt-2 border-t border-dark-700/60 flex items-center space-x-2 overflow-x-auto pb-1 custom-scrollbar" id="type-pills">
-          <button onclick="selectType('ALL')" class="type-pill-btn shrink-0 px-3 py-1 rounded-lg text-xs font-medium bg-slate-700 text-white transition" data-type="ALL">All Types</button>
-          <button onclick="selectType('episodic')" class="type-pill-btn shrink-0 px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-900 border border-dark-700 transition" data-type="episodic">Episodic</button>
-          <button onclick="selectType('decision')" class="type-pill-btn shrink-0 px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-900 border border-dark-700 transition" data-type="decision">Decision</button>
-          <button onclick="selectType('experience')" class="type-pill-btn shrink-0 px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-900 border border-dark-700 transition" data-type="experience">Experience</button>
-          <button onclick="selectType('procedural')" class="type-pill-btn shrink-0 px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-900 border border-dark-700 transition" data-type="procedural">Procedural</button>
-          <button onclick="selectType('preference')" class="type-pill-btn shrink-0 px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-900 border border-dark-700 transition" data-type="preference">Preference</button>
-          <button onclick="selectType('project')" class="type-pill-btn shrink-0 px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-900 border border-dark-700 transition" data-type="project">Project</button>
-          <button onclick="selectType('semantic')" class="type-pill-btn shrink-0 px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-900 border border-dark-700 transition" data-type="semantic">Semantic</button>
-        </div>
+    <!-- Toolbar: View Mode Selector & Type Filter Tabs -->
+    <section class="flex flex-col md:flex-row md:items-center justify-between gap-4 p-3 rounded-2xl bg-dark-900/60 border border-dark-750">
+      
+      <!-- Type Filter Pills -->
+      <div class="flex items-center space-x-2 overflow-x-auto custom-scrollbar pb-1 md:pb-0" id="type-filters">
+        <button onclick="selectType('ALL')" class="type-pill px-3 py-1 rounded-lg text-xs font-semibold bg-indigo-600 text-white shadow transition shrink-0" data-type="ALL">
+          All Types (<span id="count-type-all">0</span>)
+        </button>
+        <button onclick="selectType('decision')" class="type-pill px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-850 border border-dark-750 transition shrink-0" data-type="decision">
+          🏛️ Decisions (<span id="count-type-decision">0</span>)
+        </button>
+        <button onclick="selectType('experience')" class="type-pill px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-850 border border-dark-750 transition shrink-0" data-type="experience">
+          ⚠️ Experiences (<span id="count-type-experience">0</span>)
+        </button>
+        <button onclick="selectType('procedural')" class="type-pill px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-850 border border-dark-750 transition shrink-0" data-type="procedural">
+          📋 Procedural (<span id="count-type-procedural">0</span>)
+        </button>
+        <button onclick="selectType('semantic')" class="type-pill px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-850 border border-dark-750 transition shrink-0" data-type="semantic">
+          📚 Semantic (<span id="count-type-semantic">0</span>)
+        </button>
+        <button onclick="selectType('project')" class="type-pill px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-850 border border-dark-750 transition shrink-0" data-type="project">
+          🎯 Projects (<span id="count-type-project">0</span>)
+        </button>
+        <button onclick="selectType('preference')" class="type-pill px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-850 border border-dark-750 transition shrink-0" data-type="preference">
+          ⚙️ Preferences (<span id="count-type-preference">0</span>)
+        </button>
       </div>
 
-      <!-- MEMORIES LIST CONTAINER (CARDS VIEW) -->
-      <div id="memories-container" class="space-y-3">
-        <div class="p-12 text-center text-slate-500 font-mono text-sm">
-          Loading memories from Turso cloud database...
+      <!-- View Mode Layout Buttons -->
+      <div class="flex items-center space-x-2 shrink-0">
+        <span class="text-xs text-slate-400 mr-1 hidden sm:inline">View Mode:</span>
+        <div class="flex items-center bg-dark-950 p-1 rounded-xl border border-dark-750 text-xs font-mono">
+          <button 
+            id="mode-grouped-btn" 
+            onclick="setViewMode('grouped')" 
+            class="px-2.5 py-1 rounded-lg font-semibold transition bg-indigo-600 text-white shadow"
+          >
+            📂 Grouped by Agent
+          </button>
+          <button 
+            id="mode-cards-btn" 
+            onclick="setViewMode('cards')" 
+            class="px-2.5 py-1 rounded-lg font-medium transition text-slate-400 hover:text-white"
+          >
+            🗂️ Cards Stream
+          </button>
+          <button 
+            id="mode-table-btn" 
+            onclick="setViewMode('table')" 
+            class="px-2.5 py-1 rounded-lg font-medium transition text-slate-400 hover:text-white"
+          >
+            📊 Table View
+          </button>
         </div>
       </div>
+    </section>
 
-      <!-- COMPACT TABLE VIEW CONTAINER (HIDDEN BY DEFAULT) -->
-      <div id="memories-table-container" class="hidden glass-card rounded-2xl overflow-hidden border border-dark-700/80">
-        <div class="overflow-x-auto">
-          <table class="w-full text-left text-xs">
-            <thead class="bg-dark-900/80 text-slate-400 uppercase tracking-wider font-mono border-b border-dark-700">
-              <tr>
-                <th class="py-3 px-4">Agent</th>
-                <th class="py-3 px-4">Type</th>
-                <th class="py-3 px-4">Memory Content</th>
-                <th class="py-3 px-4">Namespace Scope</th>
-                <th class="py-3 px-4">Confidence</th>
-                <th class="py-3 px-4">Created</th>
-              </tr>
-            </thead>
-            <tbody id="memories-table-body" class="divide-y divide-dark-700/60 font-sans">
-              <!-- Populated by JS -->
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-    </main>
-  </div>
-
-  <!-- Detail Modal -->
-  <div id="detail-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm hidden" onclick="if(event.target===this) closeModal()">
-    <div class="glass-card rounded-2xl max-w-2xl w-full p-6 border border-dark-700 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
-      <div class="flex items-start justify-between">
+    <!-- Active View Banner -->
+    <div class="flex flex-wrap items-center justify-between gap-3 px-2">
+      <div class="flex items-center space-x-3">
+        <span class="text-2xl" id="active-agent-icon">🌐</span>
         <div>
-          <span class="text-xs font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300" id="modal-type">Type</span>
-          <h3 class="text-lg font-bold text-white mt-1" id="modal-title">Memory Details</h3>
+          <h1 class="text-lg font-extrabold text-white tracking-tight flex items-center gap-2">
+            <span id="active-agent-title">All FRIDAY Universe Memories</span>
+            <span class="text-xs px-2.5 py-0.5 rounded-full font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold" id="filtered-count-badge">37 memories</span>
+          </h1>
+          <p class="text-xs text-slate-400" id="active-agent-desc">Displaying organized memories partitioned across all 9 registered ecosystem agents</p>
         </div>
-        <button onclick="closeModal()" class="text-slate-400 hover:text-white text-xl">✕</button>
       </div>
-      <div class="p-4 rounded-xl bg-dark-900 border border-dark-700 text-sm font-sans text-slate-200 leading-relaxed" id="modal-content">
+
+      <div class="flex items-center space-x-2 text-xs font-mono text-slate-400">
+        <span>Active Filter:</span>
+        <span class="px-2 py-0.5 rounded bg-dark-800 border border-dark-750 text-indigo-300 font-semibold" id="active-filter-tag">Agent: ALL</span>
+        <span class="px-2 py-0.5 rounded bg-dark-800 border border-dark-750 text-cyan-300 font-semibold" id="active-type-tag">Type: ALL</span>
       </div>
-      <div class="grid grid-cols-2 gap-3 text-xs font-mono text-slate-400">
-        <div><strong>Agent:</strong> <span id="modal-agent" class="text-slate-200"></span></div>
-        <div><strong>State:</strong> <span id="modal-state" class="text-slate-200"></span></div>
-        <div><strong>Namespace:</strong> <span id="modal-namespace" class="text-slate-200"></span></div>
-        <div><strong>Created:</strong> <span id="modal-created" class="text-slate-200"></span></div>
-        <div><strong>Confidence:</strong> <span id="modal-confidence" class="text-indigo-400"></span></div>
-        <div><strong>Importance:</strong> <span id="modal-importance" class="text-cyan-400"></span></div>
+    </div>
+
+    <!-- Main Content Presentation Area -->
+
+    <!-- 1. Grouped by Agent View (Default Organized View) -->
+    <div id="view-grouped" class="space-y-6"></div>
+
+    <!-- 2. Stream Cards View -->
+    <div id="view-cards" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 hidden"></div>
+
+    <!-- 3. Table View -->
+    <div id="view-table" class="glass-card rounded-2xl overflow-hidden border border-dark-750 hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs font-sans">
+          <thead class="bg-dark-900 border-b border-dark-750 text-slate-400 font-mono uppercase text-[11px]">
+            <tr>
+              <th class="py-3.5 px-4 font-semibold">Agent</th>
+              <th class="py-3.5 px-4 font-semibold">Type</th>
+              <th class="py-3.5 px-4 font-semibold">Content Summary</th>
+              <th class="py-3.5 px-4 font-semibold">Entities</th>
+              <th class="py-3.5 px-4 font-semibold">Namespace</th>
+              <th class="py-3.5 px-4 font-semibold">Conf / Imp</th>
+              <th class="py-3.5 px-4 font-semibold">Recorded</th>
+            </tr>
+          </thead>
+          <tbody id="memories-table-body" class="divide-y divide-dark-750/50"></tbody>
+        </table>
       </div>
-      <div class="pt-3 border-t border-dark-700 flex justify-end">
-        <button onclick="closeModal()" class="px-4 py-1.5 rounded-lg bg-dark-800 hover:bg-dark-700 text-slate-200 text-xs font-medium transition">
-          Close
+    </div>
+
+  </main>
+
+  <!-- Detailed Memory Modal Inspector -->
+  <div id="detail-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md hidden" onclick="if(event.target === this) closeModal()">
+    <div class="glass-card rounded-2xl max-w-2xl w-full p-6 space-y-4 border border-dark-700 shadow-2xl relative">
+      <div class="flex items-start justify-between gap-4">
+        <div class="space-y-1">
+          <div class="flex items-center space-x-2">
+            <span class="text-xl" id="modal-agent-icon">🤖</span>
+            <span id="modal-agent-name" class="font-extrabold text-sm uppercase tracking-wider text-white"></span>
+            <span id="modal-type-badge" class="text-xs font-mono uppercase px-2.5 py-0.5 rounded-full border"></span>
+            <span id="modal-state-badge" class="text-xs font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">ACTIVE</span>
+          </div>
+          <p class="text-xs font-mono text-slate-400" id="modal-memory-id"></p>
+        </div>
+        <button onclick="closeModal()" class="w-8 h-8 rounded-lg bg-dark-800 hover:bg-dark-700 text-slate-400 hover:text-white flex items-center justify-center transition">
+          ✕
+        </button>
+      </div>
+
+      <!-- Content Area -->
+      <div class="space-y-2">
+        <label class="text-xs font-mono uppercase tracking-wider text-slate-400">Memory Content</label>
+        <div id="modal-content" class="text-sm text-slate-100 font-sans leading-relaxed bg-dark-950 p-4 rounded-xl border border-dark-750 max-h-60 overflow-y-auto custom-scrollbar whitespace-pre-wrap select-text"></div>
+      </div>
+
+      <!-- Entities Extracted -->
+      <div class="space-y-1.5" id="modal-entities-box">
+        <label class="text-xs font-mono uppercase tracking-wider text-slate-400">Extracted Knowledge Entities</label>
+        <div id="modal-entities" class="flex flex-wrap gap-1.5"></div>
+      </div>
+
+      <!-- Detailed Meta Grid -->
+      <div class="grid grid-cols-2 gap-3 pt-2 text-xs font-mono text-slate-300">
+        <div class="bg-dark-900 p-2.5 rounded-lg border border-dark-750">
+          <span class="text-slate-500">Namespace Path:</span>
+          <div id="modal-namespace" class="text-slate-200 truncate mt-0.5 text-[11px]"></div>
+        </div>
+        <div class="bg-dark-900 p-2.5 rounded-lg border border-dark-750">
+          <span class="text-slate-500">Recorded Timestamp:</span>
+          <div id="modal-created" class="text-slate-200 mt-0.5 text-[11px]"></div>
+        </div>
+        <div class="bg-dark-900 p-2.5 rounded-lg border border-dark-750">
+          <span class="text-slate-500">Confidence Score:</span>
+          <div class="flex items-center space-x-2 mt-0.5">
+            <span id="modal-confidence" class="font-bold text-indigo-400"></span>
+            <div class="flex-1 bg-dark-800 h-1.5 rounded-full overflow-hidden">
+              <div id="modal-confidence-bar" class="bg-indigo-500 h-full rounded-full"></div>
+            </div>
+          </div>
+        </div>
+        <div class="bg-dark-900 p-2.5 rounded-lg border border-dark-750">
+          <span class="text-slate-500">Importance Rating:</span>
+          <div class="flex items-center space-x-2 mt-0.5">
+            <span id="modal-importance" class="font-bold text-cyan-400"></span>
+            <div class="flex-1 bg-dark-800 h-1.5 rounded-full overflow-hidden">
+              <div id="modal-importance-bar" class="bg-cyan-500 h-full rounded-full"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="pt-3 border-t border-dark-750 flex items-center justify-between">
+        <button 
+          onclick="copyMemoryContent()" 
+          id="modal-copy-btn"
+          class="px-3 py-1.5 rounded-lg bg-dark-800 hover:bg-dark-700 text-slate-300 hover:text-white text-xs font-mono transition flex items-center space-x-1.5"
+        >
+          <span>📋</span>
+          <span id="copy-btn-text">Copy Text</span>
+        </button>
+        <button 
+          onclick="closeModal()" 
+          class="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition shadow-sm"
+        >
+          Done
         </button>
       </div>
     </div>
   </div>
 
-  <!-- Client JavaScript Logic -->
+  <!-- JavaScript Application Logic -->
   <script>
+    // State Management
     let state = {
       memories: [],
       agents: [],
       selectedAgent: 'ALL',
       selectedType: 'ALL',
       searchQuery: '',
-      currentLayout: 'cards'
+      viewMode: 'grouped', // 'grouped' | 'cards' | 'table'
+      activeMemory: null
     };
 
-    const AGENT_META = {
-      friday: { icon: '🤖', color: 'text-indigo-400', border: 'border-indigo-500/40', badge: 'bg-indigo-500/20 text-indigo-300', desc: 'Supervisor' },
-      forge: { icon: '🛠️', color: 'text-amber-400', border: 'border-amber-500/40', badge: 'bg-amber-500/20 text-amber-300', desc: 'Engineering' },
-      sentinel: { icon: '🛡️', color: 'text-rose-400', border: 'border-rose-500/40', badge: 'bg-rose-500/20 text-rose-300', desc: 'Security' },
-      inference: { icon: '⚡', color: 'text-cyan-400', border: 'border-cyan-500/40', badge: 'bg-cyan-500/20 text-cyan-300', desc: 'AI Gateway' },
-      cortex: { icon: '🌐', color: 'text-emerald-400', border: 'border-emerald-500/40', badge: 'bg-emerald-500/20 text-emerald-300', desc: 'Web Ops' },
-      intelx: { icon: '🔬', color: 'text-purple-400', border: 'border-purple-500/40', badge: 'bg-purple-500/20 text-purple-300', desc: 'Deep Research' },
-      futuris: { icon: '🔮', color: 'text-fuchsia-400', border: 'border-fuchsia-500/40', badge: 'bg-fuchsia-500/20 text-fuchsia-300', desc: 'Forecasting' },
-      stratex: { icon: '📈', color: 'text-green-400', border: 'border-green-500/40', badge: 'bg-green-500/20 text-green-300', desc: 'Trading' },
-      nexus: { icon: '⚡', color: 'text-teal-400', border: 'border-teal-500/40', badge: 'bg-teal-500/20 text-teal-300', desc: 'UI Subsystem' }
+    // Metadata for the 9 Official FRIDAY Universe Agents
+    const FRIDAY_AGENTS = {
+      friday: {
+        name: 'FRIDAY',
+        icon: '👑',
+        roleLabel: 'SUPERVISOR',
+        color: 'text-indigo-400',
+        badge: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30',
+        cardBg: 'from-indigo-950/40 to-dark-900',
+        desc: 'Central desktop OS & master ecosystem orchestrator'
+      },
+      forge: {
+        name: 'FORGE',
+        icon: '🛠️',
+        roleLabel: 'ENGINEERING',
+        color: 'text-amber-400',
+        badge: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+        cardBg: 'from-amber-950/40 to-dark-900',
+        desc: 'Autonomous software engineering & code synthesis'
+      },
+      sentinel: {
+        name: 'SENTINEL',
+        icon: '🛡️',
+        roleLabel: 'SECURITY',
+        color: 'text-rose-400',
+        badge: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
+        cardBg: 'from-rose-950/40 to-dark-900',
+        desc: 'Cybersecurity shield & zero-trust defense'
+      },
+      inference: {
+        name: 'INFERENCE',
+        icon: '⚡',
+        roleLabel: 'AI GATEWAY',
+        color: 'text-cyan-400',
+        badge: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30',
+        cardBg: 'from-cyan-950/40 to-dark-900',
+        desc: 'Multi-model AI inference gateway & token routing'
+      },
+      cortex: {
+        name: 'CORTEX',
+        icon: '🌐',
+        roleLabel: 'WEB OPS',
+        color: 'text-emerald-400',
+        badge: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+        cardBg: 'from-emerald-950/40 to-dark-900',
+        desc: 'Autonomous web operations & telemetry intelligence'
+      },
+      intelx: {
+        name: 'INTELX',
+        icon: '🔬',
+        roleLabel: 'RESEARCH',
+        color: 'text-purple-400',
+        badge: 'bg-purple-500/15 text-purple-300 border-purple-500/30',
+        cardBg: 'from-purple-950/40 to-dark-900',
+        desc: 'Deep research intelligence & evidence extraction'
+      },
+      futuris: {
+        name: 'FUTURIS',
+        icon: '🔮',
+        roleLabel: 'FORECASTING',
+        color: 'text-fuchsia-400',
+        badge: 'bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/30',
+        cardBg: 'from-fuchsia-950/40 to-dark-900',
+        desc: 'Probabilistic forecasting & regime modeling'
+      },
+      stratex: {
+        name: 'STRATEX',
+        icon: '📈',
+        roleLabel: 'TRADING',
+        color: 'text-green-400',
+        badge: 'bg-green-500/15 text-green-300 border-green-500/30',
+        cardBg: 'from-green-950/40 to-dark-900',
+        desc: '24/7 algorithmic trading & risk guardrails'
+      },
+      memora: {
+        name: 'MEMORA',
+        icon: '🧠',
+        roleLabel: 'MEMORY FABRIC',
+        color: 'text-sky-400',
+        badge: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
+        cardBg: 'from-sky-950/40 to-dark-900',
+        desc: 'Unified persistent memory & context graph'
+      }
     };
 
-    const TYPE_META = {
-      decision: { color: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30' },
-      experience: { color: 'bg-rose-500/15 text-rose-300 border-rose-500/30' },
-      procedural: { color: 'bg-purple-500/15 text-purple-300 border-purple-500/30' },
-      preference: { color: 'bg-amber-500/15 text-amber-300 border-amber-500/30' },
-      episodic: { color: 'bg-blue-500/15 text-blue-300 border-blue-500/30' },
-      semantic: { color: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' },
-      project: { color: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30' }
+    // Metadata for Memory Types
+    const MEMORY_TYPE_META = {
+      decision: { label: 'Decision', icon: '🏛️', color: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30' },
+      experience: { label: 'Experience', icon: '⚠️', color: 'bg-rose-500/15 text-rose-300 border-rose-500/30' },
+      procedural: { label: 'Procedural', icon: '📋', color: 'bg-purple-500/15 text-purple-300 border-purple-500/30' },
+      semantic: { label: 'Semantic', icon: '📚', color: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' },
+      project: { label: 'Project', icon: '🎯', color: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30' },
+      preference: { label: 'Preference', icon: '⚙️', color: 'bg-amber-500/15 text-amber-300 border-amber-500/30' },
+      episodic: { label: 'Episodic', icon: '⏱️', color: 'bg-blue-500/15 text-blue-300 border-blue-500/30' }
     };
 
+    // Initialize & Fetch Overview Data
     async function loadData() {
       try {
-        const resp = await fetch('/api/dashboard/overview');
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const data = await resp.json();
+        const res = await fetch('/api/dashboard/overview');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
 
-        state.memories = data.memories || [];
-        state.agents = data.agents || [];
+        // Enforce only 9 canonical agents in list
+        state.agents = (data.agents || []).filter(a => FRIDAY_AGENTS[a.name.toLowerCase()]);
+        state.memories = (data.memories || []).filter(m => FRIDAY_AGENTS[m.owner_name.toLowerCase()]);
 
-        // Update counts
-        document.getElementById('header-total-count').innerText = state.memories.length;
-        document.getElementById('header-agent-count').innerText = state.agents.length;
-        document.getElementById('count-all').innerText = state.memories.length;
-        document.getElementById('agents-loaded-tag').innerText = `${state.agents.length} active`;
+        // Update Executive KPI Statistics
+        document.getElementById('stat-memories').innerText = state.memories.length;
+        document.getElementById('stat-agents').innerText = `${state.agents.length} / 9`;
+        document.getElementById('stat-namespaces').innerText = data.total_namespaces || '11';
 
-        renderAgentsSidebar();
+        updateTypeCounts();
+        renderAgentsShowcase();
         applyFiltersAndRender();
       } catch (err) {
-        console.error('Failed to load overview:', err);
-        document.getElementById('memories-container').innerHTML = `
-          <div class="glass-card rounded-2xl p-12 text-center text-rose-400 border border-rose-500/30">
-            <p class="font-bold text-base mb-1">Failed to connect to Memora API</p>
-            <p class="text-xs font-mono text-slate-400">${err.message}</p>
-          </div>
-        `;
+        console.error('Failed to load dashboard overview:', err);
+        showToast('Failed to load memories from API: ' + err.message, 'error');
       }
     }
 
-    function renderAgentsSidebar() {
-      const container = document.getElementById('agent-list');
-      
-      container.innerHTML = state.agents.map(a => {
-        const meta = AGENT_META[a.name.toLowerCase()] || { icon: '🤖', color: 'text-slate-300', border: 'border-slate-700', badge: 'bg-slate-800 text-slate-400', desc: a.role };
-        const isSelected = state.selectedAgent.toLowerCase() === a.name.toLowerCase();
-        const activeClass = isSelected 
-          ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/40 shadow-sm' 
-          : 'bg-dark-900/60 hover:bg-dark-750 text-slate-300 border-dark-700/60';
+    // Render 9-Agent Directory Showcase Grid
+    function renderAgentsShowcase() {
+      const container = document.getElementById('agents-grid');
+      const agentKeys = ['friday', 'forge', 'sentinel', 'inference', 'cortex', 'intelx', 'futuris', 'stratex', 'memora'];
+
+      const memoryCounts = {};
+      state.memories.forEach(m => {
+        const k = m.owner_name.toLowerCase();
+        memoryCounts[k] = (memoryCounts[k] || 0) + 1;
+      });
+
+      container.innerHTML = agentKeys.map(key => {
+        const meta = FRIDAY_AGENTS[key];
+        const count = memoryCounts[key] || 0;
+        const isSelected = state.selectedAgent.toLowerCase() === key;
 
         return `
-          <button 
-            onclick="selectAgent('${escapeHtml(a.name)}')"
-            class="agent-filter-btn w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm transition border ${activeClass}"
-            id="agent-btn-${a.name}"
+          <div 
+            onclick="selectAgent('${key}')"
+            class="glass-card rounded-xl p-3 cursor-pointer transition-all duration-200 border flex flex-col justify-between space-y-2 hover:scale-[1.02] ${isSelected ? 'agent-card-active' : 'border-dark-750 hover:border-dark-700'}"
+            id="agent-card-${key}"
           >
-            <div class="flex items-center space-x-2.5 min-w-0">
-              <span class="text-base shrink-0">${meta.icon}</span>
-              <div class="text-left min-w-0">
-                <div class="font-bold uppercase tracking-wide text-xs truncate ${isSelected ? 'text-white' : meta.color}">${escapeHtml(a.name)}</div>
-                <div class="text-[10px] text-slate-500 truncate">${escapeHtml(meta.desc)}</div>
-              </div>
+            <div class="flex items-center justify-between">
+              <span class="text-xl">${meta.icon}</span>
+              <span class="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded font-bold ${meta.badge}">
+                ${count} mem
+              </span>
             </div>
-            <span class="px-2 py-0.5 rounded-full text-xs font-mono ${a.memory_count > 0 ? 'bg-dark-750 text-slate-200 border border-dark-700' : 'text-slate-600'}">
-              ${a.memory_count}
-            </span>
-          </button>
+            <div>
+              <div class="font-extrabold text-xs tracking-wider uppercase truncate ${meta.color}">${meta.name}</div>
+              <div class="text-[10px] text-slate-400 truncate mt-0.5">${meta.roleLabel}</div>
+            </div>
+          </div>
         `;
       }).join('');
+
+      // Update "All" button
+      const allBtn = document.getElementById('btn-all-agents');
+      if (state.selectedAgent === 'ALL') {
+        allBtn.className = 'text-xs font-semibold px-3 py-1 rounded-lg bg-indigo-600 text-white shadow-sm';
+      } else {
+        allBtn.className = 'text-xs font-medium px-3 py-1 rounded-lg bg-dark-850 hover:bg-dark-750 text-slate-300 border border-dark-750';
+      }
     }
 
-    function selectAgent(agentName) {
-      state.selectedAgent = agentName;
+    function updateTypeCounts() {
+      const counts = { all: 0, decision: 0, experience: 0, procedural: 0, semantic: 0, project: 0, preference: 0 };
       
-      // Update sidebar styling
-      document.getElementById('agent-btn-all').className = agentName === 'ALL'
-        ? 'agent-filter-btn w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition mb-2 bg-indigo-600/20 text-indigo-300 border border-indigo-500/40'
-        : 'agent-filter-btn w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition mb-2 bg-dark-900/60 hover:bg-dark-750 text-slate-300 border border-dark-700/60';
+      const targetMems = state.selectedAgent === 'ALL' 
+        ? state.memories 
+        : state.memories.filter(m => m.owner_name.toLowerCase() === state.selectedAgent.toLowerCase());
 
-      renderAgentsSidebar();
+      counts.all = targetMems.length;
+      targetMems.forEach(m => {
+        const t = (m.memory_type || '').toLowerCase();
+        if (counts[t] !== undefined) counts[t]++;
+      });
+
+      document.getElementById('count-type-all').innerText = counts.all;
+      document.getElementById('count-type-decision').innerText = counts.decision;
+      document.getElementById('count-type-experience').innerText = counts.experience;
+      document.getElementById('count-type-procedural').innerText = counts.procedural;
+      document.getElementById('count-type-semantic').innerText = counts.semantic;
+      document.getElementById('count-type-project').innerText = counts.project;
+      document.getElementById('count-type-preference').innerText = counts.preference;
+    }
+
+    // Filter Controls
+    function selectAgent(agentKey) {
+      state.selectedAgent = agentKey;
+      renderAgentsShowcase();
+      updateTypeCounts();
       applyFiltersAndRender();
     }
 
     function selectType(typeName) {
       state.selectedType = typeName;
-      document.querySelectorAll('.type-pill-btn').forEach(btn => {
+      document.querySelectorAll('.type-pill').forEach(btn => {
         if (btn.dataset.type.toLowerCase() === typeName.toLowerCase()) {
-          btn.className = 'type-pill-btn shrink-0 px-3 py-1 rounded-lg text-xs font-semibold bg-indigo-600 text-white shadow transition';
+          btn.className = 'type-pill px-3 py-1 rounded-lg text-xs font-semibold bg-indigo-600 text-white shadow transition shrink-0';
         } else {
-          btn.className = 'type-pill-btn shrink-0 px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-900 border border-dark-700 transition';
+          btn.className = 'type-pill px-3 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-dark-850 border border-dark-750 transition shrink-0';
         }
       });
+      applyFiltersAndRender();
+    }
+
+    function setViewMode(mode) {
+      state.viewMode = mode;
+      document.getElementById('mode-grouped-btn').className = mode === 'grouped' ? 'px-2.5 py-1 rounded-lg font-semibold transition bg-indigo-600 text-white shadow' : 'px-2.5 py-1 rounded-lg font-medium transition text-slate-400 hover:text-white';
+      document.getElementById('mode-cards-btn').className = mode === 'cards' ? 'px-2.5 py-1 rounded-lg font-semibold transition bg-indigo-600 text-white shadow' : 'px-2.5 py-1 rounded-lg font-medium transition text-slate-400 hover:text-white';
+      document.getElementById('mode-table-btn').className = mode === 'table' ? 'px-2.5 py-1 rounded-lg font-semibold transition bg-indigo-600 text-white shadow' : 'px-2.5 py-1 rounded-lg font-medium transition text-slate-400 hover:text-white';
       applyFiltersAndRender();
     }
 
@@ -385,184 +635,359 @@
       applyFiltersAndRender();
     }
 
-    function setLayout(layout) {
-      state.currentLayout = layout;
-      document.getElementById('layout-cards-btn').className = layout === 'cards' 
-        ? 'px-2.5 py-1 rounded-lg font-medium transition bg-indigo-600 text-white shadow'
-        : 'px-2.5 py-1 rounded-lg font-medium transition text-slate-400 hover:text-white';
-      
-      document.getElementById('layout-table-btn').className = layout === 'table'
-        ? 'px-2.5 py-1 rounded-lg font-medium transition bg-indigo-600 text-white shadow'
-        : 'px-2.5 py-1 rounded-lg font-medium transition text-slate-400 hover:text-white';
-
-      applyFiltersAndRender();
-    }
-
+    // Filter & Render
     function applyFiltersAndRender() {
       let filtered = state.memories;
 
-      // Agent Filter
+      // Filter by Agent
       if (state.selectedAgent !== 'ALL') {
         filtered = filtered.filter(m => m.owner_name && m.owner_name.toLowerCase() === state.selectedAgent.toLowerCase());
       }
 
-      // Type Filter
+      // Filter by Type
       if (state.selectedType !== 'ALL') {
         filtered = filtered.filter(m => m.memory_type && m.memory_type.toLowerCase() === state.selectedType.toLowerCase());
       }
 
-      // Search Filter
+      // Filter by Search
       if (state.searchQuery) {
         const q = state.searchQuery;
-        filtered = filtered.filter(m => 
-          (m.content_text && m.content_text.toLowerCase().includes(q)) ||
-          (m.namespace_path && m.namespace_path.toLowerCase().includes(q)) ||
-          (m.owner_name && m.owner_name.toLowerCase().includes(q)) ||
-          (m.memory_type && m.memory_type.toLowerCase().includes(q))
-        );
+        filtered = filtered.filter(m => {
+          const contentMatch = m.content_text && m.content_text.toLowerCase().includes(q);
+          const agentMatch = m.owner_name && m.owner_name.toLowerCase().includes(q);
+          const typeMatch = m.memory_type && m.memory_type.toLowerCase().includes(q);
+          const nsMatch = m.namespace_path && m.namespace_path.toLowerCase().includes(q);
+          const entityMatch = Array.isArray(m.entities) && m.entities.some(e => e.toLowerCase().includes(q));
+          return contentMatch || agentMatch || typeMatch || nsMatch || entityMatch;
+        });
       }
 
-      // Update Header Titles
+      // Update Banner Titles
       const isAll = state.selectedAgent === 'ALL';
-      const meta = AGENT_META[state.selectedAgent.toLowerCase()] || { icon: '🤖', desc: 'Agent' };
-      document.getElementById('active-icon').innerText = isAll ? '🌐' : meta.icon;
-      document.getElementById('active-view-title').innerText = isAll ? 'All Memories' : `${state.selectedAgent.toUpperCase()} Memories`;
-      document.getElementById('active-view-subtitle').innerText = isAll 
-        ? 'Displaying memories across all registered ecosystem agents' 
-        : `Showing partitioned memories owned by ${state.selectedAgent.toUpperCase()} (${meta.desc})`;
+      const meta = FRIDAY_AGENTS[state.selectedAgent.toLowerCase()] || { icon: '🌐', name: 'FRIDAY UNIVERSE', desc: 'Displaying organized memories partitioned across all 9 registered ecosystem agents' };
+      
+      document.getElementById('active-agent-icon').innerText = isAll ? '🌐' : meta.icon;
+      document.getElementById('active-agent-title').innerText = isAll ? 'All FRIDAY Universe Memories' : `${meta.name} Knowledge Base`;
+      document.getElementById('active-agent-desc').innerText = isAll ? 'Displaying organized memories partitioned across all 9 registered ecosystem agents' : meta.desc;
       document.getElementById('filtered-count-badge').innerText = `${filtered.length} memories`;
+      document.getElementById('active-filter-tag').innerText = `Agent: ${isAll ? 'ALL' : meta.name}`;
+      document.getElementById('active-type-tag').innerText = `Type: ${state.selectedType.toUpperCase()}`;
 
-      if (state.currentLayout === 'cards') {
-        document.getElementById('memories-container').classList.remove('hidden');
-        document.getElementById('memories-table-container').classList.add('hidden');
+      // Toggle View Containers
+      document.getElementById('view-grouped').classList.toggle('hidden', state.viewMode !== 'grouped');
+      document.getElementById('view-cards').classList.toggle('hidden', state.viewMode !== 'cards');
+      document.getElementById('view-table').classList.toggle('hidden', state.viewMode !== 'table');
+
+      if (state.viewMode === 'grouped') {
+        renderGroupedView(filtered);
+      } else if (state.viewMode === 'cards') {
         renderCardsView(filtered);
       } else {
-        document.getElementById('memories-container').classList.add('hidden');
-        document.getElementById('memories-table-container').classList.remove('hidden');
         renderTableView(filtered);
       }
     }
 
-    function renderCardsView(memories) {
-      const container = document.getElementById('memories-container');
-      if (memories.length === 0) {
-        container.innerHTML = `
-          <div class="glass-card rounded-2xl p-12 text-center text-slate-500 font-mono text-sm space-y-2">
-            <span class="text-3xl">📭</span>
-            <p class="font-medium text-slate-300">No memory records match this filter</p>
-            <p class="text-xs text-slate-500">Try selecting another agent or resetting the search query.</p>
-          </div>
-        `;
+    // Render Mode 1: Grouped by Agent (The Canonical Organized Experience)
+    function renderGroupedView(filteredMemories) {
+      const container = document.getElementById('view-grouped');
+      if (filteredMemories.length === 0) {
+        container.innerHTML = renderEmptyState();
         return;
       }
 
-      container.innerHTML = memories.map((m, idx) => {
-        const meta = AGENT_META[m.owner_name.toLowerCase()] || { icon: '🤖', color: 'text-slate-300', badge: 'bg-slate-800 text-slate-400' };
-        const typeMeta = TYPE_META[m.memory_type.toLowerCase()] || { color: 'bg-slate-800 text-slate-400 border-slate-700' };
-        const dateFormatted = m.created_at ? new Date(m.created_at).toLocaleString() : 'Recent';
+      // Group memories by agent
+      const grouped = {};
+      const agentKeys = ['friday', 'forge', 'sentinel', 'inference', 'cortex', 'intelx', 'futuris', 'stratex', 'memora'];
+      
+      agentKeys.forEach(k => grouped[k] = []);
+      filteredMemories.forEach(m => {
+        const k = m.owner_name.toLowerCase();
+        if (grouped[k]) grouped[k].push(m);
+      });
+
+      // If specific agent selected, only render that one
+      const displayKeys = state.selectedAgent === 'ALL' 
+        ? agentKeys.filter(k => grouped[k].length > 0)
+        : [state.selectedAgent.toLowerCase()];
+
+      container.innerHTML = displayKeys.map(k => {
+        const meta = FRIDAY_AGENTS[k];
+        const mems = grouped[k] || [];
+        if (mems.length === 0) return '';
 
         return `
-          <div class="glass-card rounded-2xl p-5 transition hover:shadow-xl hover:shadow-indigo-500/5 space-y-3 cursor-pointer" onclick="openModal(${idx})">
-            <!-- Card Header -->
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <div class="flex items-center space-x-2">
-                <span class="text-lg">${meta.icon}</span>
-                <span class="font-bold text-xs uppercase tracking-wider px-2 py-0.5 rounded-lg bg-dark-900 border border-dark-700 ${meta.color}">
-                  ${escapeHtml(m.owner_name)}
-                </span>
-                <span class="text-[11px] font-mono uppercase px-2 py-0.5 rounded-full border ${typeMeta.color}">
-                  ${escapeHtml(m.memory_type)}
-                </span>
-                <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  ${escapeHtml(m.lifecycle_state)}
+          <div class="glass-card rounded-2xl p-5 border border-dark-750 space-y-4 shadow-xl">
+            <!-- Agent Section Header -->
+            <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-dark-750">
+              <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-dark-850 flex items-center justify-center text-xl border border-dark-700">
+                  ${meta.icon}
+                </div>
+                <div>
+                  <div class="flex items-center space-x-2">
+                    <h3 class="font-extrabold text-base text-white tracking-wide uppercase">${meta.name}</h3>
+                    <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded font-bold ${meta.badge}">
+                      ${meta.roleLabel}
+                    </span>
+                    <span class="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                      ● ONLINE
+                    </span>
+                  </div>
+                  <p class="text-xs text-slate-400 mt-0.5">${meta.desc}</p>
+                </div>
+              </div>
+              <div class="flex items-center space-x-2 text-xs font-mono text-slate-400">
+                <span class="bg-dark-850 px-2.5 py-1 rounded-lg border border-dark-750">
+                  ${mems.length} partitioned records
                 </span>
               </div>
-              <span class="text-xs font-mono text-slate-500">${dateFormatted}</span>
             </div>
 
-            <!-- Content -->
-            <div class="text-sm font-sans text-slate-200 leading-relaxed font-normal bg-dark-900/50 p-3 rounded-xl border border-dark-700/60">
-              ${escapeHtml(m.content_text)}
-            </div>
-
-            <!-- Card Footer -->
-            <div class="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs font-mono text-slate-400">
-              <div class="flex items-center space-x-1.5 truncate max-w-md">
-                <span class="text-slate-600">📁</span>
-                <span class="truncate text-slate-400 hover:text-indigo-400 transition" title="${escapeHtml(m.namespace_path)}">${escapeHtml(m.namespace_path)}</span>
-              </div>
-              <div class="flex items-center space-x-3 shrink-0">
-                <span class="bg-dark-900 px-2 py-0.5 rounded border border-dark-700">conf: <strong class="text-indigo-400">${(m.confidence || 1.0).toFixed(2)}</strong></span>
-                <span class="bg-dark-900 px-2 py-0.5 rounded border border-dark-700">imp: <strong class="text-cyan-400">${(m.importance || 0.8).toFixed(2)}</strong></span>
-              </div>
+            <!-- Memory Cards Sub-Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              ${mems.map(m => renderMemoryCardHTML(m)).join('')}
             </div>
           </div>
         `;
       }).join('');
     }
 
-    function renderTableView(memories) {
+    // Render Mode 2: Flat Cards View
+    function renderCardsView(filteredMemories) {
+      const container = document.getElementById('view-cards');
+      if (filteredMemories.length === 0) {
+        container.innerHTML = `<div class="col-span-full">${renderEmptyState()}</div>`;
+        return;
+      }
+      container.innerHTML = filteredMemories.map(m => renderMemoryCardHTML(m)).join('');
+    }
+
+    // Helper: Single Memory Card Component
+    function renderMemoryCardHTML(m) {
+      const meta = FRIDAY_AGENTS[m.owner_name.toLowerCase()] || { icon: '🤖', name: m.owner_name, color: 'text-slate-200' };
+      const typeMeta = MEMORY_TYPE_META[m.memory_type.toLowerCase()] || { label: m.memory_type, icon: '📌', color: 'bg-slate-800 text-slate-400 border-slate-700' };
+      const entities = Array.isArray(m.entities) ? m.entities : [];
+
+      return `
+        <div 
+          onclick="openModal('${m.id}')"
+          class="bg-dark-900/80 hover:bg-dark-850 p-4 rounded-xl border border-dark-750/80 hover:border-indigo-500/40 transition-all duration-200 space-y-3 cursor-pointer shadow-md hover:shadow-indigo-500/5 flex flex-col justify-between"
+        >
+          <div class="space-y-2">
+            <!-- Header Row -->
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center space-x-1.5">
+                <span class="text-xs">${meta.icon}</span>
+                <span class="font-extrabold text-[11px] uppercase tracking-wider ${meta.color}">${meta.name}</span>
+                <span class="text-[10px] font-mono px-2 py-0.5 rounded-full border ${typeMeta.color} font-medium">
+                  ${typeMeta.icon} ${typeMeta.label}
+                </span>
+              </div>
+              <span class="text-[10px] font-mono text-slate-500">
+                ${m.created_at ? new Date(m.created_at).toLocaleDateString() : 'Active'}
+              </span>
+            </div>
+
+            <!-- Content -->
+            <p class="text-xs font-sans text-slate-200 leading-relaxed font-normal bg-dark-950/60 p-3 rounded-lg border border-dark-800/80">
+              ${escapeHtml(m.content_text)}
+            </p>
+          </div>
+
+          <!-- Footer & Entity Chips -->
+          <div class="space-y-2 pt-1">
+            ${entities.length > 0 ? `
+              <div class="flex flex-wrap gap-1">
+                ${entities.map(e => `
+                  <span onclick="event.stopPropagation(); filterByEntity('${escapeHtml(e)}')" class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-dark-800 text-indigo-300 border border-dark-700 hover:border-indigo-500 transition">
+                    #${escapeHtml(e)}
+                  </span>
+                `).join('')}
+              </div>
+            ` : ''}
+
+            <div class="flex items-center justify-between text-[10px] font-mono text-slate-400 pt-1 border-t border-dark-800">
+              <div class="truncate max-w-[200px]" title="${escapeHtml(m.namespace_path)}">
+                📁 <span class="text-slate-400">${escapeHtml(m.namespace_path)}</span>
+              </div>
+              <div class="flex items-center space-x-2 shrink-0">
+                <span class="bg-dark-950 px-1.5 py-0.5 rounded border border-dark-800 text-indigo-400">c:${(m.confidence || 1).toFixed(2)}</span>
+                <span class="bg-dark-950 px-1.5 py-0.5 rounded border border-dark-800 text-cyan-400">i:${(m.importance || 0.8).toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Render Mode 3: Table View
+    function renderTableView(filteredMemories) {
       const tbody = document.getElementById('memories-table-body');
-      if (memories.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-slate-500">No matching memories found.</td></tr>`;
+      if (filteredMemories.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" class="p-8 text-center text-slate-500 font-mono">No matching records found.</td></tr>`;
         return;
       }
 
-      tbody.innerHTML = memories.map((m, idx) => {
-        const meta = AGENT_META[m.owner_name.toLowerCase()] || { icon: '🤖', color: 'text-slate-300' };
-        const typeMeta = TYPE_META[m.memory_type.toLowerCase()] || { color: 'bg-slate-800 text-slate-400 border-slate-700' };
-        const dateFormatted = m.created_at ? new Date(m.created_at).toLocaleDateString() : 'Recent';
+      tbody.innerHTML = filteredMemories.map(m => {
+        const meta = FRIDAY_AGENTS[m.owner_name.toLowerCase()] || { icon: '🤖', name: m.owner_name, color: 'text-slate-200' };
+        const typeMeta = MEMORY_TYPE_META[m.memory_type.toLowerCase()] || { label: m.memory_type, color: 'bg-slate-800 text-slate-400 border-slate-700' };
+        const entities = Array.isArray(m.entities) ? m.entities : [];
 
         return `
-          <tr class="hover:bg-dark-750/50 transition cursor-pointer" onclick="openModal(${idx})">
-            <td class="py-3 px-4 font-bold uppercase tracking-wider ${meta.color} whitespace-nowrap">
-              ${meta.icon} ${escapeHtml(m.owner_name)}
+          <tr class="hover:bg-dark-850/60 transition cursor-pointer" onclick="openModal('${m.id}')">
+            <td class="py-3 px-4 whitespace-nowrap font-bold uppercase ${meta.color}">
+              ${meta.icon} ${meta.name}
             </td>
             <td class="py-3 px-4 whitespace-nowrap">
               <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full border ${typeMeta.color}">
-                ${escapeHtml(m.memory_type)}
+                ${typeMeta.label}
               </span>
             </td>
-            <td class="py-3 px-4 text-slate-200 max-w-md truncate">
+            <td class="py-3 px-4 text-slate-200 max-w-md truncate font-normal">
               ${escapeHtml(m.content_text)}
             </td>
-            <td class="py-3 px-4 font-mono text-slate-400 truncate max-w-xs">
+            <td class="py-3 px-4 max-w-xs truncate">
+              ${entities.map(e => `<span class="text-[9px] font-mono px-1 py-0.5 rounded bg-dark-800 text-indigo-300 mr-1">#${escapeHtml(e)}</span>`).join('')}
+            </td>
+            <td class="py-3 px-4 font-mono text-slate-400 text-[11px] truncate max-w-xs">
               ${escapeHtml(m.namespace_path)}
             </td>
-            <td class="py-3 px-4 font-mono text-indigo-400 whitespace-nowrap">
-              ${(m.confidence || 1.0).toFixed(2)}
+            <td class="py-3 px-4 font-mono whitespace-nowrap">
+              <span class="text-indigo-400">${(m.confidence || 1).toFixed(2)}</span> / 
+              <span class="text-cyan-400">${(m.importance || 0.8).toFixed(2)}</span>
             </td>
-            <td class="py-3 px-4 font-mono text-slate-500 whitespace-nowrap">
-              ${dateFormatted}
+            <td class="py-3 px-4 font-mono text-slate-500 whitespace-nowrap text-[11px]">
+              ${m.created_at ? new Date(m.created_at).toLocaleDateString() : 'N/A'}
             </td>
           </tr>
         `;
       }).join('');
     }
 
-    function openModal(index) {
-      const m = state.memories[index];
-      if (!m) return;
+    function renderEmptyState() {
+      return `
+        <div class="glass-card rounded-2xl p-12 text-center text-slate-500 font-mono text-xs space-y-2">
+          <span class="text-3xl">📭</span>
+          <p class="font-bold text-slate-300 text-sm">No memory records found for this query</p>
+          <p class="text-slate-500">Try selecting another agent or resetting the search filter.</p>
+          <button onclick="selectAgent('ALL'); selectType('ALL'); document.getElementById('search-box').value=''; handleSearch('')" class="mt-3 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold">
+            Reset All Filters
+          </button>
+        </div>
+      `;
+    }
 
-      document.getElementById('modal-title').innerText = `Memory ID: ${m.id}`;
-      document.getElementById('modal-type').innerText = m.memory_type;
+    // Modal Inspection Logic
+    function openModal(memoryId) {
+      const m = state.memories.find(x => x.id === memoryId);
+      if (!m) return;
+      state.activeMemory = m;
+
+      const meta = FRIDAY_AGENTS[m.owner_name.toLowerCase()] || { icon: '🤖', name: m.owner_name, color: 'text-slate-200' };
+      const typeMeta = MEMORY_TYPE_META[m.memory_type.toLowerCase()] || { label: m.memory_type, color: 'bg-slate-800 text-slate-400 border-slate-700' };
+      const entities = Array.isArray(m.entities) ? m.entities : [];
+
+      document.getElementById('modal-agent-icon').innerText = meta.icon;
+      document.getElementById('modal-agent-name').innerText = meta.name;
+      document.getElementById('modal-memory-id').innerText = `Record ID: ${m.id}`;
+      document.getElementById('modal-type-badge').innerText = typeMeta.label;
+      document.getElementById('modal-type-badge').className = `text-xs font-mono uppercase px-2.5 py-0.5 rounded-full border ${typeMeta.color}`;
       document.getElementById('modal-content').innerText = m.content_text;
-      document.getElementById('modal-agent').innerText = `${m.owner_name} (${m.owner_role})`;
-      document.getElementById('modal-state').innerText = m.lifecycle_state;
       document.getElementById('modal-namespace').innerText = m.namespace_path;
       document.getElementById('modal-created').innerText = m.created_at ? new Date(m.created_at).toLocaleString() : 'N/A';
-      document.getElementById('modal-confidence').innerText = (m.confidence || 1.0).toFixed(2);
-      document.getElementById('modal-importance').innerText = (m.importance || 0.8).toFixed(2);
+      
+      const conf = m.confidence || 1.0;
+      const imp = m.importance || 0.8;
+      document.getElementById('modal-confidence').innerText = `${(conf * 100).toFixed(0)}%`;
+      document.getElementById('modal-confidence-bar').style.width = `${(conf * 100)}%`;
+      document.getElementById('modal-importance').innerText = `${(imp * 100).toFixed(0)}%`;
+      document.getElementById('modal-importance-bar').style.width = `${(imp * 100)}%`;
+
+      const entityBox = document.getElementById('modal-entities-box');
+      const entityContainer = document.getElementById('modal-entities');
+      if (entities.length > 0) {
+        entityBox.classList.remove('hidden');
+        entityContainer.innerHTML = entities.map(e => `
+          <span class="text-xs font-mono px-2 py-0.5 rounded-lg bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
+            #${escapeHtml(e)}
+          </span>
+        `).join('');
+      } else {
+        entityBox.classList.add('hidden');
+      }
 
       document.getElementById('detail-modal').classList.remove('hidden');
     }
 
     function closeModal() {
       document.getElementById('detail-modal').classList.add('hidden');
+      state.activeMemory = null;
     }
 
-    function refreshData() {
-      loadData();
+    function copyMemoryContent() {
+      if (!state.activeMemory) return;
+      navigator.clipboard.writeText(state.activeMemory.content_text).then(() => {
+        document.getElementById('copy-btn-text').innerText = 'Copied!';
+        setTimeout(() => document.getElementById('copy-btn-text').innerText = 'Copy Text', 2000);
+      });
+    }
+
+    function filterByEntity(entityName) {
+      document.getElementById('search-box').value = entityName;
+      handleSearch(entityName);
+    }
+
+    // Turso Cloud Sync Trigger
+    async function syncTursoCloud() {
+      const btn = document.getElementById('sync-btn');
+      const icon = document.getElementById('sync-icon');
+      const text = document.getElementById('sync-text');
+
+      try {
+        icon.classList.add('animate-spin');
+        text.innerText = 'Syncing...';
+        btn.disabled = true;
+
+        const res = await fetch('/api/dashboard/sync', { method: 'POST' });
+        const data = await res.json();
+
+        showToast('Successfully synchronized with Turso Cloud DB!', 'success');
+        await loadData();
+      } catch (err) {
+        showToast('Cloud sync error: ' + err.message, 'error');
+      } finally {
+        icon.classList.remove('animate-spin');
+        text.innerText = 'Sync Turso DB';
+        btn.disabled = false;
+      }
+    }
+
+    // Export JSON Backup
+    function exportMemoriesJSON() {
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state.memories, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `friday_universe_memories_${new Date().toISOString().slice(0,10)}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      showToast('Exported memories backup as JSON!', 'success');
+    }
+
+    function showToast(message, type = 'info') {
+      const toast = document.getElementById('toast');
+      const colors = type === 'error' 
+        ? 'border-rose-500/40 text-rose-300' 
+        : type === 'success' 
+        ? 'border-emerald-500/40 text-emerald-300' 
+        : 'border-indigo-500/40 text-indigo-300';
+
+      toast.className = `fixed bottom-6 right-6 z-50 flex items-center space-x-3 px-4 py-3 rounded-xl shadow-2xl bg-dark-850 border ${colors} text-xs font-mono transition-all duration-300 transform translate-y-0 opacity-100`;
+      toast.innerHTML = `<span>${type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️'}</span><span>${escapeHtml(message)}</span>`;
+
+      setTimeout(() => {
+        toast.className = 'fixed bottom-6 right-6 z-50 transform translate-y-24 opacity-0 transition-all duration-300 pointer-events-none flex items-center space-x-3 px-4 py-3 rounded-xl shadow-2xl bg-dark-850 border text-xs font-mono';
+      }, 3500);
     }
 
     function escapeHtml(text) {
@@ -572,6 +997,7 @@
       return div.innerHTML;
     }
 
+    // Boot
     window.addEventListener('DOMContentLoaded', loadData);
   </script>
 </body>

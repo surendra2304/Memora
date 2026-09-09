@@ -54,8 +54,15 @@ def sync_from_turso():
         if len(results) < 3:
             return
 
+        VALID_AGENTS = {"friday", "forge", "sentinel", "inference", "cortex", "intelx", "futuris", "stratex", "memora"}
+        valid_agent_ids = set()
+
         for row in results[0]["response"]["result"]["rows"]:
+            aname = str(row[1]["value"]).lower()
+            if aname not in VALID_AGENTS:
+                continue
             aid = row[0]["value"]
+            valid_agent_ids.add(aid)
             if not db.query(Agent).filter(Agent.id == aid).first():
                 db.add(Agent(
                     id=aid,
@@ -70,23 +77,29 @@ def sync_from_turso():
 
         for row in results[1]["response"]["result"]["rows"]:
             nid = row[0]["value"]
+            agent_id = row[3]["value"] if row[3] else None
+            if agent_id and agent_id not in valid_agent_ids:
+                continue
             if not db.query(Namespace).filter(Namespace.id == nid).first():
                 db.add(Namespace(
                     id=nid,
                     path=row[1]["value"],
                     type=row[2]["value"],
-                    agent_id=row[3]["value"] if row[3] else None,
+                    agent_id=agent_id,
                     tenant_id=row[5]["value"] if len(row) > 5 and row[5] else "default"
                 ))
         db.commit()
 
         for row in results[2]["response"]["result"]["rows"]:
             mid = row[0]["value"]
+            owner_id = row[2]["value"]
+            if owner_id not in valid_agent_ids:
+                continue
             if not db.query(MemoryRecord).filter(MemoryRecord.id == mid).first():
                 db.add(MemoryRecord(
                     id=mid,
                     namespace_id=row[1]["value"],
-                    owner_id=row[2]["value"],
+                    owner_id=owner_id,
                     memory_type=row[3]["value"],
                     content_text=row[4]["value"],
                     source=row[5]["value"] if row[5] else "api",
@@ -220,17 +233,21 @@ def dashboard_overview(db: Session = Depends(get_db)):
     for r in records:
         agent_counts[r.owner_id] = agent_counts.get(r.owner_id, 0) + 1
 
+    VALID_AGENTS = {"friday", "forge", "sentinel", "inference", "cortex", "intelx", "futuris", "stratex", "memora"}
     agents_list = []
     for a in agents:
-        agents_list.append({
-            "id": a.id,
-            "name": a.name,
-            "role": a.role or "worker",
-            "bounded_scope": a.bounded_scope,
-            "memory_count": agent_counts.get(a.id, 0)
-        })
+        if a.name.lower() in VALID_AGENTS:
+            agents_list.append({
+                "id": a.id,
+                "name": a.name,
+                "role": a.role or "worker",
+                "description": a.description or "",
+                "bounded_scope": a.bounded_scope,
+                "memory_count": agent_counts.get(a.id, 0)
+            })
 
-    agents_list.sort(key=lambda x: x["memory_count"], reverse=True)
+    # Sort with supervisor first, then by name
+    agents_list.sort(key=lambda x: (0 if x["role"] == "supervisor" else 1, x["name"]))
 
     memories_list = []
     for r in records:
