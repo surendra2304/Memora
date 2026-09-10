@@ -486,3 +486,74 @@ def record_interaction_endpoint(
         }
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+class LearnOutcomeRequest(BaseModel):
+    agent_name: Optional[str] = Field(default=None, description="Calling agent name")
+    task_name: str = Field(..., min_length=1, description="Executed task identifier")
+    status: str = Field(..., description="'failure' or 'success'")
+    error_log: Optional[str] = None
+    actions_taken: Optional[str] = None
+    context: Optional[str] = None
+    domain: Optional[str] = None
+    namespace_path: Optional[str] = None
+
+
+@router.post("/learn-outcome", status_code=status.HTTP_201_CREATED)
+def learn_outcome_endpoint(
+    req: LearnOutcomeRequest,
+    actor_name: str = Depends(get_actor_header),
+    db: Session = Depends(get_db)
+):
+    calling_agent = (req.agent_name or actor_name).lower()
+    try:
+        record = ExperienceLearnerService.learn_single_outcome(
+            db=db,
+            actor_name=calling_agent,
+            task_name=req.task_name,
+            status=req.status,
+            error_log=req.error_log,
+            actions_taken=req.actions_taken,
+            context=req.context,
+            domain=req.domain,
+            namespace_path=req.namespace_path
+        )
+        return {
+            "status": "learned",
+            "id": record.id,
+            "agent": calling_agent,
+            "memory_type": "experience",
+            "synthesized_rule": record.content_text,
+            "importance": record.importance
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get("/experience")
+def get_experience_memories(
+    domain: Optional[str] = Query(None, description="Optional domain filter"),
+    limit: int = Query(5, ge=1, le=20),
+    actor_name: str = Depends(get_actor_header),
+    db: Session = Depends(get_db)
+):
+    try:
+        records = ExperienceLearnerService.get_active_experiences(
+            db=db,
+            actor_name=actor_name,
+            domain=domain,
+            limit=limit
+        )
+        return [
+            {
+                "id": r.id,
+                "content_text": r.content_text,
+                "memory_type": r.memory_type.value,
+                "importance": r.importance,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "provenance": r.provenance
+            }
+            for r in records
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
