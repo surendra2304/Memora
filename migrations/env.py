@@ -32,9 +32,17 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 def run_migrations_online() -> None:
-    from storage.relational.session import engine
+    connectable = config.attributes.get("connection", None)
+    if connectable is None:
+        url = config.get_main_option("sqlalchemy.url")
+        if url and url not in ("sqlite:///./data/memora.db", "sqlite:///"):
+            from sqlalchemy import create_engine
+            connectable = create_engine(url)
+        else:
+            from storage.relational.session import engine
+            connectable = engine
     
-    with engine.connect() as connection:
+    with connectable.connect() as connection:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

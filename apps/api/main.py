@@ -24,6 +24,7 @@ from apps.api.routers import (
     v1_context_router,
     v1_metrics_router,
     v1_namespaces_router,
+    v1_task_router,
 )
 
 import os
@@ -153,6 +154,7 @@ app.include_router(v1_memories_router)
 app.include_router(v1_context_router)
 app.include_router(v1_metrics_router)
 app.include_router(v1_namespaces_router)
+app.include_router(v1_task_router)
 app.include_router(audit_router)
 
 @app.api_route("/api/dashboard/sync", methods=["GET", "POST"], include_in_schema=False)

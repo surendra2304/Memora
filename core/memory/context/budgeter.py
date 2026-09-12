@@ -42,6 +42,12 @@ class BudgetedMemoryItem:
 
         return {
             "id": self.record.id,
+            "tenant_id": getattr(self.record, "tenant_id", "default"),
+            "user_id": getattr(self.record, "user_id", "default_user"),
+            "agent_id": getattr(self.record, "agent_id", "friday"),
+            "workspace_id": getattr(self.record, "workspace_id", "default_workspace"),
+            "device_id": getattr(self.record, "device_id", "default_device"),
+            "task_id": getattr(self.record, "task_id", None),
             "namespace_id": self.record.namespace_id,
             "namespace_path": self.record.namespace.path if self.record.namespace else None,
             "owner_name": self.record.owner.name if self.record.owner else None,

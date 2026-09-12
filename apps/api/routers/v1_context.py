@@ -15,7 +15,10 @@ from apps.api.dependencies import get_actor_header, get_purpose_header
 router = APIRouter(prefix="/v1/context", tags=["v1 Context Pipeline"])
 
 class ContextBuildRequest(BaseModel):
+    user_id: Optional[str] = Field(default="default_user", description="Identity scope: User ID")
     agent_id: Optional[str] = Field(default=None, description="Agent ID or name (falls back to X-Agent-Name header)")
+    workspace_id: Optional[str] = Field(default="default_workspace", description="Identity scope: Workspace boundary")
+    task_id: Optional[str] = Field(default=None, description="Identity scope: Task context ID")
     task_query: str = Field(..., min_length=1, description="Task query or context requirement for the agent")
     token_budget: int = Field(default=4000, ge=100, le=32000, description="Max token budget for the returned context bundle")
     namespace_path: Optional[str] = Field(default=None, description="Optional namespace constraint")
@@ -51,6 +54,9 @@ def build_context_bundle_endpoint(
             db=db,
             agent_id_or_name=target_agent,
             task_query=req.task_query,
+            user_id=req.user_id,
+            task_id=req.task_id,
+            workspace_id=req.workspace_id,
             token_budget=req.token_budget,
             namespace_path=req.namespace_path,
             purpose=resolved_purpose,

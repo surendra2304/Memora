@@ -74,9 +74,48 @@ class MemoryService:
         if not decision.allowed:
             raise PermissionDeniedError(decision.reason)
 
-        # Create record
+        # Idempotency Check
+        idemp_key = getattr(memory_in, "idempotency_key", None)
+        if idemp_key:
+            existing_idemp = db.query(MemoryRecord).filter(
+                MemoryRecord.tenant_id == tenant_id,
+                MemoryRecord.idempotency_key == idemp_key
+            ).first()
+            if existing_idemp:
+                return existing_idemp
+
+        # Poison & Prompt Injection Check
+        from core.memory.pipeline.poison_detector import PoisonDetector
+        PoisonDetector.validate_content_safety(memory_in.content_text)
+
+        # Untrusted Semantic Memory Guard (Requirement 5)
+        if memory_in.memory_type == MemoryType.SEMANTIC:
+            norm_src = str(memory_in.source).lower()
+            prov = memory_in.provenance or {}
+            norm_stype = str(prov.get("source_type", "")).lower()
+            norm_trust = str(prov.get("trust_level", "")).lower()
+            untrusted = {"ocr", "web_scrape", "web_text", "web", "tool_output", "tool", "model_output", "untrusted"}
+            if norm_src in untrusted or norm_stype in untrusted or norm_trust in {"untrusted", "candidate"}:
+                raise PermissionDeniedError(
+                    "Policy Violation: Untrusted knowledge cannot be written directly into SEMANTIC memory tier. "
+                    "Write to EPISODIC or WORKING tier first, then promote via verified promotion workflow."
+                )
+
+        # Create record with 6-dimension identity scope
+        resolved_user = getattr(memory_in, "user_id", "default_user") or "default_user"
+        resolved_agent = getattr(memory_in, "agent_id", None) or owner.name
+        resolved_ws = getattr(memory_in, "workspace_id", "default_workspace") or "default_workspace"
+        resolved_dev = getattr(memory_in, "device_id", "default_device") or "default_device"
+        resolved_task = getattr(memory_in, "task_id", None)
+
         record = MemoryRecord(
             tenant_id=tenant_id,
+            user_id=resolved_user,
+            agent_id=resolved_agent,
+            workspace_id=resolved_ws,
+            device_id=resolved_dev,
+            task_id=resolved_task,
+            idempotency_key=idemp_key,
             namespace_id=namespace.id,
             owner_id=owner.id,
             memory_type=memory_in.memory_type,
@@ -101,7 +140,7 @@ class MemoryService:
                 allowed=True,
                 reason=f"Memory record created under namespace '{namespace.path}'.",
                 rule_matched="MEMORY_CREATED",
-                dimensions={"namespace_path": namespace.path, "memory_type": record.memory_type.value}
+                dimensions={"namespace_path": namespace.path, "memory_type": record.memory_type.value, "user_id": resolved_user}
             ),
             actor_id=actor.id,
             memory_id=record.id,
@@ -166,6 +205,28 @@ class MemoryService:
             target_tenant = getattr(actor, "tenant_id", target_tenant)
         q = q.filter(MemoryRecord.tenant_id == target_tenant)
 
+        # 2. Strict User Isolation (Requirement 10)
+        if query.user_id:
+            q = q.filter(MemoryRecord.user_id == query.user_id)
+
+        # 3. Agent and Scope Isolation
+        if query.agent_id:
+            q = q.filter(MemoryRecord.agent_id == query.agent_id)
+        if query.workspace_id:
+            q = q.filter(MemoryRecord.workspace_id == query.workspace_id)
+        if query.task_id:
+            q = q.filter(MemoryRecord.task_id == query.task_id)
+
+        # 4. Temporal Validity & Expiry Filtering (Requirement 7)
+        now_utc = datetime.now(timezone.utc)
+        if not query.include_expired:
+            q = q.filter(or_(MemoryRecord.expires_at == None, MemoryRecord.expires_at > now_utc))
+
+        if query.time_from:
+            q = q.filter(MemoryRecord.created_at >= query.time_from)
+        if query.time_to:
+            q = q.filter(MemoryRecord.created_at <= query.time_to)
+
         if query.query_text:
             q = q.filter(MemoryRecord.content_text.ilike(f"%{query.query_text}%"))
 
@@ -203,6 +264,13 @@ class MemoryService:
 
         # Retrieve candidate matches ordered by created_at
         candidates = q.order_by(MemoryRecord.created_at.desc()).all()
+
+        # Trust level filtering on provenance
+        if query.trust_level:
+            candidates = [
+                c for c in candidates
+                if (c.provenance or {}).get("trust_level") == query.trust_level
+            ]
 
         # Filter out records where actor lacks read access BEFORE pagination
         if actor:
@@ -372,17 +440,30 @@ class MemoryService:
             except Exception:
                 vec_ok = False
             tombstone.vector_deleted = bool(vec_ok)
-            tombstone.graph_deleted = True
+
+            # 2. Graph relationship deletion (Requirement 9: multi-store convergence)
+            try:
+                from storage.relational.models import MemoryRelationship
+                db.query(MemoryRelationship).filter(
+                    or_(
+                        MemoryRelationship.source_memory_id == memory_id,
+                        MemoryRelationship.target_memory_id == memory_id
+                    )
+                ).delete(synchronize_session=False)
+                tombstone.graph_deleted = True
+            except Exception:
+                tombstone.graph_deleted = False
+
             tombstone.cache_deleted = True
 
-            # 2. Relational deletion
+            # 3. Relational deletion
             db.delete(record)
             tombstone.relational_deleted = True
-            tombstone.status = "DELETE_CONFIRMED" if tombstone.is_converged() else "PENDING_RETRY"
+            tombstone.status = "CONVERGED" if tombstone.is_converged() else "PENDING_RETRY"
 
             PolicyEngine.log_audit_decision(
                 db,
-                PolicyDecision(True, "Hard deleted memory and vector references across stores.", "MEMORY_HARD_DELETED"),
+                PolicyDecision(True, "Hard deleted memory and references across relational, vector, graph, and cache stores.", "MEMORY_HARD_DELETED"),
                 actor_id=actor.id if actor else None,
                 memory_id=memory_id,
                 tenant_id=tenant_id
@@ -407,6 +488,102 @@ class MemoryService:
             db.commit()
             db.refresh(record)
             return {"status": "soft_deleted", "memory_id": memory_id, "lifecycle_state": "deleted"}
+
+    @staticmethod
+    def promote_to_semantic(
+        db: Session,
+        memory_id: str,
+        promoted_by: str = "friday",
+        verification_evidence: Optional[List[str]] = None,
+        target_confidence: float = 0.95,
+        purpose: Optional[str] = None
+    ) -> MemoryRecord:
+        """
+        Explicit promotion workflow from episodic or working memory into semantic memory (Requirement 6).
+        Requires verification evidence and high confidence, rejecting unverified or poison vectors.
+        """
+        record = db.query(MemoryRecord).filter(MemoryRecord.id == memory_id).first()
+        if not record:
+            raise MemoryNotFoundError(f"Memory record with ID '{memory_id}' not found.")
+
+        if not verification_evidence or len(verification_evidence) == 0:
+            raise ValueError("Explicit promotion to SEMANTIC tier requires at least one verification evidence reference.")
+
+        if target_confidence < 0.85:
+            raise ValueError(f"Target confidence {target_confidence} below required promotion threshold (>= 0.85).")
+
+        # Poison and Prompt Injection Defense
+        from core.memory.pipeline.poison_detector import PoisonDetector
+        PoisonDetector.validate_content_safety(record.content_text)
+
+        old_tier = record.memory_type.value
+        record.memory_type = MemoryType.SEMANTIC
+        record.lifecycle_state = LifecycleState.VERIFIED
+        record.confidence = target_confidence
+        record.last_verified_at = datetime.now(timezone.utc)
+
+        # Provenance enrichment with promotion tracking
+        prov = dict(record.provenance or {})
+        prov["promoted_from"] = old_tier
+        prov["promoted_by"] = promoted_by
+        prov["promoted_at"] = datetime.now(timezone.utc).isoformat()
+        prov["trust_level"] = "verified"
+        existing_evidence = prov.get("evidence_refs") or []
+        prov["evidence_refs"] = list(set(existing_evidence + verification_evidence))
+        prov["confidence"] = target_confidence
+        record.provenance = prov
+
+        # Sync updated vector classification
+        try:
+            from storage.vector.embedding import EmbeddingGenerator
+            dense_embedding = EmbeddingGenerator.generate_embedding(record.content_text)
+            vector_adapter.upsert_embedding(
+                memory_id=record.id,
+                vector=dense_embedding,
+                tenant_id=record.tenant_id,
+                payload={
+                    "namespace_path": record.namespace.path if record.namespace else "",
+                    "memory_type": MemoryType.SEMANTIC.value,
+                    "owner": record.owner.name if record.owner else promoted_by,
+                    "trust_level": "verified",
+                    "user_id": getattr(record, "user_id", "default_user"),
+                    "agent_id": getattr(record, "agent_id", "friday"),
+                    "task_id": getattr(record, "task_id", None)
+                }
+            )
+        except Exception:
+            pass
+
+        # Atomic audit and event dispatch
+        PolicyEngine.log_audit_decision(
+            db,
+            PolicyDecision(
+                allowed=True,
+                reason=f"Memory promoted from {old_tier} to SEMANTIC tier by {promoted_by}. Evidence: {verification_evidence}",
+                rule_matched="MEMORY_PROMOTED_TO_SEMANTIC",
+                dimensions={
+                    "promoted_by": promoted_by,
+                    "old_tier": old_tier,
+                    "target_confidence": target_confidence,
+                    "evidence_refs": verification_evidence
+                }
+            ),
+            actor_id=record.owner_id,
+            memory_id=record.id,
+            tenant_id=record.tenant_id
+        )
+
+        from core.events.emitter import event_emitter
+        event_emitter.publish("memory.promoted", {
+            "memory_id": record.id,
+            "promoted_by": promoted_by,
+            "new_type": "semantic",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+
+        db.commit()
+        db.refresh(record)
+        return record
 
     @staticmethod
     def apply_decay(

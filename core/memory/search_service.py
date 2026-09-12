@@ -34,11 +34,19 @@ class SearchResultItem:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "id": self.record.id,
+            "tenant_id": getattr(self.record, "tenant_id", "default"),
+            "user_id": getattr(self.record, "user_id", "default_user"),
+            "agent_id": getattr(self.record, "agent_id", "friday"),
+            "workspace_id": getattr(self.record, "workspace_id", "default_workspace"),
+            "device_id": getattr(self.record, "device_id", "default_device"),
+            "task_id": getattr(self.record, "task_id", None),
             "namespace_id": self.record.namespace_id,
             "namespace_path": self.record.namespace.path if self.record.namespace else None,
             "owner_name": self.record.owner.name if self.record.owner else None,
             "memory_type": self.record.memory_type.value,
             "content_text": self.record.content_text,
+            "source": self.record.source,
+            "provenance": self.record.provenance or {},
             "confidence": self.record.confidence,
             "importance": self.record.importance,
             "lifecycle_state": self.record.lifecycle_state.value,
@@ -58,6 +66,11 @@ class SearchService:
         query_text: str,
         actor_name: Optional[str] = None,
         tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        workspace_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+        trust_level: Optional[str] = None,
         namespace_path: Optional[str] = None,
         memory_types: Optional[List[MemoryType]] = None,
         min_score: float = 0.0,
@@ -100,6 +113,16 @@ class SearchService:
             MemoryRecord.tenant_id == resolved_tenant,
             MemoryRecord.lifecycle_state.in_(allowed_states)
         )
+        # Identity and Scope Filters (Requirement 10: Strict User Isolation)
+        if user_id:
+            kw_query = kw_query.filter(MemoryRecord.user_id == user_id)
+        if agent_id:
+            kw_query = kw_query.filter(MemoryRecord.agent_id == agent_id)
+        if workspace_id:
+            kw_query = kw_query.filter(MemoryRecord.workspace_id == workspace_id)
+        if task_id:
+            kw_query = kw_query.filter(MemoryRecord.task_id == task_id)
+
         if namespace_path:
             kw_query = kw_query.filter(Namespace.path == namespace_path)
         if memory_types:
@@ -131,11 +154,21 @@ class SearchService:
         if not all_candidate_ids:
             return []
 
-        records = db.query(MemoryRecord).filter(
+        cand_q = db.query(MemoryRecord).filter(
             MemoryRecord.id.in_(all_candidate_ids),
             MemoryRecord.tenant_id == resolved_tenant,
             MemoryRecord.lifecycle_state.in_(allowed_states)
-        ).all()
+        )
+        if user_id:
+            cand_q = cand_q.filter(MemoryRecord.user_id == user_id)
+        if agent_id:
+            cand_q = cand_q.filter(MemoryRecord.agent_id == agent_id)
+        if workspace_id:
+            cand_q = cand_q.filter(MemoryRecord.workspace_id == workspace_id)
+        if task_id:
+            cand_q = cand_q.filter(MemoryRecord.task_id == task_id)
+
+        records = cand_q.all()
         record_map = {r.id: r for r in records}
 
         now_utc = datetime.now(timezone.utc)
@@ -148,6 +181,11 @@ class SearchService:
 
         scored_results: List[SearchResultItem] = []
         for mem_id, record in record_map.items():
+            # Provenance Trust Level Filter
+            if trust_level:
+                record_trust = (record.provenance or {}).get("trust_level")
+                if record_trust != trust_level:
+                    continue
             # Temporal validity filter: valid_from <= now <= valid_until and expires_at > now
             if not include_expired:
                 exp = _to_utc(record.expires_at)

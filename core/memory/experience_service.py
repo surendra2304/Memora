@@ -74,7 +74,7 @@ class ExperienceLearnerService:
                 err = (f.error_log or "unexpected failure").strip()
                 remediation = cls.extract_remediation_rule(f.task_name, err, domain)
                 lessons.append(
-                    f"[FAILURE WARNING in '{domain}'] Trigger: {err[:150]}. "
+                    f"[FAILURE WARNING / Failure Mode Warning in '{domain}'] Trigger: {err[:150]}. "
                     f"[LEARNED BEST PRACTICE]: {remediation}"
                 )
 

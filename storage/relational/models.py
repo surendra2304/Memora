@@ -150,6 +150,12 @@ class MemoryRecord(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=generate_uuid)
     tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default", index=True)
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default_user", index=True)
+    agent_id: Mapped[str] = mapped_column(String(64), nullable=False, default="friday", index=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default_workspace", index=True)
+    device_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default_device", index=True)
+    task_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, unique=True, index=True)
     namespace_id: Mapped[str] = mapped_column(String(64), ForeignKey("namespaces.id", ondelete="CASCADE"), nullable=False, index=True)
     owner_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
     memory_type: Mapped[MemoryType] = mapped_column(
@@ -194,6 +200,10 @@ class MemoryRecord(Base):
         Index("ix_memory_tenant_state", "tenant_id", "lifecycle_state"),
         Index("ix_memory_tenant_expires", "tenant_id", "expires_at"),
         Index("ix_memory_tenant_created", "tenant_id", "created_at"),
+        Index("ix_memory_identity_user", "tenant_id", "user_id"),
+        Index("ix_memory_identity_agent", "tenant_id", "agent_id"),
+        Index("ix_memory_identity_task", "tenant_id", "task_id"),
+        Index("ix_memory_identity_ws", "tenant_id", "workspace_id"),
     )
 
     def __repr__(self) -> str:

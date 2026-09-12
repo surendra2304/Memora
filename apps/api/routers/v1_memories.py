@@ -17,9 +17,10 @@ from storage.relational.models import (
     Namespace,
     Agent
 )
-from core.memory.schemas import MemoryRecordRead, MemoryQuery
+from core.memory.schemas import MemoryRecordRead, MemoryQuery, MemoryPromoteRequest
 from core.memory.pipeline.write_service import MemoryWriteService
 from core.memory.pipeline.secret_scanner import SecretDetectedSecurityViolation
+from core.memory.pipeline.poison_detector import PoisonMemoryViolation
 from core.memory.service import MemoryService, MemoryNotFoundError, PermissionDeniedError
 from core.identity.service import IdentityService
 from core.memory.graph_service import GraphService
@@ -29,26 +30,45 @@ from core.events.emitter import event_emitter
 from core.memory.experience_service import ExperienceLearnerService, LearnExperienceRequest
 from core.memory.pipeline.preference_extractor import PreferenceExtractor
 from apps.api.dependencies import get_actor_header, get_purpose_header
+from datetime import datetime
 
 router = APIRouter(prefix="/v1/memories", tags=["v1 Memories"])
 
 class MemoryWriteRequest(BaseModel):
+    user_id: Optional[str] = Field(default="default_user", description="Identity scope: User ID")
+    agent_id: Optional[str] = Field(default=None, description="Identity scope: Calling agent ID")
+    workspace_id: Optional[str] = Field(default="default_workspace", description="Identity scope: Workspace boundary")
+    device_id: Optional[str] = Field(default="default_device", description="Identity scope: Device ID")
+    task_id: Optional[str] = Field(default=None, description="Identity scope: Task context ID")
+    idempotency_key: Optional[str] = Field(default=None, description="Idempotency key for deduplicated write")
     content_text: str = Field(..., min_length=1, description="Raw content of the memory event")
     target_namespace_path: Optional[str] = Field(default=None, description="Destination namespace URI")
     memory_type: Optional[MemoryType] = Field(default=MemoryType.EPISODIC, description="Classification type")
     source: str = Field(default="api", description="Ingestion source")
+    source_type: Optional[str] = Field(default=None, description="Provenance source type")
+    trust_level: Optional[str] = Field(default=None, description="Provenance trust level")
+    evidence_refs: Optional[List[str]] = Field(default=None, description="Evidence reference URLs or IDs")
     provenance: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Provenance metadata")
     confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     importance: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    expires_at: Optional[datetime] = Field(default=None, description="Temporal expiry timestamp")
     allow_duplicates: bool = Field(default=False)
 
 class MemoryWriteResponse(BaseModel):
     id: str
+    tenant_id: str = "default"
+    user_id: str = "default_user"
+    agent_id: str = "friday"
+    workspace_id: str = "default_workspace"
+    device_id: str = "default_device"
+    task_id: Optional[str] = None
+    idempotency_key: Optional[str] = None
     namespace_id: str
     owner_id: str
     memory_type: MemoryType
     content_text: str
     source: str
+    provenance: Dict[str, Any] = Field(default_factory=dict)
     confidence: float
     importance: float
     lifecycle_state: LifecycleState
@@ -104,27 +124,46 @@ def write_memory_event(
     db: Session = Depends(get_db)
 ):
     try:
+        calling_agent = req.agent_id or actor_name
         result = MemoryWriteService.execute_pipeline(
             db=db,
             content_text=req.content_text,
-            caller_name=actor_name,
+            caller_name=calling_agent,
+            user_id=req.user_id,
+            agent_id=calling_agent,
+            workspace_id=req.workspace_id,
+            device_id=req.device_id,
+            task_id=req.task_id,
+            idempotency_key=req.idempotency_key,
             target_namespace_path=req.target_namespace_path,
             memory_type=req.memory_type,
             source=req.source,
+            source_type=req.source_type,
+            trust_level=req.trust_level,
+            evidence_refs=req.evidence_refs,
             provenance=req.provenance,
             confidence=req.confidence,
             importance=req.importance,
+            expires_at=req.expires_at,
             purpose=purpose,
             allow_duplicates=req.allow_duplicates
         )
 
         return MemoryWriteResponse(
             id=result.record.id,
+            tenant_id=getattr(result.record, "tenant_id", "default"),
+            user_id=getattr(result.record, "user_id", "default_user"),
+            agent_id=getattr(result.record, "agent_id", "friday"),
+            workspace_id=getattr(result.record, "workspace_id", "default_workspace"),
+            device_id=getattr(result.record, "device_id", "default_device"),
+            task_id=getattr(result.record, "task_id", None),
+            idempotency_key=getattr(result.record, "idempotency_key", None),
             namespace_id=result.record.namespace_id,
             owner_id=result.record.owner_id,
             memory_type=result.record.memory_type,
             content_text=result.record.content_text,
             source=result.record.source,
+            provenance=result.record.provenance or {},
             confidence=result.record.confidence,
             importance=result.record.importance,
             lifecycle_state=result.record.lifecycle_state,
@@ -145,6 +184,20 @@ def write_memory_event(
         raise HTTPException(
             status_code=422,
             detail={"error": "SecurityPolicyViolation", "message": str(e), "flagged_secrets": e.secret_types}
+        )
+    except PoisonMemoryViolation as e:
+        PolicyEngine.log_audit_decision(
+            db,
+            PolicyDecision(
+                allowed=False,
+                reason=str(e),
+                rule_matched="POISON_MEMORY_SECURITY_REJECTION",
+                dimensions={"detected_patterns": e.detected_patterns, "caller": actor_name}
+            )
+        )
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "PoisonMemoryViolation", "message": str(e), "detected_patterns": e.detected_patterns}
         )
     except PermissionDeniedError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
@@ -251,6 +304,31 @@ def verify_memory_endpoint(
         return record
     except MemoryNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except PermissionDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+
+@router.post("/{memory_id}/promote", response_model=MemoryRecordRead)
+def promote_memory_endpoint(
+    memory_id: str,
+    req: MemoryPromoteRequest,
+    actor_name: str = Depends(get_actor_header),
+    purpose: Optional[str] = Depends(get_purpose_header),
+    db: Session = Depends(get_db)
+):
+    try:
+        record = MemoryService.promote_to_semantic(
+            db=db,
+            memory_id=memory_id,
+            promoted_by=req.promoted_by or actor_name,
+            verification_evidence=req.verification_evidence,
+            target_confidence=req.target_confidence,
+            purpose=req.purpose or purpose
+        )
+        return record
+    except MemoryNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except (ValueError, PoisonMemoryViolation) as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
     except PermissionDeniedError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
 

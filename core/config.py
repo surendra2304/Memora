@@ -31,12 +31,20 @@ class Settings(BaseSettings):
     VECTOR_DIMENSION: int = 1536
 
     # Security & Policy
-    MEMORA_API_KEY: str = "memora_api"
+    MEMORA_API_KEY: Optional[str] = None
     MEMORA_MASTER_KEY: Optional[str] = None
     DEFAULT_CONFIDENCE_THRESHOLD: float = 0.75
     DEFAULT_IMPORTANCE_THRESHOLD: float = 0.50
 
     def get_memora_api_key(self) -> str:
-        return self.MEMORA_API_KEY or self.MEMORA_MASTER_KEY or "memora_api"
+        key = self.MEMORA_API_KEY or self.MEMORA_MASTER_KEY
+        if not key:
+            if str(self.MEMORA_ENV).lower() == "production":
+                raise ValueError(
+                    "Production Security Violation: MEMORA_API_KEY or MEMORA_MASTER_KEY "
+                    "must be configured via environment variable in production."
+                )
+            return "memora_api_dev"
+        return key
 
 settings = Settings()

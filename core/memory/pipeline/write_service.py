@@ -2,7 +2,7 @@
 Memory Write Service for Memora
 Executes the deterministic 10-Step Memory Write Pipeline before persisting memory records.
 """
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 import hashlib
@@ -42,10 +42,19 @@ class MemoryWriteResult:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "id": self.record.id,
+            "tenant_id": getattr(self.record, "tenant_id", "default"),
+            "user_id": getattr(self.record, "user_id", "default_user"),
+            "agent_id": getattr(self.record, "agent_id", "friday"),
+            "workspace_id": getattr(self.record, "workspace_id", "default_workspace"),
+            "device_id": getattr(self.record, "device_id", "default_device"),
+            "task_id": getattr(self.record, "task_id", None),
+            "idempotency_key": getattr(self.record, "idempotency_key", None),
             "namespace_id": self.record.namespace_id,
             "owner_id": self.record.owner_id,
             "memory_type": self.record.memory_type.value,
             "content_text": self.record.content_text,
+            "source": self.record.source,
+            "provenance": self.record.provenance or {},
             "confidence": self.record.confidence,
             "importance": self.record.importance,
             "lifecycle_state": self.record.lifecycle_state.value,
@@ -64,9 +73,18 @@ class MemoryWriteService:
         caller_name: Optional[str] = None,
         actor_name: Optional[str] = None,
         tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        workspace_id: Optional[str] = None,
+        device_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
         target_namespace_path: Optional[str] = None,
         memory_type: Optional[MemoryType] = None,
         source: str = "api",
+        source_type: Optional[str] = None,
+        trust_level: Optional[str] = None,
+        evidence_refs: Optional[List[str]] = None,
         provenance: Optional[Dict[str, Any]] = None,
         confidence: Optional[float] = None,
         importance: Optional[float] = None,
@@ -78,7 +96,10 @@ class MemoryWriteService:
     ) -> MemoryWriteResult:
         start_time = time.time()
         step_trace: Dict[str, Any] = {}
-        resolved_actor_name = caller_name or actor_name or "system"
+        resolved_actor_name = caller_name or actor_name or agent_id or "system"
+        resolved_user_id = user_id or "default_user"
+        resolved_workspace_id = workspace_id or "default_workspace"
+        resolved_device_id = device_id or "default_device"
 
         try:
             # -------------------------------------------------------------
@@ -91,7 +112,12 @@ class MemoryWriteService:
                 "raw_length": len(content_text),
                 "source": source,
                 "target_namespace_path": target_namespace_path,
-                "requested_type": memory_type.value if memory_type else None
+                "requested_type": memory_type.value if memory_type else None,
+                "user_id": resolved_user_id,
+                "agent_id": resolved_actor_name,
+                "workspace_id": resolved_workspace_id,
+                "task_id": task_id,
+                "idempotency_key": idempotency_key
             }
 
             # -------------------------------------------------------------
@@ -114,15 +140,42 @@ class MemoryWriteService:
             }
 
             # -------------------------------------------------------------
-            # STEP 3: CLASSIFY MEMORY TYPE AND SENSITIVITY (SECRET SCANNING)
+            # STEP 3: CLASSIFY MEMORY TYPE AND SENSITIVITY (SECRET & POISON SCANNING)
             # -------------------------------------------------------------
+            # 1. Secret Scanning
             SecretScanner.validate_content_safety(content_text)
+            
+            # 2. Poison / Prompt Injection Defenses
+            from core.memory.pipeline.poison_detector import PoisonDetector
+            PoisonDetector.validate_content_safety(content_text)
 
             resolved_type = memory_type or MemoryType.EPISODIC
+
+            # 3. Untrusted Semantic Memory Guard (Requirement 5)
+            # Never allow untrusted OCR, web text, tool output, or model output to become trusted semantic memory automatically.
+            norm_source = str(source).lower()
+            norm_source_type = str(source_type or (provenance or {}).get("source_type", "")).lower()
+            norm_trust = str(trust_level or (provenance or {}).get("trust_level", "")).lower()
+
+            untrusted_sources = {"ocr", "web_scrape", "web_text", "web", "tool_output", "tool", "model_output", "untrusted"}
+            if resolved_type == MemoryType.SEMANTIC:
+                is_untrusted = (
+                    norm_source in untrusted_sources
+                    or norm_source_type in untrusted_sources
+                    or norm_trust in {"untrusted", "candidate"}
+                )
+                if is_untrusted:
+                    raise PermissionDeniedError(
+                        "Policy Violation: Untrusted knowledge (OCR, web text, tool/model output, unverified sources) "
+                        "is prohibited from direct write into SEMANTIC memory tier. "
+                        "Write to EPISODIC or WORKING memory first, then promote via verified promotion workflow."
+                    )
+
             step_trace["step_3_classify_and_scan"] = {
                 "memory_type": resolved_type.value,
                 "sensitivity": "CONFIDENTIAL" if namespace.type == NamespaceType.AGENT_PRIVATE else "INTERNAL",
-                "secrets_detected": False
+                "secrets_detected": False,
+                "poison_detected": False
             }
 
             # -------------------------------------------------------------
@@ -143,8 +196,28 @@ class MemoryWriteService:
             step_trace["step_5_extract_entities"] = extracted_meta
 
             # -------------------------------------------------------------
-            # STEP 6: DETECT DUPLICATES OR CONTRADICTIONS
+            # STEP 6: DETECT DUPLICATES OR CONTRADICTIONS (WITH IDEMPOTENCY)
             # -------------------------------------------------------------
+            # Check Idempotency Key first
+            if idempotency_key:
+                existing_idemp = db.query(MemoryRecord).filter(
+                    MemoryRecord.tenant_id == resolved_tenant,
+                    MemoryRecord.idempotency_key == idempotency_key
+                ).first()
+                if existing_idemp:
+                    step_trace["step_6_deduplication"] = {
+                        "is_duplicate": True,
+                        "duplicate_of_id": existing_idemp.id,
+                        "idempotent_hit": True
+                    }
+                    metrics_collector.record_write(success=True, is_contradiction=False, latency_ms=(time.time() - start_time) * 1000)
+                    return MemoryWriteResult(
+                        record=existing_idemp,
+                        step_outputs=step_trace,
+                        is_duplicate=True,
+                        duplicate_of_id=existing_idemp.id
+                    )
+
             dedup_result = DeduplicationEngine.check_duplicates_and_contradictions(
                 db,
                 namespace_id=namespace.id,
@@ -198,7 +271,24 @@ class MemoryWriteService:
             # -------------------------------------------------------------
             # STEP 9: PERSIST TO DATABASE, VECTOR INDEX & KNOWLEDGE GRAPH
             # -------------------------------------------------------------
+            # Structured 8-field provenance (Requirement 4)
+            canonical_source_type = source_type or (provenance or {}).get("source_type") or (
+                "verified_fact" if resolved_type == MemoryType.PROCEDURAL else "agent_generated"
+            )
+            canonical_trust_level = trust_level or (provenance or {}).get("trust_level") or (
+                "verified" if resolved_type in (MemoryType.PROCEDURAL, MemoryType.SYSTEM) else "candidate"
+            )
+            canonical_evidence_refs = evidence_refs or (provenance or {}).get("evidence_refs") or []
+
             combined_provenance = {
+                "source": source,
+                "source_type": canonical_source_type,
+                "trust_level": canonical_trust_level,
+                "evidence_refs": canonical_evidence_refs,
+                "created_by": resolved_actor_name,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "expires_at": expires_at.isoformat() if expires_at else None,
+                "confidence": computed_confidence,
                 **(provenance or {}),
                 "content_sha256": content_hash,
                 "extracted_entities": extracted_meta,
@@ -208,6 +298,12 @@ class MemoryWriteService:
 
             record = MemoryRecord(
                 tenant_id=resolved_tenant,
+                user_id=resolved_user_id,
+                agent_id=actor.name if actor else resolved_actor_name,
+                workspace_id=resolved_workspace_id,
+                device_id=resolved_device_id,
+                task_id=task_id,
+                idempotency_key=idempotency_key,
                 namespace_id=namespace.id,
                 owner_id=actor.id,
                 memory_type=resolved_type,
@@ -246,7 +342,16 @@ class MemoryWriteService:
                     memory_id=record.id,
                     vector=dense_embedding,
                     tenant_id=resolved_tenant,
-                    payload={"namespace_path": namespace.path, "memory_type": resolved_type.value, "owner": actor.name}
+                    payload={
+                        "namespace_path": namespace.path,
+                        "memory_type": resolved_type.value,
+                        "owner": actor.name,
+                        "user_id": resolved_user_id,
+                        "agent_id": actor.name if actor else resolved_actor_name,
+                        "workspace_id": resolved_workspace_id,
+                        "task_id": task_id,
+                        "trust_level": canonical_trust_level
+                    }
                 )
             except Exception as e:
                 vector_indexed = False

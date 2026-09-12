@@ -71,6 +71,9 @@ class ContextBuilderService:
         db: Session,
         agent_id_or_name: str,
         task_query: str,
+        user_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+        workspace_id: Optional[str] = None,
         token_budget: int = 4000,
         namespace_path: Optional[str] = None,
         purpose: Optional[str] = None,
@@ -96,6 +99,9 @@ class ContextBuilderService:
                 db=db,
                 query_text=task_query,
                 actor_name=actor.name,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                task_id=task_id,
                 namespace_path=namespace_path,
                 purpose=purpose,
                 limit=max_candidates
@@ -106,6 +112,9 @@ class ContextBuilderService:
                 db=db,
                 query_text=task_query,
                 actor_name=actor.name,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                task_id=task_id,
                 namespace_path=namespace_path,
                 purpose=purpose,
                 limit=max_candidates,
@@ -118,10 +127,13 @@ class ContextBuilderService:
         # 2b. PREDICTIVE CONTEXT PRE-FETCHING (Experience & Procedural Stores)
         # -------------------------------------------------------------
         existing_result_ids = {item.record.id for item in search_results}
-        exp_candidates = db.query(MemoryRecord).filter(
+        exp_query = db.query(MemoryRecord).filter(
             MemoryRecord.memory_type.in_([MemoryType.EXPERIENCE, MemoryType.PROCEDURAL]),
             MemoryRecord.lifecycle_state.in_([LifecycleState.ACTIVE, LifecycleState.VERIFIED])
-        ).all()
+        )
+        if user_id:
+            exp_query = exp_query.filter(MemoryRecord.user_id == user_id)
+        exp_candidates = exp_query.all()
 
         q_tokens = set(re.split(r"[\s,.\-_/\\:;!?\"'()\[\]{}]+", task_query.lower()))
         stopwords = {"the", "a", "an", "is", "are", "and", "or", "in", "on", "at", "to", "for", "of", "with", "by", "how", "do", "we"}
