@@ -271,6 +271,34 @@ def query_memories(
         )
     except PermissionDeniedError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+@router.get("/experience")
+def get_experience_memories(
+    domain: Optional[str] = Query(None, description="Optional domain filter"),
+    limit: int = Query(5, ge=1, le=20),
+    actor_name: str = Depends(get_actor_header),
+    db: Session = Depends(get_db)
+):
+    try:
+        records = ExperienceLearnerService.get_active_experiences(
+            db=db,
+            actor_name=actor_name,
+            domain=domain,
+            limit=limit
+        )
+        return [
+            {
+                "id": r.id,
+                "content_text": r.content_text,
+                "memory_type": r.memory_type.value,
+                "importance": r.importance,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "provenance": r.provenance
+            }
+            for r in records
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
 
 @router.get("/{memory_id}", response_model=MemoryRecordRead)
 def get_memory_record(
@@ -604,34 +632,5 @@ def learn_outcome_endpoint(
             "synthesized_rule": record.content_text,
             "importance": record.importance
         }
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-
-@router.get("/experience")
-def get_experience_memories(
-    domain: Optional[str] = Query(None, description="Optional domain filter"),
-    limit: int = Query(5, ge=1, le=20),
-    actor_name: str = Depends(get_actor_header),
-    db: Session = Depends(get_db)
-):
-    try:
-        records = ExperienceLearnerService.get_active_experiences(
-            db=db,
-            actor_name=actor_name,
-            domain=domain,
-            limit=limit
-        )
-        return [
-            {
-                "id": r.id,
-                "content_text": r.content_text,
-                "memory_type": r.memory_type.value,
-                "importance": r.importance,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-                "provenance": r.provenance
-            }
-            for r in records
-        ]
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

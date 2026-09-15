@@ -13,8 +13,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# Target local test environment
+os.environ["MEMORA_URL"] = "http://localhost:8000"
+
 from core.memory.pipeline.preference_extractor import PreferenceExtractor
-from sdk.memora_client import memora_client
+from sdk.memora_client import MemoraClient
+
+memora_client = MemoraClient(base_url="http://localhost:8000")
 
 def run_e2e_test():
     print("=" * 80)

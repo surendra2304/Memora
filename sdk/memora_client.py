@@ -390,31 +390,36 @@ class MemoraClient:
         if not os.path.exists(self.local_db_path):
             return []
 
-        words = [w.lower() for w in query.split() if len(w) > 2]
-        if not words:
+        import re
+        tokens = [w for w in re.findall(r'\b\w+\b', query.lower()) if len(w) > 1]
+        stopwords = {"what", "who", "where", "when", "why", "how", "is", "are", "am", "was", "were", "my", "your", "his", "her", "the", "a", "an", "in", "on", "at", "to", "for", "of", "and", "or"}
+        content_words = [w for w in tokens if w not in stopwords]
+        search_words = content_words if content_words else tokens
+        if not search_words:
             return []
 
         results = []
         try:
             with sqlite3.connect(self.local_db_path, timeout=5.0) as conn:
                 c = conn.cursor()
-                # Query memories across the ecosystem
-                c.execute("""
+                like_clauses = " OR ".join(["m.content_text LIKE ?" for _ in search_words])
+                params = [f"%{w}%" for w in search_words]
+
+                c.execute(f"""
                     SELECT m.id, m.content_text, m.memory_type, m.importance, m.created_at, a.name 
                     FROM memory_records m
                     JOIN agents a ON m.owner_id = a.id
-                    WHERE m.lifecycle_state = 'active'
+                    WHERE m.lifecycle_state = 'active' AND ({like_clauses})
                     ORDER BY m.importance DESC, m.created_at DESC
-                    LIMIT 100
-                """)
+                    LIMIT 200
+                """, params)
                 rows = c.fetchall()
 
                 for row in rows:
                     content = row[1].lower()
-                    # Calculate simple overlap score
-                    match_count = sum(1 for w in words if w in content)
+                    match_count = sum(1 for w in search_words if w in content)
                     if match_count > 0:
-                        score = match_count / len(words)
+                        score = match_count / len(search_words)
                         results.append({
                             "id": row[0],
                             "content_text": row[1],
@@ -425,7 +430,7 @@ class MemoraClient:
                             "final_score": score
                         })
 
-            results.sort(key=lambda x: (x["final_score"], x["importance"]), reverse=True)
+            results.sort(key=lambda x: (x["final_score"], x["importance"], x["created_at"]), reverse=True)
             return results[:limit]
         except Exception as e:
             logger.error(f"Local memory search failed: {e}")

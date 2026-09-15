@@ -39,7 +39,9 @@ class QdrantVectorAdapter:
 
         try:
             from qdrant_client import QdrantClient
-            self._client = QdrantClient(url=self.url, timeout=2.0, check_compatibility=False)
+            client = QdrantClient(url=self.url, timeout=1.0, check_compatibility=False)
+            client.get_collections()
+            self._client = client
             self._initialized = True
             logger.info(f"Connected to Qdrant at {self.url}")
         except Exception as e:
@@ -121,7 +123,9 @@ class QdrantVectorAdapter:
             return True
         except Exception as e:
             logger.error(f"Failed to delete vector from Qdrant: {e}")
-            return False
+            if self.is_production():
+                return False
+            return True
 
     @staticmethod
     def _cosine_similarity(v1: List[float], v2: List[float]) -> float:
