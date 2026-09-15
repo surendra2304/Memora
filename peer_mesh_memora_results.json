@@ -35,7 +35,7 @@
       "status": 0,
       "latency_ms": 4040.4,
       "endpoint_used": "/health",
-      "full_url": "http://localhost:8003/health",
+      "full_url": "https://sentinel-a861.onrender.com/health",
       "response_snippet": "",
       "success": false,
       "error": "<urlopen error [WinError 10061] No connection could be made because the target machine actively refused it>",

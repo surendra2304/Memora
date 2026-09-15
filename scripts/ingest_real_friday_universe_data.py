@@ -136,7 +136,7 @@ def build_real_memories():
     real_records.append({
         "agent": "sentinel",
         "type": MemoryType.SEMANTIC,
-        "content": "Cybersecurity Baseline & Cloud Gateway: Deployed locally at http://localhost:8003 with connection to Memora Cloud security policy ledger under memora://sentinel/private. Guards the 9-agent universe from prompt injections and privilege escalations.",
+        "content": "Cybersecurity Baseline & Cloud Gateway: Deployed locally at https://sentinel-a861.onrender.com with connection to Memora Cloud security policy ledger under memora://sentinel/private. Guards the 9-agent universe from prompt injections and privilege escalations.",
         "importance": 0.92,
         "confidence": 1.0,
         "entities": ["SecurityGateway", "PrivilegeSeparation", "PromptInjectionDefense"],
