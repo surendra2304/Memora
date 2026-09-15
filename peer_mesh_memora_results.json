@@ -74,7 +74,7 @@
       "status": 200,
       "latency_ms": 480.43,
       "endpoint_used": "/api/v1/healthz",
-      "full_url": "https://intelx-3cz1.onrender.com/api/v1/healthz",
+      "full_url": "https://intelx-mygl.onrender.com/api/v1/healthz",
       "response_snippet": "{\"status\":\"ok\",\"service\":\"INTELX\",\"version\":\"2.0.0\",\"mock_mode\":false,\"database\":\"ok\",\"timestamp\":\"2",
       "success": true,
       "error": null,

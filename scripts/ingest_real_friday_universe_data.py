@@ -247,7 +247,7 @@ def build_real_memories():
     real_records.append({
         "agent": "intelx",
         "type": MemoryType.PROCEDURAL,
-        "content": "Evidence Triangulation & Quorum Verification (clm-ag-01): Multi-agent quorum consensus across academic and industrial literature reduces factual hallucinations and citations errors by 64% across enterprise synthesis runs. Deployed live at https://intelx-3cz1.onrender.com.",
+        "content": "Evidence Triangulation & Quorum Verification (clm-ag-01): Multi-agent quorum consensus across academic and industrial literature reduces factual hallucinations and citations errors by 64% across enterprise synthesis runs. Deployed live at https://intelx-mygl.onrender.com.",
         "importance": 0.95,
         "confidence": 1.0,
         "entities": ["QuorumVerification", "HallucinationReduction", "CitationExtraction", "IntelXCloud"],
