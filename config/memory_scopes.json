@@ -1,0 +1,22 @@
+{
+  "scopes": [
+    {
+      "name": "agent",
+      "description": "Private memory scope for individual agents",
+      "retention_policy": "infinite",
+      "access_control": "private"
+    },
+    {
+      "name": "group",
+      "description": "Shared memory scope for sub-teams",
+      "retention_policy": "30d",
+      "access_control": "restricted"
+    },
+    {
+      "name": "universal",
+      "description": "Shared memory scope for the entire ecosystem",
+      "retention_policy": "infinite",
+      "access_control": "public"
+    }
+  ]
+}
