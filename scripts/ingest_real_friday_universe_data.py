@@ -207,7 +207,7 @@ def build_real_memories():
     real_records.append({
         "agent": "cortex",
         "type": MemoryType.PROJECT,
-        "content": "Autonomous Web Operations Hub: Deployed live at https://cortex-qifr.onrender.com/health. Manages real-time visitor telemetry, automated lead qualification, and connects to SQLite Web DB (sqlite+aiosqlite:///./data/cortex.db).",
+        "content": "Autonomous Web Operations Hub: Deployed live at https://cortex-0m7c.onrender.com/health. Manages real-time visitor telemetry, automated lead qualification, and connects to SQLite Web DB (sqlite+aiosqlite:///./data/cortex.db).",
         "importance": 0.92,
         "confidence": 1.0,
         "entities": ["WebOperations", "LeadQualification", "CortexCloud", "RenderDeployment"],
