@@ -96,7 +96,7 @@ def build_real_memories():
     real_records.append({
         "agent": "forge",
         "type": MemoryType.DECISION,
-        "content": "Engine Architecture & Workspace Isolation: Operating at http://localhost:8001 with 293 recorded tasks, 3,066 audit events, and 445 state checkpoints. Bounded to project directories in D:/Forge/workspaces.",
+        "content": "Engine Architecture & Workspace Isolation: Operating at https://forge-u98k.onrender.com with 293 recorded tasks, 3,066 audit events, and 445 state checkpoints. Bounded to project directories in D:/Forge/workspaces.",
         "importance": 0.91,
         "confidence": 1.0,
         "entities": ["WorkspaceIsolation", "ForgeEngine", "CheckpointAudit"],
