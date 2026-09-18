@@ -56,7 +56,7 @@ def build_real_memories():
     real_records.append({
         "agent": "friday",
         "type": MemoryType.PROJECT,
-        "content": "FRIDAY Ecosystem Network Hub: Operating at Local Desktop Hub (http://localhost:9000/health). Authenticates inter-agent communication via FRIDAY_API_KEY. Connects 766 active conversations and 2,153 operator messages.",
+        "content": "FRIDAY Ecosystem Network Hub: Operating at Local Desktop Hub (https://friday-zw59.onrender.com/health). Authenticates inter-agent communication via FRIDAY_API_KEY. Connects 766 active conversations and 2,153 operator messages.",
         "importance": 0.93,
         "confidence": 1.0,
         "entities": ["FRIDAYHub", "EcosystemController", "RESTGateway", "LiveEndpoint"],
@@ -167,7 +167,7 @@ def build_real_memories():
     real_records.append({
         "agent": "inference",
         "type": MemoryType.SEMANTIC,
-        "content": "Multi-Model Intelligence Gateway: Deployed live at https://inference-3i2b.onrender.com/health pooling 25 multi-provider API keys (Groq, NVIDIA, DeepSeek, Cerebras, OpenRouter, Google Gemini) across 3,550 completed tasks and 5,607 model runs.",
+        "content": "Multi-Model Intelligence Gateway: Deployed live at https://inference-r1sn.onrender.com/health pooling 25 multi-provider API keys (Groq, NVIDIA, DeepSeek, Cerebras, OpenRouter, Google Gemini) across 3,550 completed tasks and 5,607 model runs.",
         "importance": 0.95,
         "confidence": 1.0,
         "entities": ["InferenceGateway", "25APIKeys", "Groq", "NVIDIA", "RenderCloud"],
@@ -287,7 +287,7 @@ def build_real_memories():
     real_records.append({
         "agent": "futuris",
         "type": MemoryType.PROJECT,
-        "content": "Predictive Forecasting Engine: Deployed live at https://futuris-x4f4.onrender.com/health. Provides statistical tensor forecasts, Brier calibration scores, and automated event emission connected to SQLite Tensor DB.",
+        "content": "Predictive Forecasting Engine: Deployed live at https://futuris-th6f.onrender.com/health. Provides statistical tensor forecasts, Brier calibration scores, and automated event emission connected to SQLite Tensor DB.",
         "importance": 0.93,
         "confidence": 1.0,
         "entities": ["FuturisCloud", "BrierScore", "TensorDB", "RenderDeployment"],
@@ -309,7 +309,7 @@ def build_real_memories():
     real_records.append({
         "agent": "stratex",
         "type": MemoryType.DECISION,
-        "content": "Live Trading Engine Status: Active strategy: 'aggressor'. Binance API connection: CONNECTED. Engine status: ONLINE. Healthy: True. Deployed live at https://stratex-ucjz.onrender.com managing automated crypto futures positions.",
+        "content": "Live Trading Engine Status: Active strategy: 'aggressor'. Binance API connection: CONNECTED. Engine status: ONLINE. Healthy: True. Deployed live at https://stratex-8wj1.onrender.com managing automated crypto futures positions.",
         "importance": 0.97,
         "confidence": 1.0,
         "entities": ["AggressorStrategy", "BinanceConnected", "EngineOnline", "StratexCloud"],
@@ -340,7 +340,7 @@ def build_real_memories():
     real_records.append({
         "agent": "memora",
         "type": MemoryType.PROJECT,
-        "content": "Unified Long-Term Memory Fabric Architecture: Deployed live at https://memora-9zr9.onrender.com/health. Connects to Turso LibSQL Cloud DB (AWS Mumbai, libsql://memora-db-surendra2304.aws-ap-south-1.turso.io) providing 9 GB distributed memory storage.",
+        "content": "Unified Long-Term Memory Fabric Architecture: Deployed live at https://memora-cavc.onrender.com/health. Connects to Turso LibSQL Cloud DB (AWS Mumbai, libsql://memora-db-surendra2304.aws-ap-south-1.turso.io) providing 9 GB distributed memory storage.",
         "importance": 0.99,
         "confidence": 1.0,
         "entities": ["MemoraCloud", "TursoAWSMumbai", "LibSQL", "PersistentFabric"],

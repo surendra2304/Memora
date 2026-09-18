@@ -12,7 +12,7 @@
 | **Repository** | [github.com/surendra2304/Memora](https://github.com/surendra2304/Memora) |
 | **Active Branch** | main (Verified Green) |
 | **Host Environment** | Windows 11 Desktop (x64) • Python 3.11.9 |
-| **Live Cloud Deploy** | Render Docker Container (`https://memora-9zr9.onrender.com`) • Zero-Downtime Probes |
+| **Live Cloud Deploy** | Render Docker Container (`https://memora-cavc.onrender.com`) • Zero-Downtime Probes |
 | **Cloud Database** | Turso LibSQL Cloud DB (9 GB Mumbai AWS Region) |
 | **Observability** | Prometheus (`/metrics`) & JSON (`/v1/metrics`) with Phase 6 Metrics (`llm_compaction_tokens_saved`, `cross_encoder_reranking_latency_ms`, `predictive_context_hits`) |
 | **Experience Learning** | `ExperienceLearnerService` (`POST /v1/memories/learn-experience`) + Predictive Context Pre-Fetching |
