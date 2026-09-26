@@ -1,18 +1,25 @@
-import os
-import json
 import hashlib
 import hmac
+import json
+import os
 import time
 
 import pytest
 from fastapi import HTTPException
 
 from apps.api.dependencies import authenticate_agent
-from apps.api.routers.v1_events import EventAcknowledgement, IncomingEnvelope, acknowledge_event, ingest_envelope, read_consumer_cursor, read_events
+from apps.api.routers.v1_events import (
+    EventAcknowledgement,
+    IncomingEnvelope,
+    acknowledge_event,
+    ingest_envelope,
+    read_consumer_cursor,
+    read_events,
+)
 from core.events.emitter import EventEmitter
-from storage.relational.models import EventConsumerCursor, EventLog
-from sdk.memora_client import MemoraClient
 from sdk.cloud_fallback import MemoraClient as CloudFallbackClient
+from sdk.memora_client import MemoraClient
+from storage.relational.models import EventConsumerCursor, EventLog
 
 
 def test_event_uses_callers_transaction_and_replays_after_commit(test_db):
@@ -61,6 +68,62 @@ def test_feed_sanitizes_private_context_payload_and_obeys_cursor_and_tenant(test
     assert response["events"][0]["payload"] == {"bundle_id": "b-1", "agent": "friday", "memories_count": 2}
     next_page = read_events(after_id=response["next_after_id"], limit=10, event_type=None, agent="friday", db=test_db)
     assert next_page["events"] == []
+
+
+def test_live_event_route_requires_agent_authentication(client, monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("FRIDAY_API_KEY", "friday-test-key")
+    monkeypatch.setattr("apps.api.routers.v1_events.turso_events_configured", lambda: False)
+    monkeypatch.setattr("apps.api.routers.v1_events.turso_required", lambda: False)
+
+    response = client.get("/v1/events?after_id=0&limit=1")
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid agent credentials"
+
+
+def test_live_event_route_returns_authenticated_allowlisted_envelope(client, test_db, monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("FRIDAY_API_KEY", "friday-test-key")
+    monkeypatch.setattr("apps.api.routers.v1_events.turso_events_configured", lambda: False)
+    monkeypatch.setattr("apps.api.routers.v1_events.turso_required", lambda: False)
+    test_db.add(EventLog(
+        event_id="context-private-data",
+        event_type="context.generated",
+        tenant_id="default",
+        payload={
+            "bundle_id": "bundle-1",
+            "agent": "friday",
+            "memories_count": 2,
+            "is_degraded": False,
+            "query": "private user prompt",
+            "memory_ids": ["secret-memory-id"],
+            "internal_memory_metadata": {"tenant_id": "other", "owner": "private"},
+        },
+    ))
+    test_db.commit()
+
+    response = client.get(
+        "/v1/events?after_id=0&limit=1",
+        headers={"X-Agent-Name": "friday", "X-API-Key": "friday-test-key"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"agent", "events", "next_after_id", "has_more"}
+    assert body["agent"] == "friday"
+    assert len(body["events"]) == 1
+    assert set(body["events"][0]) == {
+        "id", "event_id", "event_type", "tenant_id", "created_at", "payload"
+    }
+    assert body["events"][0]["payload"] == {
+        "bundle_id": "bundle-1",
+        "agent": "friday",
+        "memories_count": 2,
+        "is_degraded": False,
+    }
+    assert "memory_ids" not in body["events"][0]["payload"]
+    assert "internal_memory_metadata" not in body["events"][0]["payload"]
 
 
 def test_broadcast_news_event_is_visible_to_independent_agent_reads(test_db):

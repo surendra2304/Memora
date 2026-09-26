@@ -4,20 +4,22 @@ Tests Observability Metrics, Redis/Event Bus, Namespace Policy API, Memory Shari
 """
 import pytest
 from fastapi.testclient import TestClient
+
+from core.events.emitter import event_emitter
+from core.identity.service import IdentityService
+from core.memory.context.builder import ContextBuilderService
+from core.metrics.collector import metrics_collector
 from storage.relational.models import (
     Agent,
-    Namespace,
-    NamespaceType,
+    LifecycleState,
     MemoryRecord,
     MemoryType,
-    LifecycleState
+    Namespace,
+    NamespaceType,
 )
 from storage.vector.embedding import EmbeddingGenerator
 from storage.vector.qdrant_adapter import vector_adapter
-from core.identity.service import IdentityService
-from core.metrics.collector import metrics_collector
-from core.events.emitter import event_emitter
-from core.memory.context.builder import ContextBuilderService
+
 
 def test_metrics_collector_and_endpoints(client: TestClient):
     """
@@ -44,17 +46,31 @@ def test_metrics_collector_and_endpoints(client: TestClient):
     assert "memora_write_success_rate" in prom_resp.text
     assert "memora_latency_ms" in prom_resp.text
 
-def test_events_emitter_and_query_endpoint(client: TestClient):
+def test_events_emitter_and_durable_query_endpoint(client: TestClient, test_db, monkeypatch):
     """
-    Test event publishing and /v1/events query endpoint.
+    Test durable event publishing and the authenticated /v1/events endpoint.
     """
-    event_emitter.publish("test.event", {"action": "heartbeat", "status": "ok"})
-    
-    resp = client.get("/v1/events?limit=10")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("FRIDAY_API_KEY", "friday-test-key")
+    monkeypatch.setattr("apps.api.routers.v1_events.turso_events_configured", lambda: False)
+    monkeypatch.setattr("apps.api.routers.v1_events.turso_required", lambda: False)
+    event = event_emitter.publish(
+        "test.event", {"action": "heartbeat", "status": "ok"}, db=test_db
+    )
+    test_db.commit()
+
+    resp = client.get(
+        "/v1/events?limit=10",
+        headers={"X-Agent-Name": "friday", "X-API-Key": "friday-test-key"},
+    )
     assert resp.status_code == 200
-    events = resp.json()
+    body = resp.json()
+    assert body["agent"] == "friday"
+    assert "next_after_id" in body
+    events = body["events"]
     assert len(events) >= 1
-    assert any(e["event_type"] == "test.event" for e in events)
+    assert any(e["event_id"] == event.event_id and e["event_type"] == "test.event" for e in events)
+    assert events[-1]["payload"] == {}
 
 def test_namespace_policy_inspection_endpoint(client: TestClient, test_db):
     """
