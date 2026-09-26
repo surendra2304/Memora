@@ -579,7 +579,7 @@ class MemoryService:
             "promoted_by": promoted_by,
             "new_type": "semantic",
             "timestamp": datetime.now(timezone.utc).isoformat()
-        })
+        }, db=db)
 
         db.commit()
         db.refresh(record)

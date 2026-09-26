@@ -248,7 +248,7 @@ class ContextBuilderService:
             "memories_count": len(budgeted_memories),
             "compaction_strategy": compaction_strategy,
             "is_degraded": is_degraded
-        })
+        }, db=db)
 
         return ContextBundle(
             bundle_id=bundle_id,

@@ -285,3 +285,33 @@ class DeletionTombstone(Base):
 
     def __repr__(self) -> str:
         return f"<DeletionTombstone(memory_id={self.memory_id}, status={self.status})>"
+
+
+class EventLog(Base):
+    """Durable Memora event feed. Consumers replay with the monotonic row id cursor."""
+    __tablename__ = "event_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default", index=True)
+    target_agent: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    payload: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    cloud_synced: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now, nullable=False, index=True)
+
+    __table_args__ = (Index("ix_event_log_tenant_cursor", "tenant_id", "id"), Index("ix_event_log_target_cursor", "target_agent", "id"))
+
+    def __repr__(self) -> str:
+        return f"<EventLog(id={self.id}, event_type={self.event_type})>"
+
+
+class EventConsumerCursor(Base):
+    """Per-agent durable acknowledgement point for the shared event feed."""
+    __tablename__ = "event_consumer_cursors"
+
+    tenant_id: Mapped[str] = mapped_column(String(64), primary_key=True, default="default")
+    agent: Mapped[str] = mapped_column(String(64), primary_key=True)
+    consumer_id: Mapped[str] = mapped_column(String(64), primary_key=True, default="default")
+    last_event_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now, onupdate=get_utc_now, nullable=False)

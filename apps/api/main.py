@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from core.config import settings
@@ -25,10 +25,21 @@ from apps.api.routers import (
     v1_metrics_router,
     v1_namespaces_router,
     v1_task_router,
+    v1_events_router,
+    mesh_events_router,
 )
 
 import os
 import requests
+import logging
+
+logger = logging.getLogger(__name__)
+
+def _startup_turso_sync_enabled() -> bool:
+    """Only production or an explicit opt-in may import the cloud DB at boot."""
+    environment = (os.getenv("ENVIRONMENT", "") or settings.MEMORA_ENV).lower()
+    explicit = os.getenv("MEMORA_SYNC_TURSO_ON_STARTUP", "").lower() in {"1", "true", "yes"}
+    return environment == "production" or explicit
 
 def sync_from_turso():
     from storage.relational.session import SessionLocal
@@ -37,7 +48,7 @@ def sync_from_turso():
         turso_url = os.getenv("TURSO_DATABASE_URL", settings.DATABASE_URL)
         turso_token = os.getenv("TURSO_AUTH_TOKEN", settings.TURSO_AUTH_TOKEN)
         if not (turso_url and turso_token and "turso.io" in turso_url):
-            return
+            return {"status": "unconfigured", "agents_imported": 0, "namespaces_imported": 0, "memories_imported": 0}
 
         pipeline_url = f"{turso_url.rstrip('/')}/v2/pipeline"
         headers = {"Authorization": f"Bearer {turso_token}", "Content-Type": "application/json"}
@@ -50,14 +61,17 @@ def sync_from_turso():
         }
         resp = requests.post(pipeline_url, headers=headers, json=payload, timeout=10)
         if resp.status_code != 200:
-            return
+            return {"status": "unavailable", "reason": f"http_{resp.status_code}", "agents_imported": 0, "namespaces_imported": 0, "memories_imported": 0}
         results = resp.json().get("results", [])
         if len(results) < 3:
-            return
+            return {"status": "invalid_response", "agents_imported": 0, "namespaces_imported": 0, "memories_imported": 0}
 
         VALID_AGENTS = {"friday", "forge", "sentinel", "inference", "cortex", "intelx", "futuris", "stratex", "memora"}
         valid_agent_ids = set()
 
+        agents_imported = 0
+        namespaces_imported = 0
+        memories_imported = 0
         for row in results[0]["response"]["result"]["rows"]:
             aname = str(row[1]["value"]).lower()
             if aname not in VALID_AGENTS:
@@ -74,7 +88,7 @@ def sync_from_turso():
                     bounded_scope=row[6]["value"] if row[6] else None,
                     tenant_id=row[7]["value"] if len(row) > 7 and row[7] else "default"
                 ))
-        db.commit()
+                agents_imported += 1
 
         for row in results[1]["response"]["result"]["rows"]:
             nid = row[0]["value"]
@@ -89,12 +103,7 @@ def sync_from_turso():
                     agent_id=agent_id,
                     tenant_id=row[5]["value"] if len(row) > 5 and row[5] else "default"
                 ))
-        db.commit()
-
-        turso_mem_ids = {row[0]["value"] for row in results[2]["response"]["result"]["rows"]}
-        if turso_mem_ids:
-            db.query(MemoryRecord).filter(~MemoryRecord.id.in_(turso_mem_ids)).delete(synchronize_session=False)
-            db.commit()
+                namespaces_imported += 1
 
         for row in results[2]["response"]["result"]["rows"]:
             mid = row[0]["value"]
@@ -114,9 +123,20 @@ def sync_from_turso():
                     lifecycle_state=row[9]["value"] if row[9] else "active",
                     tenant_id=row[13]["value"] if len(row) > 13 and row[13] else "default"
                 ))
+                memories_imported += 1
         db.commit()
-    except Exception:
+        return {
+            "status": "success",
+            "agents_imported": agents_imported,
+            "namespaces_imported": namespaces_imported,
+            "memories_imported": memories_imported,
+            "source": "turso_import_merge",
+            "deletions": 0,
+        }
+    except Exception as exc:
         db.rollback()
+        logger.warning("Turso import failed (%s)", type(exc).__name__)
+        return {"status": "error", "reason": type(exc).__name__, "agents_imported": 0, "namespaces_imported": 0, "memories_imported": 0}
     finally:
         db.close()
 
@@ -124,10 +144,20 @@ def sync_from_turso():
 async def lifespan(app: FastAPI):
     # Initialize database tables, vector connection, and event bus
     init_db()
-    sync_from_turso()
+    sync_result = sync_from_turso() if _startup_turso_sync_enabled() else {"status": "disabled", "agents_imported": 0, "namespaces_imported": 0, "memories_imported": 0}
+    if sync_result["status"] != "success" and sync_result["status"] != "unconfigured":
+        logger.warning("Turso startup import status: %s", sync_result["status"])
     vector_adapter.connect()
     event_emitter.connect()
-    yield
+    event_sync_started = event_emitter.start_cloud_sync()
+    if not event_sync_started:
+        from storage.relational.turso_events import production_mode, configured
+        if production_mode() and not configured():
+            logger.error("Production durable event feed is unavailable: Turso event storage is not configured.")
+    try:
+        yield
+    finally:
+        event_emitter.stop_cloud_sync()
 
 app = FastAPI(
     title="MEMORA API",
@@ -155,12 +185,15 @@ app.include_router(v1_context_router)
 app.include_router(v1_metrics_router)
 app.include_router(v1_namespaces_router)
 app.include_router(v1_task_router)
+app.include_router(v1_events_router)
+app.include_router(mesh_events_router)
 app.include_router(audit_router)
 
 @app.api_route("/api/dashboard/sync", methods=["GET", "POST"], include_in_schema=False)
 def dashboard_sync():
-    sync_from_turso()
-    return {"status": "success", "message": "Synchronized with Turso Cloud database"}
+    result = sync_from_turso()
+    status_code = 200 if result["status"] == "success" else 503
+    return JSONResponse(status_code=status_code, content=result)
 
 @app.get("/api/dashboard/overview", include_in_schema=False)
 def dashboard_overview(db: Session = Depends(get_db)):

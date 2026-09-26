@@ -23,9 +23,11 @@ async def main():
     print("=" * 80)
     
     inf_url = os.getenv("INFERENCE_URL", "https://inference-r1sn.onrender.com").rstrip("/")
-    api_key = os.getenv("INFERENCE_API_KEY", "inference_api")
+    api_key = os.getenv("INFERENCE_API_KEY")
+    if not api_key:
+        print("Request not sent: configure INFERENCE_API_KEY first.")
+        return
     print(f"Target URL: {inf_url}")
-    print(f"API Key:    {api_key[:4]}...")
     
     headers = {
         "X-FRIDAY-API-Key": api_key,

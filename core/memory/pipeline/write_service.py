@@ -378,7 +378,7 @@ class MemoryWriteService:
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
 
-            event_emitter.publish("memory.created", event_payload)
+            event_emitter.publish("memory.created", event_payload, db=db)
 
             audit_entry = PolicyEngine.log_audit_decision(
                 db,

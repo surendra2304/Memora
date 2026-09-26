@@ -62,6 +62,7 @@ def build_context_bundle_endpoint(
             purpose=resolved_purpose,
             max_candidates=req.max_candidates
         )
+        db.commit()
         return bundle.to_dict()
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

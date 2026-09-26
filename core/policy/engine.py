@@ -244,7 +244,7 @@ class PolicyEngine:
                 "memory_id": memory_id,
                 "reason": decision.reason,
                 "rule": decision.rule_matched
-            })
+            }, db=db)
         if log_audit:
             cls.log_audit_decision(db, decision, actor_id=actor_id, memory_id=memory_id)
 

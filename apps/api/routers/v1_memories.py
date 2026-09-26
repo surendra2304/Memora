@@ -29,10 +29,14 @@ from core.policy.engine import PolicyEngine, PolicyDecision
 from core.events.emitter import event_emitter
 from core.memory.experience_service import ExperienceLearnerService, LearnExperienceRequest
 from core.memory.pipeline.preference_extractor import PreferenceExtractor
-from apps.api.dependencies import get_actor_header, get_purpose_header
+from apps.api.dependencies import authenticate_agent, get_actor_header, get_purpose_header
 from datetime import datetime
 
-router = APIRouter(prefix="/v1/memories", tags=["v1 Memories"])
+router = APIRouter(
+    prefix="/v1/memories",
+    tags=["v1 Memories"],
+    dependencies=[Depends(authenticate_agent)],
+)
 
 class MemoryWriteRequest(BaseModel):
     user_id: Optional[str] = Field(default="default_user", description="Identity scope: User ID")
@@ -328,7 +332,8 @@ def verify_memory_endpoint(
             actor_name=actor_name,
             notes=req.notes if req else None
         )
-        event_emitter.publish("memory.updated", {"memory_id": memory_id, "action": "verify", "actor": actor_name})
+        event_emitter.publish("memory.updated", {"memory_id": memory_id, "action": "verify", "actor": actor_name}, db=db)
+        db.commit()
         return record
     except MemoryNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -393,7 +398,8 @@ def share_memory_endpoint(
             "shared_with": req.target_agent_name,
             "namespace_path": namespace.path if namespace else None,
             "actions": req.actions
-        })
+        }, db=db)
+        db.commit()
 
         return {
             "status": "shared",
@@ -431,7 +437,8 @@ def supersede_memory_endpoint(
             "winner_id": res["winner_id"],
             "actor": actor_name,
             "reason": res["reason"]
-        })
+        }, db=db)
+        db.commit()
         return res
     except MemoryNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -487,7 +494,8 @@ def delete_memory_endpoint(
             actor_name=actor_name,
             hard_delete=hard
         )
-        event_emitter.publish("memory.updated", {"memory_id": memory_id, "action": "delete", "hard": hard})
+        event_emitter.publish("memory.updated", {"memory_id": memory_id, "action": "delete", "hard": hard}, db=db)
+        db.commit()
         return res
     except MemoryNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))

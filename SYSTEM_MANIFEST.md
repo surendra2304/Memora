@@ -13,9 +13,9 @@
 | :--- | :--- |
 | **Live Production URL** | [https://memora-cavc.onrender.com](https://memora-cavc.onrender.com) |
 | **Health Check Endpoint** | https://memora-cavc.onrender.com/health |
-| **Master API Key Variable** | MEMORA_API_KEY=memora_api |
-| **Authentication Header** | Authorization: Bearer memora_api / X-API-KEY: memora_api |
-| **Database Topology** | Turso LibSQL Cloud DB (9 GB Free Tier) |
+| **Master API Key Variable** | `MEMORA_API_KEY` (unique secret configured outside source control) |
+| **Authentication Header** | `Authorization: Bearer <MEMORA_API_KEY>` |
+| **Database Topology** | Turso LibSQL Cloud DB (configured; current capacity/plan must be verified in Turso) |
 | **Database Connection** | libsql://memora-db-surendra2304.aws-ap-south-1.turso.io |
 | **Hosting Platform** | Render Docker Web Service (Singapore / AWS Mumbai) |
 
@@ -24,7 +24,7 @@
 ## 🎯 2. Purpose & Responsibilities
 
 ### What Memora IS:
-* Memora is the universal persistent memory fabric of the ecosystem. Backed by a 9 GB Turso cloud database in AWS Mumbai, it provides URI-partitioned memory namespaces (memora://<agent>/private) and RBAC security for all agents.
+* Memora is the persistent memory fabric of the ecosystem. It provides URI-partitioned memory namespaces (memora://<agent>/private) and RBAC security. Live database capacity and availability require verification in Turso.
 
 ### What Memora DOES:
 * Operates as the **Unified Long-Term Memory Fabric & RBAC Partitioned Vector/Episodic Vault** within the 9-agent FRIDAY Universe.
@@ -42,41 +42,41 @@ Every agent in the universe communicates using standard environment variables:
 #               FRIDAY UNIVERSE MASTER ECOSYSTEM CONFIGURATION                  #
 # ============================================================================== #
 
-# 1. ⚡ Inference AI Multi-Model Gateway (25 Keys)
+# 1. ⚡ Inference AI Multi-Model Gateway
 INFERENCE_URL=https://inference-r1sn.onrender.com
-INFERENCE_API_KEY=inference_api
+# Configure a unique Inference service key outside source control.
 
-# 2. 🧠 Memora Cloud Persistent Memory (9 GB Turso AWS Mumbai)
+# 2. 🧠 Memora Cloud Persistent Memory (Turso; capacity configured by account)
 MEMORA_URL=https://memora-cavc.onrender.com
-MEMORA_API_KEY=memora_api
+# Configure a unique Memora service key outside source control.
 
 # 3. 📈 Stratex 24/7 Algorithmic Trading Platform (Binance Futures)
 STRATEX_URL=https://stratex-8wj1.onrender.com
-STRATEX_API_KEY=stratex_api
+# Configure a unique Stratex service key outside source control.
 
 # 4. 🧠 IntelX Evidence & Intelligence Research Engine (Turso AWS Mumbai)
 INTELX_URL=https://intelx-mygl.onrender.com
-INTELX_API_KEY=intelx_api
+# Configure a unique IntelX service key outside source control.
 
 # 5. 🔮 Futuris Calibrated Predictive Forecasting Engine
 FUTURIS_URL=https://futuris-th6f.onrender.com
-FUTURIS_API_KEY=futuris_api
+# Configure a unique Futuris service key outside source control.
 
 # 6. 🌐 Cortex Autonomous Web Operations & Intelligence
 CORTEX_URL=https://cortex-0m7c.onrender.com
-CORTEX_API_KEY=cortex_api
+# Configure a unique Cortex service key outside source control.
 
 # 7. 🛠️ Forge Local Software Engineering Engine
 FORGE_URL=https://forge-e9kl.onrender.com
-FORGE_API_KEY=forge_api
+# Configure a unique Forge service key outside source control.
 
 # 8. 🛡️ Sentinel Local Cybersecurity & Threat Defense Shield
 SENTINEL_URL=https://sentinel-a861.onrender.com
-SENTINEL_API_KEY=sentinel_api
+# Configure a unique Sentinel service key outside source control.
 
 # 9. 🤖 FRIDAY Central Desktop Operating System
 FRIDAY_URL=https://friday-zw59.onrender.com
-FRIDAY_API_KEY=friday_api
+# Configure a unique FRIDAY service key outside source control.
 `
 
 ---
@@ -86,6 +86,6 @@ FRIDAY_API_KEY=friday_api
 When opening this directory in **Antigravity AI**:
 * **Identity:** You are working inside **Memora** (d:\FRIDAY Universe\Memora).
 * **Live Service:** This service is deployed live at https://memora-cavc.onrender.com.
-* **Authentication:** Incoming requests use MEMORA_API_KEY=memora_api.
-* **Never Fake Tests:** All tests and verifications must be executed against real code and real endpoints.
+* **Authentication:** Incoming requests require a unique `MEMORA_API_KEY` configured in the service environment.
+* **Test Evidence:** Label local tests, test doubles, and live endpoint checks separately; report only results actually observed.
 * **No Unapproved Git Pushes:** Keep modifications local unless explicitly instructed to push.
