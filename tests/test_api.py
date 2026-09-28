@@ -12,6 +12,15 @@ def test_health_check(client: TestClient):
     assert data["service"] == "memora-api"
     assert data["status"] in ["healthy", "degraded"]
 
+
+def test_root_serves_memora_memory_observatory_not_legacy_dashboard(client: TestClient):
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Memora — Memory Observatory" in response.text
+    assert "Policy-scoped memory search" in response.text
+    assert "sample" not in response.text.lower()
+
 def test_agent_registration_and_list(client: TestClient):
     response = client.post("/agents", json={"name": "futuris", "description": "Predictive Forecasting"})
     assert response.status_code == 201

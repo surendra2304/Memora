@@ -4,11 +4,11 @@ FastAPI server providing persistent memory and context infrastructure.
 """
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from sqlalchemy.orm import Session
 
+from apps.api.dependencies import authenticate_agent
 from core.config import settings
 from storage.relational.session import init_db, get_db
 from storage.relational.models import Agent, Namespace, MemoryRecord
@@ -190,131 +190,20 @@ app.include_router(mesh_events_router)
 app.include_router(audit_router)
 
 @app.api_route("/api/dashboard/sync", methods=["GET", "POST"], include_in_schema=False)
-def dashboard_sync():
+def dashboard_sync(agent_name: str = Depends(authenticate_agent)):
+    if agent_name != "memora":
+        raise HTTPException(status_code=403, detail="Only the Memora service identity may trigger a database sync.")
     result = sync_from_turso()
     status_code = 200 if result["status"] == "success" else 503
     return JSONResponse(status_code=status_code, content=result)
 
+
 @app.get("/api/dashboard/overview", include_in_schema=False)
-def dashboard_overview(db: Session = Depends(get_db)):
-    agents = db.query(Agent).all()
-    namespaces = db.query(Namespace).all()
-    records = db.query(MemoryRecord).order_by(MemoryRecord.created_at.desc()).all()
-
-    # If local database has no records (e.g. freshly booted Docker container), fetch directly from Turso Cloud
-    if not records:
-        turso_url = os.getenv("TURSO_DATABASE_URL", settings.DATABASE_URL)
-        turso_token = os.getenv("TURSO_AUTH_TOKEN", settings.TURSO_AUTH_TOKEN)
-        if turso_url and turso_token and "turso.io" in turso_url:
-            try:
-                pipeline_url = f"{turso_url.rstrip('/')}/v2/pipeline"
-                headers = {"Authorization": f"Bearer {turso_token}", "Content-Type": "application/json"}
-                payload = {
-                    "requests": [
-                        {"type": "execute", "stmt": {"sql": "SELECT m.id, a.name, a.role, n.path, m.memory_type, m.content_text, m.confidence, m.importance, m.lifecycle_state, m.created_at FROM memory_records m LEFT JOIN agents a ON m.owner_id = a.id LEFT JOIN namespaces n ON m.namespace_id = n.id ORDER BY m.created_at DESC"}},
-                        {"type": "execute", "stmt": {"sql": "SELECT id, name, role, bounded_scope FROM agents"}},
-                        {"type": "execute", "stmt": {"sql": "SELECT id, path, type FROM namespaces"}}
-                    ]
-                }
-                resp = requests.post(pipeline_url, headers=headers, json=payload, timeout=8)
-                if resp.status_code == 200:
-                    results = resp.json().get("results", [])
-                    if len(results) >= 3:
-                        mem_rows = results[0].get("response", {}).get("result", {}).get("rows", [])
-                        agent_rows = results[1].get("response", {}).get("result", {}).get("rows", [])
-                        ns_rows = results[2].get("response", {}).get("result", {}).get("rows", [])
-
-                        t_memories = []
-                        agent_counts = {}
-                        for r in mem_rows:
-                            owner_name = r[1]["value"] if r[1] else "unknown"
-                            agent_counts[owner_name] = agent_counts.get(owner_name, 0) + 1
-                            t_memories.append({
-                                "id": r[0]["value"],
-                                "owner_name": owner_name,
-                                "owner_role": r[2]["value"] if r[2] else "worker",
-                                "namespace_path": r[3]["value"] if r[3] else "memora://global",
-                                "memory_type": r[4]["value"] if r[4] else "episodic",
-                                "content_text": r[5]["value"] if r[5] else "",
-                                "confidence": float(r[6]["value"]) if r[6] and r[6]["value"] is not None else 1.0,
-                                "importance": float(r[7]["value"]) if r[7] and r[7]["value"] is not None else 0.8,
-                                "lifecycle_state": r[8]["value"] if r[8] else "active",
-                                "created_at": r[9]["value"] if r[9] else None,
-                                "entities": [],
-                                "tenant_id": "default"
-                            })
-
-                        t_agents = []
-                        for r in agent_rows:
-                            name = r[1]["value"]
-                            t_agents.append({
-                                "id": r[0]["value"],
-                                "name": name,
-                                "role": r[2]["value"] if r[2] else "worker",
-                                "bounded_scope": r[3]["value"] if r[3] else None,
-                                "memory_count": agent_counts.get(name, 0)
-                            })
-                        t_agents.sort(key=lambda x: x["memory_count"], reverse=True)
-
-                        return {
-                            "total_memories": len(t_memories),
-                            "total_agents": len(t_agents),
-                            "total_namespaces": len(ns_rows),
-                            "agents": t_agents,
-                            "memories": t_memories
-                        }
-            except Exception:
-                pass
-
-    agent_map = {a.id: a for a in agents}
-    ns_map = {n.id: n for n in namespaces}
-
-    agent_counts = {}
-    for r in records:
-        agent_counts[r.owner_id] = agent_counts.get(r.owner_id, 0) + 1
-
-    VALID_AGENTS = {"friday", "forge", "sentinel", "inference", "cortex", "intelx", "futuris", "stratex", "memora"}
-    agents_list = []
-    for a in agents:
-        if a.name.lower() in VALID_AGENTS:
-            agents_list.append({
-                "id": a.id,
-                "name": a.name,
-                "role": a.role or "worker",
-                "description": a.description or "",
-                "bounded_scope": a.bounded_scope,
-                "memory_count": agent_counts.get(a.id, 0)
-            })
-
-    # Sort with supervisor first, then by name
-    agents_list.sort(key=lambda x: (0 if x["role"] == "supervisor" else 1, x["name"]))
-
-    memories_list = []
-    for r in records:
-        owner = agent_map.get(r.owner_id)
-        ns = ns_map.get(r.namespace_id)
-        memories_list.append({
-            "id": r.id,
-            "owner_name": owner.name if owner else "unknown",
-            "owner_role": owner.role if owner else "worker",
-            "namespace_path": ns.path if ns else "memora://global",
-            "memory_type": r.memory_type.value if hasattr(r.memory_type, "value") else str(r.memory_type),
-            "content_text": r.content_text,
-            "confidence": float(r.confidence) if r.confidence is not None else 1.0,
-            "importance": float(r.importance) if r.importance is not None else 0.8,
-            "lifecycle_state": r.lifecycle_state.value if hasattr(r.lifecycle_state, "value") else str(r.lifecycle_state),
-            "created_at": r.created_at.isoformat() if r.created_at else None,
-            "entities": r.entities or [],
-            "tenant_id": r.tenant_id
-        })
-
-    return {
-        "total_memories": len(records),
-        "total_agents": len(agents),
-        "total_namespaces": len(namespaces),
-        "agents": agents_list,
-        "memories": memories_list
-    }
+def dashboard_overview():
+    raise HTTPException(
+        status_code=410,
+        detail="The global memory dump was removed. Use authenticated, policy-scoped /v1/memories/search instead.",
+    )
 
 STATIC_INDEX = Path(__file__).resolve().parent / "static" / "index.html"
 

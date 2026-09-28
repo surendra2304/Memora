@@ -56,15 +56,33 @@ def test_turso_import_merges_without_deleting_local_memories(test_db, monkeypatc
     assert test_db.query(MemoryRecord).filter(MemoryRecord.id == local_id).one().content_text.startswith("Keep this local")
 
 
-def test_turso_sync_endpoint_does_not_claim_unconfigured_sync_succeeded(client, monkeypatch):
+def test_turso_sync_endpoint_requires_memora_identity_and_reports_unconfigured(client, monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("MEMORA_API_KEY", "memora-test-key")
+    monkeypatch.setenv("FRIDAY_API_KEY", "friday-test-key")
     monkeypatch.setattr(api_main, "sync_from_turso", lambda: {
         "status": "unconfigured", "agents_imported": 0, "namespaces_imported": 0, "memories_imported": 0
     })
 
-    response = client.post("/api/dashboard/sync")
+    assert client.post("/api/dashboard/sync").status_code == 401
+    assert client.post(
+        "/api/dashboard/sync",
+        headers={"X-Agent-Name": "friday", "X-API-Key": "friday-test-key"},
+    ).status_code == 403
+    response = client.post(
+        "/api/dashboard/sync",
+        headers={"X-Agent-Name": "memora", "X-API-Key": "memora-test-key"},
+    )
 
     assert response.status_code == 503
     assert response.json()["status"] == "unconfigured"
+
+
+def test_global_dashboard_overview_no_longer_returns_private_memory_dump(client):
+    response = client.get("/api/dashboard/overview")
+
+    assert response.status_code == 410
+    assert "policy-scoped" in response.json()["detail"]
 
 
 def test_turso_sync_non_200_is_reported_as_unavailable(monkeypatch):
