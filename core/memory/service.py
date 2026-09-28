@@ -163,17 +163,20 @@ class MemoryService:
 
         if actor_name:
             actor = IdentityService.get_agent_by_name(db, actor_name)
-            if actor:
-                decision = PolicyEngine.evaluate_access(
-                    db,
-                    actor=actor,
-                    namespace=record.namespace,
-                    action="read",
-                    purpose=purpose,
-                    memory_id=record.id
+            if not actor:
+                raise PermissionDeniedError(
+                    f"Authenticated agent '{actor_name}' is not registered in Memora."
                 )
-                if not decision:
-                    raise PermissionDeniedError(decision.reason)
+            decision = PolicyEngine.evaluate_access(
+                db,
+                actor=actor,
+                namespace=record.namespace,
+                action="read",
+                purpose=purpose,
+                memory_id=record.id
+            )
+            if not decision:
+                raise PermissionDeniedError(decision.reason)
 
         return record
 
@@ -188,6 +191,10 @@ class MemoryService:
         include_deleted: Optional[bool] = None
     ) -> List[MemoryRecord]:
         actor = IdentityService.get_agent_by_name(db, actor_name) if actor_name else None
+        if actor_name and not actor:
+            raise PermissionDeniedError(
+                f"Authenticated agent '{actor_name}' is not registered in Memora."
+            )
         
         # If querying specific namespace, run policy check
         if query.namespace_path and actor:

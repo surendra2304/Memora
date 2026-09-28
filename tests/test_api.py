@@ -60,6 +60,57 @@ def test_memory_ingest_query_and_lifecycle(client: TestClient):
     audit_logs = audit_resp.json()
     assert len(audit_logs) >= 2
 
+
+def test_legacy_memory_list_authenticates_and_enforces_private_namespace_policy(client, test_db, monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("INTELX_API_KEY", "intelx-test-key")
+    monkeypatch.setenv("FRIDAY_API_KEY", "friday-test-key")
+
+    create_resp = client.post(
+        "/memories",
+        json={
+            "owner_name": "intelx",
+            "namespace_path": "memora://intelx/private",
+            "memory_type": "episodic",
+            "content_text": "Private IntelX investigation note.",
+            "source": "test",
+        },
+        headers={"X-Agent-Name": "intelx", "Authorization": "Bearer intelx-test-key"},
+    )
+    assert create_resp.status_code == 201
+    memory_id = create_resp.json()["id"]
+
+    assert client.get("/memories").status_code == 401
+
+    friday_resp = client.get(
+        "/memories",
+        headers={"X-Agent-Name": "friday", "Authorization": "Bearer friday-test-key"},
+    )
+    # A valid service key does not create a policy identity. Unknown agents
+    # must fail closed instead of bypassing namespace checks.
+    assert friday_resp.status_code == 403
+    friday_record_resp = client.get(
+        f"/memories/{memory_id}",
+        headers={"X-Agent-Name": "friday", "Authorization": "Bearer friday-test-key"},
+    )
+    assert friday_record_resp.status_code == 403
+
+    from core.identity.service import IdentityService
+    IdentityService.register_agent(test_db, "friday")
+    friday_resp = client.get(
+        "/memories",
+        headers={"X-Agent-Name": "friday", "Authorization": "Bearer friday-test-key"},
+    )
+    assert friday_resp.status_code == 200
+    assert memory_id not in {record["id"] for record in friday_resp.json()}
+
+    intelx_resp = client.get(
+        "/memories",
+        headers={"X-Agent-Name": "intelx", "Authorization": "Bearer intelx-test-key"},
+    )
+    assert intelx_resp.status_code == 200
+    assert memory_id in {record["id"] for record in intelx_resp.json()}
+
 def test_namespaces_api_and_grants(client: TestClient):
     """
     Test /namespaces POST, GET, /namespaces/grants, and /namespaces/grants DELETE.

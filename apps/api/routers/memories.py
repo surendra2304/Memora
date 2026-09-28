@@ -5,7 +5,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from storage.relational.session import get_db
-from storage.relational.models import MemoryType, LifecycleState, MemoryRecord, Agent, Namespace
+from storage.relational.models import MemoryType
 from core.memory.service import (
     MemoryService,
     MemoryNotFoundError,
@@ -27,14 +27,28 @@ def list_memories(
     memory_type: Optional[MemoryType] = None,
     limit: int = 100,
     offset: int = 0,
+    actor_name: str = Depends(get_actor_header),
+    purpose: Optional[str] = Depends(get_purpose_header),
     db: Session = Depends(get_db)
 ):
-    query = db.query(MemoryRecord)
-    if owner_name:
-        query = query.join(Agent, MemoryRecord.owner_id == Agent.id).filter(Agent.name == owner_name.lower())
-    if memory_type:
-        query = query.filter(MemoryRecord.memory_type == memory_type)
-    return query.order_by(MemoryRecord.created_at.desc()).offset(offset).limit(limit).all()
+    # Keep the legacy list endpoint under the same identity and namespace
+    # policy as /memories/query. A raw ORM listing bypassed private/shared
+    # namespace checks and exposed every tenant memory to any caller.
+    query = MemoryQuery(
+        owner_name=owner_name.lower() if owner_name else None,
+        memory_types=[memory_type] if memory_type else None,
+        limit=limit,
+        offset=offset,
+    )
+    try:
+        return MemoryService.query_memories(
+            db,
+            query=query,
+            actor_name=actor_name,
+            purpose=purpose,
+        )
+    except PermissionDeniedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 
 @router.post("", response_model=MemoryRecordRead, status_code=status.HTTP_201_CREATED)
 def ingest_memory(
