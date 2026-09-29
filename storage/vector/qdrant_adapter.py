@@ -30,6 +30,14 @@ class QdrantVectorAdapter:
         self._initialized = False
         self._mock_store: Dict[str, Dict[str, Any]] = {}
 
+    def readiness(self) -> Dict[str, Any]:
+        """Describe whether vector operations can actually serve this process."""
+        if self._initialized:
+            return {"status": "connected", "available": True, "backend": "qdrant"}
+        if self.is_production():
+            return {"status": "unavailable", "available": False, "backend": "qdrant"}
+        return {"status": "in_memory", "available": True, "backend": "process_local"}
+
     def connect(self):
         # In cloud without dedicated Qdrant instance, operate in internal vector mode
         if "localhost" in self.url and getattr(settings, "MEMORA_ENV", "").lower() == "production":
