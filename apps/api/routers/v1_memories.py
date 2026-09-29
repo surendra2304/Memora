@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from storage.relational.session import get_db
+from storage.relational.session import get_db, storage_receipt
 from storage.relational.models import (
     MemoryRecord,
     MemoryType,
@@ -78,6 +78,9 @@ class MemoryWriteResponse(BaseModel):
     lifecycle_state: LifecycleState
     is_duplicate: bool
     duplicate_of_id: Optional[str] = None
+    storage_backend: str
+    storage_durable: bool
+    storage_durability: str
     step_trace: Dict[str, Any]
 
 class MemoryVerifyRequest(BaseModel):
@@ -153,6 +156,7 @@ def write_memory_event(
             allow_duplicates=req.allow_duplicates
         )
 
+        storage = result.to_dict()
         return MemoryWriteResponse(
             id=result.record.id,
             tenant_id=getattr(result.record, "tenant_id", "default"),
@@ -173,6 +177,9 @@ def write_memory_event(
             lifecycle_state=result.record.lifecycle_state,
             is_duplicate=result.is_duplicate,
             duplicate_of_id=result.duplicate_of_id,
+            storage_backend=storage["storage_backend"],
+            storage_durable=storage["storage_durable"],
+            storage_durability=storage["storage_durability"],
             step_trace=result.step_outputs
         )
     except SecretDetectedSecurityViolation as e:
@@ -591,12 +598,16 @@ def record_interaction_endpoint(
         except Exception as e:
             pass
 
+        storage = storage_receipt()
         return {
             "status": "success",
             "agent": calling_agent,
             "recorded_count": len(created_records),
             "memory_ids": created_records,
-            "extracted_facts": extracted_facts
+            "extracted_facts": extracted_facts,
+            "storage_backend": storage["backend"],
+            "storage_durable": storage["durable"],
+            "storage_durability": storage["durability"],
         }
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -632,13 +643,17 @@ def learn_outcome_endpoint(
             domain=req.domain,
             namespace_path=req.namespace_path
         )
+        storage = storage_receipt()
         return {
             "status": "learned",
             "id": record.id,
             "agent": calling_agent,
             "memory_type": "experience",
             "synthesized_rule": record.content_text,
-            "importance": record.importance
+            "importance": record.importance,
+            "storage_backend": storage["backend"],
+            "storage_durable": storage["durable"],
+            "storage_durability": storage["durability"],
         }
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

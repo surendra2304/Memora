@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from apps.api.dependencies import authenticate_agent
 from core.config import settings
-from storage.relational.session import init_db, get_db
+from storage.relational.session import init_db, get_db, storage_ready
 from storage.relational.models import Agent, Namespace, MemoryRecord
 from storage.vector.qdrant_adapter import vector_adapter
 from core.events.emitter import event_emitter
@@ -42,6 +42,8 @@ def _startup_turso_sync_enabled() -> bool:
     return environment == "production" or explicit
 
 def sync_from_turso():
+    if (os.getenv("ENVIRONMENT", "") or settings.MEMORA_ENV).lower() == "production" and not storage_ready():
+        return {"status": "unavailable", "reason": "non_authoritative_local_storage", "agents_imported": 0, "namespaces_imported": 0, "memories_imported": 0}
     from storage.relational.session import SessionLocal
     db = SessionLocal()
     try:
@@ -144,7 +146,7 @@ def sync_from_turso():
 async def lifespan(app: FastAPI):
     # Initialize database tables, vector connection, and event bus
     init_db()
-    sync_result = sync_from_turso() if _startup_turso_sync_enabled() else {"status": "disabled", "agents_imported": 0, "namespaces_imported": 0, "memories_imported": 0}
+    sync_result = sync_from_turso() if _startup_turso_sync_enabled() and storage_ready() else {"status": "disabled", "agents_imported": 0, "namespaces_imported": 0, "memories_imported": 0}
     if sync_result["status"] != "success" and sync_result["status"] != "unconfigured":
         logger.warning("Turso startup import status: %s", sync_result["status"])
     vector_adapter.connect()
@@ -193,6 +195,8 @@ app.include_router(audit_router)
 def dashboard_sync(agent_name: str = Depends(authenticate_agent)):
     if agent_name != "memora":
         raise HTTPException(status_code=403, detail="Only the Memora service identity may trigger a database sync.")
+    if (os.getenv("ENVIRONMENT", "") or settings.MEMORA_ENV).lower() == "production" and not storage_ready():
+        raise HTTPException(status_code=503, detail="Turso import is disabled while the ORM database is non-authoritative.")
     result = sync_from_turso()
     status_code = 200 if result["status"] == "success" else 503
     return JSONResponse(status_code=status_code, content=result)

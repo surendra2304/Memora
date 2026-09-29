@@ -10,6 +10,7 @@ import time
 import logging
 
 from storage.relational.models import MemoryRecord, MemoryType, LifecycleState, NamespaceType
+from storage.relational.session import storage_receipt
 from storage.vector.qdrant_adapter import vector_adapter
 from storage.vector.embedding import EmbeddingGenerator
 from core.identity.service import IdentityService
@@ -40,6 +41,7 @@ class MemoryWriteResult:
         self.duplicate_of_id = duplicate_of_id
 
     def to_dict(self) -> Dict[str, Any]:
+        storage = storage_receipt()
         return {
             "id": self.record.id,
             "tenant_id": getattr(self.record, "tenant_id", "default"),
@@ -61,6 +63,9 @@ class MemoryWriteResult:
             "created_at": self.record.created_at.isoformat() if self.record.created_at else None,
             "is_duplicate": self.is_duplicate,
             "duplicate_of_id": self.duplicate_of_id,
+            "storage_backend": storage["backend"],
+            "storage_durable": storage["durable"],
+            "storage_durability": storage["durability"],
             "step_trace": self.step_outputs
         }
 
@@ -356,10 +361,14 @@ class MemoryWriteService:
             except Exception as e:
                 vector_indexed = False
 
+            storage = storage_receipt()
             step_trace["step_9_persistence"] = {
                 "memory_id": record.id,
                 "tenant_id": resolved_tenant,
                 "db_persisted": True,
+                "storage_backend": storage["backend"],
+                "storage_durable": storage["durable"],
+                "storage_durability": storage["durability"],
                 "vector_indexed": vector_indexed,
                 "graph_links_created": len(graph_links),
                 "graph_links": graph_links

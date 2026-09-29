@@ -21,7 +21,8 @@ logger = logging.getLogger("memora_client")
 class MemoraClient:
     """
     Universal client for connecting any agent to the Memora Memory Fabric.
-    Automatically handles network failovers with local SQLite fallback.
+    Sends all shared memory operations through the Memora API. API outages are
+    returned to callers explicitly; local SQLite must never become an authority.
     """
 
     def __init__(
@@ -35,17 +36,9 @@ class MemoraClient:
         self.api_key = api_key or os.getenv("MEMORA_API_KEY")
         self.timeout = timeout
         
-        # Local fallback DB path
-        if local_db_path:
-            self.local_db_path = local_db_path
-        else:
-            candidates = [
-                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "memora.db"),
-                "d:/FRIDAY Universe/Memora/data/memora.db",
-                "d:\\FRIDAY Universe\\Memora\\data\\memora.db",
-                "data/memora.db"
-            ]
-            self.local_db_path = next((c for c in candidates if os.path.exists(c)), candidates[0])
+        # Legacy private helpers may still be used explicitly by offline tools,
+        # but normal SDK operations never discover or fall back to a local DB.
+        self.local_db_path = local_db_path or ""
 
     def _headers(self, agent_name: str, *, json_body: bool = False, api_key: Optional[str] = None) -> Dict[str, str]:
         agent = agent_name.lower().strip()
@@ -205,8 +198,7 @@ class MemoraClient:
         url = f"{self.base_url}/v1/memories/record-interaction"
         headers = self._headers(agent_name, json_body=True)
         if not headers.get("Authorization"):
-            local = self._record_locally(agent_name, user_input, agent_output, event_type, tags, metadata)
-            return {**local, "status": "local_only" if local.get("status") == "success" else local.get("status"), "cloud": False}
+            return {"status": "error", "error": f"{agent_name.upper()}_API_KEY is not configured", "cloud": False}
 
         try:
             req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
@@ -214,11 +206,9 @@ class MemoraClient:
                 if response.status in (200, 201):
                     return json.loads(response.read().decode("utf-8"))
         except Exception as e:
-            logger.debug(f"Memora API unavailable ({e}), falling back to direct local storage.")
-
-        # Local fallback
-        local = self._record_locally(agent_name, user_input, agent_output, event_type, tags, metadata)
-        return {**local, "status": "local_only" if local.get("status") == "success" else local.get("status"), "cloud": False}
+            logger.warning("Memora interaction write failed (%s)", type(e).__name__)
+            return {"status": "error", "error": type(e).__name__, "cloud": False}
+        return {"status": "error", "error": "Memora returned an unexpected response", "cloud": False}
 
     def record_fact(
         self,
@@ -246,8 +236,7 @@ class MemoraClient:
         url = f"{self.base_url}/v1/memories"
         headers = self._headers(agent_name, json_body=True)
         if not headers.get("Authorization"):
-            local = self._record_fact_locally(agent_name, fact_text, category, importance, entities)
-            return {**local, "status": "local_only" if local.get("status") == "success" else local.get("status"), "cloud": False}
+            return {"status": "error", "error": f"{agent_name.upper()}_API_KEY is not configured", "cloud": False}
 
         try:
             req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
@@ -255,10 +244,9 @@ class MemoraClient:
                 if response.status in (200, 201):
                     return json.loads(response.read().decode("utf-8"))
         except Exception as e:
-            logger.debug(f"Memora API write failed ({e}), using local fallback.")
-
-        local = self._record_fact_locally(agent_name, fact_text, category, importance, entities)
-        return {**local, "status": "local_only" if local.get("status") == "success" else local.get("status"), "cloud": False}
+            logger.warning("Memora fact write failed (%s)", type(e).__name__)
+            return {"status": "error", "error": type(e).__name__, "cloud": False}
+        return {"status": "error", "error": "Memora returned an unexpected response", "cloud": False}
 
     def recall_memories(
         self,
@@ -277,7 +265,7 @@ class MemoraClient:
         url = f"{self.base_url}/v1/memories/search?q={encoded_q}&limit={limit}&min_score={threshold}"
         headers = self._headers(agent_name)
         if not headers.get("Authorization"):
-            return self._recall_locally(agent_name, query, limit) if os.path.exists(self.local_db_path) else []
+            return []
 
         try:
             req = urllib.request.Request(url, headers=headers, method="GET")
@@ -287,9 +275,9 @@ class MemoraClient:
                     if results:
                         return results
         except Exception as e:
-            logger.debug(f"Memora API recall failed ({e}), searching local database.")
-
-        return self._recall_locally(agent_name, query, limit)
+            logger.warning("Memora recall failed (%s)", type(e).__name__)
+            return []
+        return []
 
     def build_context_prompt(self, agent_name: str, query: str, max_tokens: int = 800) -> str:
         """
@@ -342,8 +330,7 @@ class MemoraClient:
         url = f"{self.base_url}/v1/memories/learn-outcome"
         headers = self._headers(agent_name, json_body=True)
         if not headers.get("Authorization"):
-            local = self._learn_locally(agent_name, task_name, status, error_log, actions_taken, context, domain)
-            return {**local, "status": "local_only" if local.get("status") == "success" else local.get("status"), "cloud": False}
+            return {"status": "error", "error": f"{agent_name.upper()}_API_KEY is not configured", "cloud": False}
 
         try:
             req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
@@ -351,10 +338,9 @@ class MemoraClient:
                 if resp.status in (200, 201):
                     return json.loads(resp.read().decode("utf-8"))
         except Exception as e:
-            logger.debug(f"Memora learn-outcome API write failed ({e}), using local fallback.")
-
-        local = self._learn_locally(agent_name, task_name, status, error_log, actions_taken, context, domain)
-        return {**local, "status": "local_only" if local.get("status") == "success" else local.get("status"), "cloud": False}
+            logger.warning("Memora outcome write failed (%s)", type(e).__name__)
+            return {"status": "error", "error": type(e).__name__, "cloud": False}
+        return {"status": "error", "error": "Memora returned an unexpected response", "cloud": False}
 
     def recall_experience(
         self,
@@ -373,7 +359,7 @@ class MemoraClient:
 
         headers = self._headers(agent_name)
         if not headers.get("Authorization"):
-            return self._recall_experience_locally(agent_name, task_query, domain, limit) if os.path.exists(self.local_db_path) else []
+            return []
 
         try:
             req = urllib.request.Request(url, headers=headers, method="GET")
@@ -383,9 +369,9 @@ class MemoraClient:
                     if results:
                         return results
         except Exception as e:
-            logger.debug(f"Memora recall_experience API failed ({e}), using local fallback.")
-
-        return self._recall_experience_locally(agent_name, task_query, domain, limit)
+            logger.warning("Memora experience recall failed (%s)", type(e).__name__)
+            return []
+        return []
 
     def build_self_upgrade_context(
         self,

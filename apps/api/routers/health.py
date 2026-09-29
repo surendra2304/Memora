@@ -2,9 +2,10 @@
 Health Check Endpoints
 """
 from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from storage.relational.session import get_db
+from storage.relational.session import get_db, storage_receipt
 from storage.relational.turso_events import configured as turso_events_configured, probe as probe_turso_events, production_mode
 
 router = APIRouter(prefix="/health", tags=["Health"])
@@ -12,11 +13,12 @@ router = APIRouter(prefix="/health", tags=["Health"])
 @router.get("")
 @router.head("")
 def health_check(db: Session = Depends(get_db)):
+    database = storage_receipt()
     db_status = "healthy"
     try:
         db.execute(text("SELECT 1"))
     except Exception as e:
-        db_status = f"degraded ({e})"
+        db_status = f"degraded ({type(e).__name__})"
 
     event_store = "local_only"
     event_store_ok = True
@@ -31,11 +33,15 @@ def health_check(db: Session = Depends(get_db)):
         event_store = "turso_not_configured"
         event_store_ok = False
 
-    return {
-        "status": "healthy" if db_status == "healthy" and event_store_ok else "degraded",
+    status_ok = db_status == "healthy" and event_store_ok
+    return JSONResponse(status_code=200 if status_ok else 503, content={
+        "status": "healthy" if status_ok else "degraded",
         "service": "memora-api",
         "database": db_status,
+        "database_backend": database["backend"],
+        "database_durable": database["durable"],
+        "database_durability": database["durability"],
         "event_store": event_store,
         "event_store_durable": event_store == "turso_available",
         "version": "2.0.0"
-    }
+    })
