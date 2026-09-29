@@ -5,6 +5,7 @@ Supports PostgreSQL as primary with automatic fallback/test SQLite support.
 import os
 import logging
 from typing import Generator
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 from fastapi import HTTPException
@@ -42,10 +43,38 @@ def _ensure_sqlite_dir(url: str):
             if dirname:
                 os.makedirs(dirname, exist_ok=True)
 
+
+def _turso_sqlalchemy_url(url: str) -> str:
+    """Convert a Turso URL to the URL accepted by sqlalchemy-libsql."""
+    value = url.strip()
+    if value.startswith("sqlite+libsql://"):
+        return value
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"https", "libsql"} or not parsed.netloc:
+        raise ValueError("Turso URL must use https:// or libsql:// and include a host")
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query.setdefault("secure", "true")
+    return urlunsplit(("sqlite+libsql", parsed.netloc, parsed.path, urlencode(query), parsed.fragment))
+
+
+def _new_sqlite_engine(url: str):
+    _ensure_sqlite_dir(url)
+    return create_engine(
+        url,
+        connect_args={"check_same_thread": False} if "sqlite" in url else {},
+        echo=settings.DB_ECHO,
+    )
+
 def create_db_engine():
     global _active_storage_backend, _active_storage_durable
     db_url = settings.DATABASE_URL
+    configured_turso_url = settings.TURSO_DATABASE_URL or os.getenv("TURSO_DATABASE_URL", "")
     turso_token = settings.TURSO_AUTH_TOKEN or os.getenv("TURSO_AUTH_TOKEN", "")
+
+    # Render's manifest historically supplied an ephemeral SQLite DATABASE_URL.
+    # In production, prefer the configured Turso primary when credentials exist.
+    if production_mode() and configured_turso_url and turso_token:
+        db_url = configured_turso_url
 
     # 1. PostgreSQL connection
     if db_url.startswith("postgresql"):
@@ -78,14 +107,18 @@ def create_db_engine():
                 )
             raise e
 
-    # 2. Turso cloud database connection (libsql:// or https://)
-    if "turso.io" in db_url or db_url.startswith("libsql://"):
+    # 2. Turso cloud database connection through Turso's SQLAlchemy dialect.
+    if "turso.io" in db_url or db_url.startswith(("libsql://", "sqlite+libsql://")):
         try:
-            # Format SQLite driver URL for Turso / libSQL
-            clean_url = db_url.replace("libsql://", "sqlite+https://") if db_url.startswith("libsql://") else f"sqlite+{db_url}"
-            if turso_token and "authToken" not in clean_url:
-                clean_url = f"{clean_url}?authToken={turso_token}&secure=true"
-            engine = create_engine(clean_url, echo=settings.DB_ECHO)
+            if not turso_token:
+                raise RuntimeError("TURSO_AUTH_TOKEN is not configured")
+            clean_url = _turso_sqlalchemy_url(db_url)
+            engine = create_engine(
+                clean_url,
+                connect_args={"auth_token": turso_token},
+                pool_pre_ping=True,
+                echo=settings.DB_ECHO,
+            )
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
             logger.info("Successfully connected to Turso cloud database.")
@@ -94,25 +127,18 @@ def create_db_engine():
             return engine
         except Exception as e:
             fallback_url = settings.SQLITE_FALLBACK_URL
-            _ensure_sqlite_dir(fallback_url)
-            logger.warning("Turso ORM connection unavailable (%s); local SQLite fallback is non-authoritative.", type(e).__name__)
+            logger.warning(
+                "Turso ORM connection unavailable (%s); local SQLite fallback is non-authoritative.",
+                type(e).__name__,
+            )
             _active_storage_backend = "sqlite_fallback"
             _active_storage_durable = False
-            return create_engine(
-                fallback_url,
-                connect_args={"check_same_thread": False},
-                echo=settings.DB_ECHO
-            )
+            return _new_sqlite_engine(fallback_url)
 
     # 3. Standard SQLite connection
-    _ensure_sqlite_dir(db_url)
     _active_storage_backend = "sqlite"
     _active_storage_durable = False
-    return create_engine(
-        db_url,
-        connect_args={"check_same_thread": False} if "sqlite" in db_url else {},
-        echo=settings.DB_ECHO
-    )
+    return _new_sqlite_engine(db_url)
 
 engine = create_db_engine()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
