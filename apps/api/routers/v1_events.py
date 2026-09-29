@@ -1,8 +1,9 @@
 """Durable event notifications for agents that poll or reconnect."""
 import hashlib
-import json
-import os
 import hmac
+import json
+import math
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -50,7 +51,55 @@ _VISIBLE_FIELDS = {
     "context.generated": ("bundle_id", "agent", "memories_count", "is_degraded"),
     "access.denied": ("actor_id", "memory_id", "rule"),
     "intelx.news": ("source_agent", "signal_id", "headline", "summary", "published_at", "source_url", "sources", "relevance", "topics"),
+    "futuris.forecast": (
+        "source_agent", "forecast_id", "target", "status", "as_of", "expires_at",
+        "model_version", "prediction", "range_lower", "range_upper", "probability",
+        "confidence", "prediction_is_not_authorization",
+    ),
 }
+
+
+def _validate_futuris_forecast(payload: dict[str, Any]) -> None:
+    """Reject malformed or authority-bearing forecast events before cursor publication."""
+    forecast_id = payload.get("forecast_id")
+    target = payload.get("target")
+    state = payload.get("status")
+    if not isinstance(forecast_id, str) or not forecast_id.strip() or len(forecast_id) > 128:
+        raise HTTPException(status_code=422, detail="Forecast event requires a bounded forecast_id")
+    if not isinstance(target, str) or not target.strip() or len(target) > 500:
+        raise HTTPException(status_code=422, detail="Forecast event requires a bounded target")
+    if not isinstance(state, str) or state not in {"active", "resolved", "expired", "invalidated"}:
+        raise HTTPException(status_code=422, detail="Forecast event has an invalid lifecycle status")
+    for field, max_length in (("as_of", 64), ("expires_at", 64), ("model_version", 128)):
+        value = payload.get(field)
+        if value is not None and (not isinstance(value, str) or len(value) > max_length):
+            raise HTTPException(status_code=422, detail=f"Forecast event has invalid {field}")
+    if payload.get("prediction_is_not_authorization") is not True:
+        raise HTTPException(status_code=422, detail="Forecast events must remain advisory")
+
+    def finite_number(field: str, value: Any) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise HTTPException(status_code=422, detail=f"Forecast event requires numeric {field}")
+        try:
+            number = float(value)
+        except (OverflowError, ValueError):
+            raise HTTPException(status_code=422, detail=f"Forecast event has invalid {field}") from None
+        if not math.isfinite(number):
+            raise HTTPException(status_code=422, detail=f"Forecast event has non-finite {field}")
+        return number
+
+    values: dict[str, float] = {}
+    for field in ("prediction", "range_lower", "range_upper", "confidence"):
+        values[field] = finite_number(field, payload.get(field))
+    probability = payload.get("probability")
+    if probability is not None:
+        probability = finite_number("probability", probability)
+    if not 0.0 <= values["confidence"] <= 1.0 or (
+        probability is not None and not 0.0 <= probability <= 1.0
+    ):
+        raise HTTPException(status_code=422, detail="Forecast event confidence/probability is out of range")
+    if not values["range_lower"] <= values["prediction"] <= values["range_upper"]:
+        raise HTTPException(status_code=422, detail="Forecast interval must contain its prediction")
 
 
 @router.get("")
@@ -181,6 +230,12 @@ def ingest_envelope(
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid sender credentials")
     if sender not in _AGENTS or recipient not in _AGENTS | {"all"}:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown sender or recipient")
+    if envelope.intent == "futuris.forecast":
+        if sender != "futuris":
+            raise HTTPException(status_code=403, detail="Only authenticated Futuris may publish forecast advisories")
+        if not envelope.message_id.startswith("futuris-"):
+            raise HTTPException(status_code=422, detail="Forecast event IDs must use the futuris- prefix")
+        _validate_futuris_forecast(envelope.payload)
     if envelope.created_at > time.time() + 60 or time.time() - envelope.created_at > envelope.ttl:
         raise HTTPException(status_code=status.HTTP_410_GONE, detail="Envelope expired or timestamp is invalid")
     if len(json.dumps(envelope.payload, default=str)) > 262144:

@@ -374,6 +374,118 @@ def test_signed_intelx_event_is_durable_targeted_and_idempotent(test_db, monkeyp
     assert futuris["events"][0]["payload"]["source_agent"] == "intelx"
 
 
+def _signed_forecast_envelope(key, *, sender="futuris", payload=None):
+    fields = {
+        "message_id": "futuris-forecast-1",
+        "correlation_id": "forecast-correlation-1",
+        "from_agent": sender,
+        "to_agent": "all",
+        "intent": "futuris.forecast",
+        "priority": "normal",
+        "ttl": 300,
+        "auth_token": None,
+        "payload": payload or {
+            "forecast_id": "forecast-1",
+            "target": "BTC volatility over 24h",
+            "status": "active",
+            "as_of": "2026-09-29T10:00:00Z",
+            "expires_at": "2026-09-30T10:00:00Z",
+            "model_version": "futuris-test-model",
+            "prediction": 0.5,
+            "range_lower": 0.2,
+            "range_upper": 0.8,
+            "probability": 0.7,
+            "confidence": 0.6,
+            "prediction_is_not_authorization": True,
+            "private_prompt": "must not be exposed",
+        },
+        "created_at": time.time(),
+    }
+    raw = json.dumps(fields, sort_keys=True, separators=(",", ":"), default=str).encode()
+    signature = hmac.new(key.encode(), raw, hashlib.sha256).hexdigest()
+    return IncomingEnvelope(**fields, signature=signature)
+
+
+def test_signed_futuris_forecast_is_visible_with_only_advisory_fields(test_db, monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
+    monkeypatch.setenv("FUTURIS_API_KEY", "futuris-test-key")
+    monkeypatch.setattr("apps.api.routers.v1_events.turso_events_configured", lambda: False)
+    monkeypatch.setattr("apps.api.routers.v1_events.turso_required", lambda: False)
+
+    result = ingest_envelope(
+        _signed_forecast_envelope("futuris-test-key"),
+        "Bearer futuris-test-key",
+        test_db,
+    )
+    assert result["status"] == "accepted"
+
+    feed = read_events(after_id=0, limit=10, event_type="futuris.forecast", agent="sentinel", db=test_db)
+    assert len(feed["events"]) == 1
+    event = feed["events"][0]
+    assert event["payload"] == {
+        "source_agent": "futuris",
+        "forecast_id": "forecast-1",
+        "target": "BTC volatility over 24h",
+        "status": "active",
+        "as_of": "2026-09-29T10:00:00Z",
+        "expires_at": "2026-09-30T10:00:00Z",
+        "model_version": "futuris-test-model",
+        "prediction": 0.5,
+        "range_lower": 0.2,
+        "range_upper": 0.8,
+        "probability": 0.7,
+        "confidence": 0.6,
+        "prediction_is_not_authorization": True,
+    }
+
+
+def test_only_authenticated_futuris_can_publish_forecast_intent(test_db, monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
+    monkeypatch.setenv("INTELX_API_KEY", "intelx-test-key")
+
+    with pytest.raises(HTTPException) as exc:
+        ingest_envelope(
+            _signed_forecast_envelope("intelx-test-key", sender="intelx"),
+            "Bearer intelx-test-key",
+            test_db,
+        )
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"prediction_is_not_authorization": False},
+        {"confidence": 1.5},
+        {"range_lower": 0.9},
+        {"prediction": float("nan")},
+        {"status": []},
+    ],
+)
+def test_futuris_forecast_rejects_invalid_advisories_before_persistence(test_db, monkeypatch, change):
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
+    monkeypatch.setenv("FUTURIS_API_KEY", "futuris-test-key")
+    monkeypatch.setattr("apps.api.routers.v1_events.turso_events_configured", lambda: False)
+    monkeypatch.setattr("apps.api.routers.v1_events.turso_required", lambda: False)
+    payload = {
+        "forecast_id": "forecast-1", "target": "BTC volatility", "status": "active",
+        "prediction": 0.5, "range_lower": 0.2, "range_upper": 0.8,
+        "confidence": 0.6, "prediction_is_not_authorization": True,
+    }
+    payload.update(change)
+    with pytest.raises(HTTPException) as exc:
+        ingest_envelope(
+            _signed_forecast_envelope("futuris-test-key", payload=payload),
+            "Bearer futuris-test-key",
+            test_db,
+        )
+    assert exc.value.status_code == 422
+    assert test_db.query(EventLog).count() == 0
+
+
 def test_mesh_ingest_rejects_tampering_and_bad_credentials(test_db, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
