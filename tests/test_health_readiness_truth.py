@@ -27,6 +27,30 @@ def test_vector_readiness_distinguishes_production_from_local_fallback(
     assert adapter.readiness() == expected
 
 
+def test_render_environment_forces_production_vector_readiness(monkeypatch):
+    adapter = QdrantVectorAdapter(url="http://localhost:6333")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setattr("storage.vector.qdrant_adapter.settings.MEMORA_ENV", "development")
+
+    assert adapter.is_production() is True
+    assert adapter.readiness() == {
+        "status": "unavailable",
+        "available": False,
+        "backend": "qdrant",
+    }
+
+
+def test_render_environment_prevents_ephemeral_vector_writes(monkeypatch):
+    from storage.vector.qdrant_adapter import VectorUnavailableError
+
+    adapter = QdrantVectorAdapter(url="http://localhost:6333")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setattr("storage.vector.qdrant_adapter.settings.MEMORA_ENV", "development")
+
+    with pytest.raises(VectorUnavailableError, match="offline in production"):
+        adapter.upsert_embedding("memory-1", [1.0, 0.0], tenant_id="tenant-1")
+
+
 @pytest.mark.parametrize(
     ("vector_status", "expected_status", "expected_http"),
     [

@@ -7,17 +7,17 @@
 
 ---
 
-## ☁️ 1. Live Cloud Infrastructure & Deployment
+## ☁️ 1. Configured service (runtime unverified)
 
-| Attribute | Production Configuration |
+| Attribute | Repository configuration |
 | :--- | :--- |
-| **Live Production URL** | [https://memora-cavc.onrender.com](https://memora-cavc.onrender.com) |
+| **Configured Service URL (deployment unverified)** | [https://memora-cavc.onrender.com](https://memora-cavc.onrender.com) |
 | **Health Check Endpoint** | https://memora-cavc.onrender.com/health |
-| **Master API Key Variable** | `MEMORA_API_KEY` (unique secret configured outside source control) |
+| **API key variable (keep value in secret environment)** | `MEMORA_API_KEY` (unique secret configured outside source control) |
 | **Authentication Header** | `Authorization: Bearer <MEMORA_API_KEY>` |
-| **Database Topology** | Turso LibSQL Cloud DB (configured; current capacity/plan must be verified in Turso) |
-| **Database Connection** | libsql://memora-db-surendra2304.aws-ap-south-1.turso.io |
-| **Hosting Platform** | Render Docker Web Service (Singapore / AWS Mumbai) |
+| **Configured database topology (runtime unverified)** | Turso LibSQL Cloud DB (configured; current capacity/plan must be verified in Turso) |
+| **Configured database URL or namespace (not a secret)** | libsql://memora-db-surendra2304.aws-ap-south-1.turso.io |
+| **Configured host (plan, region, and runtime unverified)** | Render service configured (current plan, region, and deployment unverified) |
 
 ---
 
@@ -33,11 +33,11 @@
 
 ---
 
-## 🌐 3. Full Ecosystem Network Connectivity
+## 🌐 3. Ecosystem endpoint configuration
 
-Every agent in the universe communicates using standard environment variables:
+These variable names and URLs are references only; they do not prove live communication. Set real credentials in secret environments.
 
-`env
+```env
 # ============================================================================== #
 #               FRIDAY UNIVERSE MASTER ECOSYSTEM CONFIGURATION                  #
 # ============================================================================== #
@@ -46,15 +46,15 @@ Every agent in the universe communicates using standard environment variables:
 INFERENCE_URL=https://inference-r1sn.onrender.com
 # Configure a unique Inference service key outside source control.
 
-# 2. 🧠 Memora Cloud Persistent Memory (Turso; capacity configured by account)
+# 2. Memora cloud memory service (active backend/capacity not verified)
 MEMORA_URL=https://memora-cavc.onrender.com
 # Configure a unique Memora service key outside source control.
 
-# 3. 📈 Stratex 24/7 Algorithmic Trading Platform (Binance Futures)
+# 3. 📈 Stratex Paper/Testnet Strategy Platform (Binance Futures)
 STRATEX_URL=https://stratex-8wj1.onrender.com
 # Configure a unique Stratex service key outside source control.
 
-# 4. 🧠 IntelX Evidence & Intelligence Research Engine (Turso AWS Mumbai)
+# 4. IntelX research service (active storage backend not verified)
 INTELX_URL=https://intelx-mygl.onrender.com
 # Configure a unique IntelX service key outside source control.
 
@@ -77,15 +77,15 @@ SENTINEL_URL=https://sentinel-a861.onrender.com
 # 9. 🤖 FRIDAY Central Desktop Operating System
 FRIDAY_URL=https://friday-zw59.onrender.com
 # Configure a unique FRIDAY service key outside source control.
-`
+```
 
 ---
 
-## 🤖 4. Antigravity AI Session Guide
+## 🤖 4. Repository guide
 
-When opening this directory in **Antigravity AI**:
+When opening this repository:
 * **Identity:** You are working inside **Memora** (d:\FRIDAY Universe\Memora).
-* **Live Service:** This service is deployed live at https://memora-cavc.onrender.com.
+* **Configured URL (deployment unverified): https://memora-cavc.onrender.com.
 * **Authentication:** Incoming requests require a unique `MEMORA_API_KEY` configured in the service environment.
 * **Test Evidence:** Label local tests, test doubles, and live endpoint checks separately; report only results actually observed.
 * **No Unapproved Git Pushes:** Keep modifications local unless explicitly instructed to push.

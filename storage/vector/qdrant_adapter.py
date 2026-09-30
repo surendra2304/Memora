@@ -4,6 +4,7 @@ Interfaces with Qdrant for dense semantic embeddings and similarity search.
 """
 import math
 import logging
+import os
 from typing import List, Dict, Any, Optional
 from core.config import settings
 
@@ -40,7 +41,7 @@ class QdrantVectorAdapter:
 
     def connect(self):
         # In cloud without dedicated Qdrant instance, operate in internal vector mode
-        if "localhost" in self.url and getattr(settings, "MEMORA_ENV", "").lower() == "production":
+        if "localhost" in self.url and self.is_production():
             logger.info("Operating in internal dense vector mode.")
             self._initialized = False
             return
@@ -57,7 +58,11 @@ class QdrantVectorAdapter:
             self._initialized = False
 
     def is_production(self) -> bool:
-        return getattr(settings, "MEMORA_ENV", "development").lower() == "production"
+        # Render and other deployment manifests configure ENVIRONMENT. Keep
+        # vector durability decisions aligned with relational storage, which
+        # treats this variable as authoritative over the local settings file.
+        environment = os.getenv("ENVIRONMENT", "") or getattr(settings, "MEMORA_ENV", "development")
+        return environment.lower() == "production"
 
     def upsert_embedding(
         self,
@@ -178,6 +183,9 @@ class QdrantVectorAdapter:
                 ]
             except Exception as e:
                 logger.error(f"Vector search failed on client: {e}")
+
+        if self.is_production():
+            raise VectorUnavailableError("VECTOR_UNAVAILABLE: Qdrant vector store is offline in production.")
 
         # In-memory cosine search fallback (strictly filtered by tenant_id)
         scored = []
