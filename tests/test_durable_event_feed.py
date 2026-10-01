@@ -437,6 +437,7 @@ def test_signed_futuris_forecast_is_visible_with_only_advisory_fields(test_db, m
         "probability": 0.7,
         "confidence": 0.6,
         "prediction_is_not_authorization": True,
+        "correlation_id": "forecast-correlation-1",
     }
 
 
@@ -595,3 +596,142 @@ def test_turso_consumer_cursor_ack_requires_visible_event(monkeypatch):
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     assert turso_events.acknowledge(tenant_id="default", agent="friday", event_id=42) == 42
     assert any("MAX(last_event_id,excluded.last_event_id)" in sql for sql in statements)
+
+
+def _signed_decision_envelope(key, *, sender="stratex", payload=None):
+    fields = {
+        "message_id": "stratex-decision-1",
+        "correlation_id": "journey-correlation-1",
+        "from_agent": sender,
+        "to_agent": "all",
+        "intent": "stratex.decision",
+        "priority": "normal",
+        "ttl": 3600,
+        "auth_token": None,
+        "payload": payload
+        or {
+            "decision_id": "decision-1",
+            "forecast_id": "forecast-1",
+            "action": "paper_intent",
+            "paper_only": True,
+            "policy_reason": "PAPER_BLOCKED",
+            "gates_summary": ["paper_mode_active", "live_forbidden_by_design"],
+            "headline": "Paper-only evaluation recorded",
+            "summary": "Advisory evaluated under paper policy; no live order.",
+            "decided_at": "2026-10-01T00:00:00Z",
+        },
+        "created_at": time.time(),
+    }
+    raw = json.dumps(fields, sort_keys=True, separators=(",", ":"), default=str).encode()
+    signature = hmac.new(key.encode(), raw, hashlib.sha256).hexdigest()
+    return IncomingEnvelope(**fields, signature=signature)
+
+
+def test_signed_stratex_decision_round_trips_correlation_id(test_db, monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
+    monkeypatch.setenv("STRATEX_API_KEY", "stratex-test-key")
+    monkeypatch.setattr("apps.api.routers.v1_events.turso_events_configured", lambda: False)
+    monkeypatch.setattr("apps.api.routers.v1_events.turso_required", lambda: False)
+
+    result = ingest_envelope(
+        _signed_decision_envelope("stratex-test-key"),
+        "Bearer stratex-test-key",
+        test_db,
+    )
+    assert result["status"] == "accepted"
+
+    feed = read_events(after_id=0, limit=10, event_type="stratex.decision", agent="friday", db=test_db)
+    assert len(feed["events"]) == 1
+    event = feed["events"][0]
+    assert event["payload"]["correlation_id"] == "journey-correlation-1"
+    assert event["payload"]["paper_only"] is True
+    assert event["payload"]["action"] == "paper_intent"
+    assert event["payload"]["source_agent"] == "stratex"
+
+
+def test_only_authenticated_stratex_can_publish_decision_intent(test_db, monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
+    monkeypatch.setenv("INTELX_API_KEY", "intelx-test-key")
+
+    with pytest.raises(HTTPException) as exc:
+        ingest_envelope(
+            _signed_decision_envelope("intelx-test-key", sender="intelx"),
+            "Bearer intelx-test-key",
+            test_db,
+        )
+    assert exc.value.status_code == 403
+    assert test_db.query(EventLog).count() == 0
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"paper_only": False},
+        {"action": "live_order"},
+        {"decision_id": ""},
+        {"policy_reason": ""},
+        {"gates_summary": "not-a-list"},
+    ],
+)
+def test_stratex_decision_rejects_invalid_or_live_bearing_payloads(test_db, monkeypatch, change):
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
+    monkeypatch.setenv("STRATEX_API_KEY", "stratex-test-key")
+    monkeypatch.setattr("apps.api.routers.v1_events.turso_events_configured", lambda: False)
+    monkeypatch.setattr("apps.api.routers.v1_events.turso_required", lambda: False)
+    payload = {
+        "decision_id": "decision-1",
+        "forecast_id": "forecast-1",
+        "action": "paper_intent",
+        "paper_only": True,
+        "policy_reason": "PAPER_BLOCKED",
+    }
+    payload.update(change)
+    with pytest.raises(HTTPException) as exc:
+        ingest_envelope(
+            _signed_decision_envelope("stratex-test-key", payload=payload),
+            "Bearer stratex-test-key",
+            test_db,
+        )
+    assert exc.value.status_code == 422
+    assert test_db.query(EventLog).count() == 0
+
+
+def test_intelx_news_ingest_exposes_correlation_id_to_consumers(test_db, monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
+    monkeypatch.setenv("INTELX_API_KEY", "intelx-test-key")
+    monkeypatch.setattr("apps.api.routers.v1_events.turso_events_configured", lambda: False)
+    monkeypatch.setattr("apps.api.routers.v1_events.turso_required", lambda: False)
+
+    fields = {
+        "message_id": "intelx-news-corr-1",
+        "correlation_id": "corr-journey-intelx-1",
+        "from_agent": "intelx",
+        "to_agent": "all",
+        "intent": "intelx.news",
+        "priority": "normal",
+        "ttl": 600,
+        "auth_token": None,
+        "payload": {
+            "signal_id": "sig-1",
+            "headline": "Exchange announces maintenance window",
+            "summary": "Routine announcement; unverified.",
+            "published_at": "2026-10-01T00:00:00Z",
+            "relevance": {"confidence": 0.5},
+            "topics": ["stratex"],
+        },
+        "created_at": time.time(),
+    }
+    raw = json.dumps(fields, sort_keys=True, separators=(",", ":"), default=str).encode()
+    envelope = IncomingEnvelope(
+        **fields, signature=hmac.new(b"intelx-test-key", raw, hashlib.sha256).hexdigest()
+    )
+    result = ingest_envelope(envelope, "Bearer intelx-test-key", test_db)
+    assert result["status"] == "accepted"
+
+    feed = read_events(after_id=0, limit=10, event_type="intelx.news", agent="futuris", db=test_db)
+    assert len(feed["events"]) == 1
+    assert feed["events"][0]["payload"]["correlation_id"] == "corr-journey-intelx-1"

@@ -50,11 +50,15 @@ _VISIBLE_FIELDS = {
     "memory.promoted": ("memory_id", "promoted_by", "new_type"),
     "context.generated": ("bundle_id", "agent", "memories_count", "is_degraded"),
     "access.denied": ("actor_id", "memory_id", "rule"),
-    "intelx.news": ("source_agent", "signal_id", "headline", "summary", "published_at", "source_url", "sources", "relevance", "topics"),
+    "intelx.news": ("source_agent", "signal_id", "headline", "summary", "published_at", "source_url", "sources", "relevance", "topics", "correlation_id"),
     "futuris.forecast": (
         "source_agent", "forecast_id", "target", "status", "as_of", "expires_at",
         "model_version", "prediction", "range_lower", "range_upper", "probability",
-        "confidence", "prediction_is_not_authorization",
+        "confidence", "prediction_is_not_authorization", "correlation_id",
+    ),
+    "stratex.decision": (
+        "source_agent", "decision_id", "forecast_id", "correlation_id", "action",
+        "paper_only", "policy_reason", "gates_summary", "headline", "summary", "decided_at",
     ),
 }
 
@@ -100,6 +104,35 @@ def _validate_futuris_forecast(payload: dict[str, Any]) -> None:
         raise HTTPException(status_code=422, detail="Forecast event confidence/probability is out of range")
     if not values["range_lower"] <= values["prediction"] <= values["range_upper"]:
         raise HTTPException(status_code=422, detail="Forecast interval must contain its prediction")
+
+
+def _validate_stratex_decision(payload: dict[str, Any]) -> None:
+    """Reject malformed or live-bearing decision receipts before cursor publication."""
+    decision_id = payload.get("decision_id")
+    if not isinstance(decision_id, str) or not decision_id.strip() or len(decision_id) > 128:
+        raise HTTPException(status_code=422, detail="Decision event requires a bounded decision_id")
+    forecast_id = payload.get("forecast_id")
+    if not isinstance(forecast_id, str) or not forecast_id.strip() or len(forecast_id) > 128:
+        raise HTTPException(status_code=422, detail="Decision event requires a bounded forecast_id")
+    if payload.get("action") not in {"paper_intent", "no_action", "watch"}:
+        raise HTTPException(status_code=422, detail="Decision action must be a paper-mode action")
+    if payload.get("paper_only") is not True:
+        raise HTTPException(status_code=422, detail="Stratex decisions are paper-only by design")
+    policy_reason = payload.get("policy_reason")
+    if not isinstance(policy_reason, str) or not policy_reason.strip() or len(policy_reason) > 500:
+        raise HTTPException(status_code=422, detail="Decision event requires a bounded policy_reason")
+    gates = payload.get("gates_summary")
+    if gates is not None:
+        if (
+            not isinstance(gates, list)
+            or len(gates) > 12
+            or not all(isinstance(item, str) and len(item) <= 200 for item in gates)
+        ):
+            raise HTTPException(status_code=422, detail="Decision gates_summary must be a list of at most 12 short strings")
+    for field, max_length in (("headline", 500), ("summary", 2000), ("decided_at", 64)):
+        value = payload.get(field)
+        if value is not None and (not isinstance(value, str) or len(value) > max_length):
+            raise HTTPException(status_code=422, detail=f"Decision event has invalid {field}")
 
 
 @router.get("")
@@ -236,6 +269,12 @@ def ingest_envelope(
         if not envelope.message_id.startswith("futuris-"):
             raise HTTPException(status_code=422, detail="Forecast event IDs must use the futuris- prefix")
         _validate_futuris_forecast(envelope.payload)
+    if envelope.intent == "stratex.decision":
+        if sender != "stratex":
+            raise HTTPException(status_code=403, detail="Only authenticated Stratex may publish paper decision receipts")
+        if not envelope.message_id.startswith("stratex-"):
+            raise HTTPException(status_code=422, detail="Decision event IDs must use the stratex- prefix")
+        _validate_stratex_decision(envelope.payload)
     if envelope.created_at > time.time() + 60 or time.time() - envelope.created_at > envelope.ttl:
         raise HTTPException(status_code=status.HTTP_410_GONE, detail="Envelope expired or timestamp is invalid")
     if len(json.dumps(envelope.payload, default=str)) > 262144:
