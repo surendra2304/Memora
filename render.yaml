@@ -12,8 +12,10 @@ services:
         value: "0.0.0.0"
       - key: ENVIRONMENT
         value: "production"
+      # Absolute path: the container WORKDIR is /app, and a relative
+      # "./data/memora.db" resolves against whatever cwd uvicorn inherits.
       - key: DATABASE_URL
-        value: "sqlite:///./data/memora.db"
+        value: "sqlite:////app/data/memora.db"
       - key: TURSO_DATABASE_URL
         value: "https://memora-db-surendra2304.aws-ap-south-1.turso.io"
       - key: TURSO_AUTH_TOKEN

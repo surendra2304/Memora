@@ -60,6 +60,13 @@ def test_turso_sync_endpoint_requires_memora_identity_and_reports_unconfigured(c
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("MEMORA_API_KEY", "memora-test-key")
     monkeypatch.setenv("FRIDAY_API_KEY", "friday-test-key")
+    # storage_ready() is False wherever sqlalchemy-libsql is unavailable (no
+    # Windows wheel), and the endpoint short-circuits with a different 503 before
+    # reaching sync_from_turso. That guard is correct and covered in
+    # test_storage_authority.py; this test is about identity enforcement and
+    # "unconfigured" propagation, so pin readiness instead of depending on the
+    # locally installable database driver.
+    monkeypatch.setattr(api_main, "storage_ready", lambda: True)
     monkeypatch.setattr(api_main, "sync_from_turso", lambda: {
         "status": "unconfigured", "agents_imported": 0, "namespaces_imported": 0, "memories_imported": 0
     })
@@ -76,6 +83,24 @@ def test_turso_sync_endpoint_requires_memora_identity_and_reports_unconfigured(c
 
     assert response.status_code == 503
     assert response.json()["status"] == "unconfigured"
+
+
+def test_turso_sync_endpoint_refuses_while_storage_is_non_authoritative(client, monkeypatch):
+    """Production + non-durable ORM must block the import before any sync runs."""
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("MEMORA_API_KEY", "memora-test-key")
+    monkeypatch.setattr(api_main, "storage_ready", lambda: False)
+    called = []
+    monkeypatch.setattr(api_main, "sync_from_turso", lambda: called.append(1) or {"status": "success"})
+
+    response = client.post(
+        "/api/dashboard/sync",
+        headers={"X-Agent-Name": "memora", "X-API-Key": "memora-test-key"},
+    )
+
+    assert response.status_code == 503
+    assert "non-authoritative" in response.json()["detail"]
+    assert called == []
 
 
 def test_global_dashboard_overview_no_longer_returns_private_memory_dump(client):
