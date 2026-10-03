@@ -48,6 +48,31 @@ def authenticate_agent(
     expected = os.getenv(key_names.get(agent, ""), "") if agent in key_names else ""
     production = str(getattr(settings, "MEMORA_ENV", "")).lower() == "production" or os.getenv("ENVIRONMENT", "").lower() == "production"
 
+    # Authentication fails closed. The previous guard waved through any request that
+    # carried no credential at all whenever the service was not flagged production,
+    # so a deployment whose ENVIRONMENT value drifted or was lost silently accepted
+    # unauthenticated writes into the memory every other agent reads. Every other agent
+    # in the mesh rejects a missing credential outright, so this one did not either.
+    anonymous_allowed = str(os.getenv("MEMORA_ALLOW_ANONYMOUS_DEV", "")).lower() in {"1", "true", "yes"}
+
+    if not anonymous_allowed:
+        if not agent or not supplied:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing agent credentials",
+            )
+        if agent not in key_names or not expected:
+            # A known caller whose key is absent is a configuration fault, not a
+            # bad credential. Report it as such rather than as an authentication failure.
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"No configured credential for agent '{agent or 'unknown'}'",
+            )
+        if not hmac.compare_digest(expected, supplied):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid agent credentials")
+        return agent
+
+    # Opt-in anonymous access exists only for local development and tests.
     if not production and not expected and not supplied:
         return agent or "friday"
     if not agent or not expected or not supplied or not hmac.compare_digest(expected, supplied):

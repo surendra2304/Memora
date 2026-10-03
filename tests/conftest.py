@@ -1,6 +1,13 @@
 """
 Pytest Fixtures for Memora Test Suite
 """
+import os
+
+# The suite exercises endpoints without presenting a mesh credential. Agent
+# authentication now fails closed unless anonymous access is opted into explicitly,
+# so the tests must say so rather than depend on a missing-key side effect.
+os.environ.setdefault("MEMORA_ALLOW_ANONYMOUS_DEV", "1")
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
