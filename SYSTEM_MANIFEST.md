@@ -43,7 +43,7 @@ These variable names and URLs are references only; they do not prove live commun
 # ============================================================================== #
 
 # 1. ⚡ Inference AI Multi-Model Gateway
-INFERENCE_URL=https://inference-r1sn.onrender.com
+INFERENCE_URL=https://inference-h7bn.onrender.com
 # Configure a unique Inference service key outside source control.
 
 # 2. Memora cloud memory service (active backend/capacity not verified)
