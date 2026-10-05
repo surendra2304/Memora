@@ -167,7 +167,7 @@ def build_real_memories():
     real_records.append({
         "agent": "inference",
         "type": MemoryType.SEMANTIC,
-        "content": "Multi-Model Intelligence Gateway: Deployed live at https://inference-r1sn.onrender.com/health pooling 25 multi-provider API keys (Groq, NVIDIA, DeepSeek, Cerebras, OpenRouter, Google Gemini) across 3,550 completed tasks and 5,607 model runs.",
+        "content": "Multi-Model Intelligence Gateway: Deployed live at https://inference-h7bn.onrender.com/health pooling 25 multi-provider API keys (Groq, NVIDIA, DeepSeek, Cerebras, OpenRouter, Google Gemini) across 3,550 completed tasks and 5,607 model runs.",
         "importance": 0.95,
         "confidence": 1.0,
         "entities": ["InferenceGateway", "25APIKeys", "Groq", "NVIDIA", "RenderCloud"],

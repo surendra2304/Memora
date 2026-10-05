@@ -22,7 +22,7 @@ async def main():
     print("Client: Memora Ecosystem Integration Client")
     print("=" * 80)
     
-    inf_url = os.getenv("INFERENCE_URL", "https://inference-r1sn.onrender.com").rstrip("/")
+    inf_url = os.getenv("INFERENCE_URL", "https://inference-h7bn.onrender.com").rstrip("/")
     api_key = os.getenv("INFERENCE_API_KEY")
     if not api_key:
         print("Request not sent: configure INFERENCE_API_KEY first.")
