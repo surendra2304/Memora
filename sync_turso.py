@@ -50,6 +50,9 @@ def sync_database():
 
     print("[*] Rebuilding Turso Cloud schema to match current Memora v2 data model...")
     drop_tables = [
+        "event_consumer_cursors",
+        "event_log",
+        "deletion_tombstones",
         "memory_relationships",
         "audit_logs",
         "access_grants",
@@ -76,7 +79,18 @@ def sync_database():
     if indices_ddl:
         execute_batch(indices_ddl)
 
-    tables_order = ["agents", "namespaces", "memory_records", "access_grants", "audit_logs"]
+    tables_order = [
+        "agents",
+        "namespaces",
+        "memory_records",
+        "access_grants",
+        "audit_logs",
+        "memory_relationships",
+        "deletion_tombstones",
+        "event_log",
+        "event_consumer_cursors",
+        "alembic_version"
+    ]
     for tbl in tables_order:
         try:
             cur.execute(f"SELECT * FROM {tbl}")
@@ -106,6 +120,9 @@ def sync_database():
                     print(f"    [!] Error inserting batch in {tbl}: {errs}")
         except Exception as e:
             print(f"    [!] Skipped {tbl}: {e}")
+
+    # Ensure alembic_version always contains the head revision
+    execute_batch(["INSERT OR IGNORE INTO alembic_version (version_num) VALUES ('c2407f92e1ab');"])
 
     print("\n[+] Verification: Querying Turso Cloud stats...")
     payload = {

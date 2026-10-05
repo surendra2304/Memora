@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -40,3 +40,8 @@ htmlcov/
 *.sqlite3
 logs/
 data/cache/
+*.log
+*.backup*
+data/*.backup*
+reports_and_data/
+scripts/_journey_api_launch.py
