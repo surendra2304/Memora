@@ -7,6 +7,7 @@ import logging
 import os
 from typing import List, Dict, Any, Optional
 from core.config import settings
+from core.resilience.circuit_breaker import CircuitOpenError, circuit_registry
 
 logger = logging.getLogger(__name__)
 
@@ -30,14 +31,38 @@ class QdrantVectorAdapter:
         self._client = None
         self._initialized = False
         self._mock_store: Dict[str, Dict[str, Any]] = {}
+        # Without a breaker, every request paid the full Qdrant connection
+        # timeout once the server went away. Three consecutive failures now open
+        # the circuit for 30s so calls short-circuit instead.
+        self._breaker = circuit_registry.get(
+            "qdrant",
+            failure_threshold=int(os.getenv("MEMORA_QDRANT_FAILURE_THRESHOLD", "3")),
+            recovery_timeout=float(os.getenv("MEMORA_QDRANT_RECOVERY_SECONDS", "30")),
+        )
 
     def readiness(self) -> Dict[str, Any]:
         """Describe whether vector operations can actually serve this process."""
+        breaker = self._breaker.snapshot()
         if self._initialized:
-            return {"status": "connected", "available": True, "backend": "qdrant"}
+            return {
+                "status": "connected",
+                "available": True,
+                "backend": "qdrant",
+                "circuit": breaker,
+            }
         if self.is_production():
-            return {"status": "unavailable", "available": False, "backend": "qdrant"}
-        return {"status": "in_memory", "available": True, "backend": "process_local"}
+            return {
+                "status": "unavailable",
+                "available": False,
+                "backend": "qdrant",
+                "circuit": breaker,
+            }
+        return {
+            "status": "in_memory",
+            "available": True,
+            "backend": "process_local",
+            "circuit": breaker,
+        }
 
     def connect(self):
         # In cloud without dedicated Qdrant instance, operate in internal vector mode
@@ -104,12 +129,22 @@ class QdrantVectorAdapter:
             self._mock_store[memory_id] = {"vector": vector, "payload": stored_payload, "tenant_id": resolved_tenant}
             return True
 
-        try:
+        def _do_upsert():
             from qdrant_client.http.models import PointStruct
             point = PointStruct(id=memory_id, vector=vector, payload=stored_payload)
             self._client.upsert(collection_name=self.collection_name, points=[point])
+
+        try:
+            self._breaker.call(_do_upsert)
             self._mock_store[memory_id] = {"vector": vector, "payload": stored_payload, "tenant_id": resolved_tenant}
             return True
+        except CircuitOpenError as e:
+            # The backend is already known-down; do not pay its timeout again.
+            logger.warning(f"Qdrant circuit open, skipping upsert for '{memory_id}': {e}")
+            if self.is_production():
+                raise VectorUnavailableError(f"VECTOR_UNAVAILABLE: circuit open ({e})")
+            self._mock_store[memory_id] = {"vector": vector, "payload": stored_payload, "tenant_id": resolved_tenant}
+            return False
         except Exception as e:
             logger.error(f"Failed to upsert vector to Qdrant: {e}")
             if self.is_production():
@@ -127,13 +162,19 @@ class QdrantVectorAdapter:
                 return False
             return True
 
-        try:
+        def _do_delete():
             from qdrant_client.http.models import PointIdsList
             self._client.delete(
                 collection_name=self.collection_name,
                 points_selector=PointIdsList(points=[memory_id])
             )
+
+        try:
+            self._breaker.call(_do_delete)
             return True
+        except CircuitOpenError as e:
+            logger.warning(f"Qdrant circuit open, skipping delete for '{memory_id}': {e}")
+            return False
         except Exception as e:
             logger.error(f"Failed to delete vector from Qdrant: {e}")
             if self.is_production():
