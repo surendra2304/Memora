@@ -407,6 +407,39 @@ class MemoryService:
         new_record = MemoryService.get_memory_by_id(db, new_memory_id)
         actor = IdentityService.get_agent_by_name(db, actor_name) if actor_name else None
 
+        # -------------------------------------------------------------
+        # Two ways this used to corrupt the supersession graph. Both were
+        # accepted with HTTP 200 and both were confirmed in the database
+        # afterwards.
+        #
+        # A record superseded by itself ends up lifecycle_state='superseded'
+        # with superseded_by_id pointing at its own id: dead, but with no
+        # successor to redirect a reader to, and any consumer that walks the
+        # chain loops on it forever.
+        #
+        # A->B followed by B->A leaves both records dead and pointing at each
+        # other, so neither is reachable as live and the chain has no end.
+        # -------------------------------------------------------------
+        if old_memory_id == new_memory_id:
+            raise ValueError("A memory cannot supersede itself.")
+
+        seen: set = set()
+        cursor = new_record
+        while cursor is not None and cursor.superseded_by_id:
+            if cursor.superseded_by_id == old_memory_id:
+                raise ValueError(
+                    f"Superseding '{old_memory_id}' with '{new_memory_id}' would "
+                    f"create a supersession cycle: the proposed winner is already "
+                    f"superseded by the record it would replace."
+                )
+            if cursor.id in seen:
+                # Pre-existing cyclic data; stop rather than loop forever.
+                break
+            seen.add(cursor.id)
+            cursor = db.query(MemoryRecord).filter(
+                MemoryRecord.id == cursor.superseded_by_id
+            ).first()
+
         if actor:
             decision = PolicyEngine.evaluate_access(db, actor, old_record.namespace, action="supersede", memory_id=old_record.id)
             if not decision:
@@ -550,6 +583,21 @@ class MemoryService:
         record = db.query(MemoryRecord).filter(MemoryRecord.id == memory_id).first()
         if not record:
             raise MemoryNotFoundError(f"Memory record with ID '{memory_id}' not found.")
+
+        # Promoting a superseded record set lifecycle_state back to VERIFIED
+        # while leaving superseded_by_id pointing at its replacement. The record
+        # was then simultaneously live and dead: it answered recall as verified
+        # while still redirecting readers elsewhere. Confirmed in the database -
+        # lifecycle_state='verified' alongside a non-null superseded_by_id.
+        #
+        # Promotion belongs on the successor. If the supersession itself was
+        # wrong, that is what has to be undone, not papered over here.
+        if record.lifecycle_state == LifecycleState.SUPERSEDED or record.superseded_by_id:
+            raise ValueError(
+                f"Memory '{memory_id}' has been superseded by "
+                f"'{record.superseded_by_id}' and cannot be promoted. Promote the "
+                f"successor instead, or undo the supersession first."
+            )
 
         if not verification_evidence or len(verification_evidence) == 0:
             raise ValueError("Explicit promotion to SEMANTIC tier requires at least one verification evidence reference.")

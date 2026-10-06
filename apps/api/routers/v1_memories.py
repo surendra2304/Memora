@@ -559,6 +559,12 @@ def supersede_memory_endpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except PermissionDeniedError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except ValueError as e:
+        # Self-supersession and supersession cycles. These conflict with the
+        # state the records are already in rather than with the shape of the
+        # request, so 409 rather than 422. Without this handler they escaped as
+        # an unhandled 500.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
 @router.post("/{memory_id}/relationships")
 def create_memory_relationship(
