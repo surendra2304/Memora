@@ -25,10 +25,45 @@ class PoisonDetector:
         (r"(?:bypass|disable)\s+(?:safety|security|policy|guardrails|filters)", "Security Policy Bypass Attempt"),
         (r"(?:reveal|exfiltrate|leak|dump)\s+(?:system\s+prompt|master\s+key|api\s+secrets)", "Secret Exfiltration Vector"),
         (r"<script\b[^>]*>[\s\S]*?<\/script>", "XSS / Script Tag Injection"),
-        (r"\|\s*bash\b|;\s*rm\s+-rf\b|DROP\s+TABLE\b|TRUNCATE\s+TABLE\b", "Command / SQL Injection Vector"),
+        # Command / SQL injection. This used to match the bare keywords
+        # `DROP TABLE`, `TRUNCATE TABLE` and `| bash`, which blocked legitimate
+        # engineering memories such as "the migration runs DROP TABLE on
+        # audit_staging" or "we bootstrap nodes with curl … | bash" — precisely
+        # the kind of operational knowledge this store exists to hold.
+        #
+        # It now requires injection *syntax*: a quote/semicolon breakout, a
+        # complete destructive statement, a trailing SQL comment, or a
+        # destructive root wipe. That still rejects the classic payloads
+        # ("DROP TABLE memory_records; -- …", "'; DROP TABLE users; --") while
+        # letting prose about the same commands through.
+        #
+        # Trade-off recorded deliberately: a bare `| bash` in prose is no longer
+        # flagged. Memora stores text; it does not execute it, so shell text in
+        # a memory is inert. The patterns that matter for a memory store are the
+        # prompt-injection ones above, which are unchanged.
+        (
+            r"""
+            (?:
+              ['";]\s*(?:DROP|TRUNCATE)\s+TABLE             # quote/semicolon breakout
+              | (?:DROP|TRUNCATE)\s+TABLE\s+[\w.`"']+\s*;    # complete destructive statement
+              | (?:DROP|TRUNCATE)\s+TABLE\b[^\n]*--          # destructive op + SQL comment
+              | ;\s*rm\s+-rf\s+/(?:\s|$)                     # destructive root wipe
+              | &&\s*rm\s+-rf\s+/(?:\s|$)
+            )
+            """,
+            "Command / SQL Injection Vector",
+            re.VERBOSE,
+        ),
     ]
 
-    _COMPILED_PATTERNS = [(re.compile(p, re.IGNORECASE), name) for p, name in POISON_PATTERNS]
+    # Patterns are (regex, label) or (regex, label, extra_flags). The extra-flags
+    # form exists because the SQL/command pattern below is written in verbose
+    # form with inline comments; compiling it without re.VERBOSE treats those
+    # comments as literal text and the pattern then matches nothing at all.
+    _COMPILED_PATTERNS = [
+        (re.compile(entry[0], re.IGNORECASE | (entry[2] if len(entry) > 2 else 0)), entry[1])
+        for entry in POISON_PATTERNS
+    ]
 
     @classmethod
     def scan_content(cls, content: str) -> List[str]:
