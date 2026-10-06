@@ -7,7 +7,6 @@ connection timeout against a dead backend, and /health could not report that a
 dependency had gone away.
 """
 import threading
-import time
 
 import pytest
 
@@ -30,6 +29,23 @@ class FakeClock:
 
     def advance(self, seconds: float) -> None:
         self.now += seconds
+
+
+@pytest.fixture(autouse=True)
+def _isolate_vector_store_and_circuits():
+    """vector_adapter and circuit_registry are process-wide singletons.
+
+    Without this, a vector written by one test is visible to the next, which
+    made these tests pass alone and fail in the full suite.
+    """
+    from core.resilience.circuit_breaker import circuit_registry
+    from storage.vector.qdrant_adapter import vector_adapter
+
+    vector_adapter._mock_store.clear()
+    circuit_registry.reset_all()
+    yield
+    vector_adapter._mock_store.clear()
+    circuit_registry.reset_all()
 
 
 def _boom():
@@ -215,7 +231,9 @@ def test_the_qdrant_adapter_uses_the_breaker():
     from storage.vector.qdrant_adapter import QdrantVectorAdapter
 
     adapter = QdrantVectorAdapter(url="http://qdrant.invalid:6333")
-    assert "circuit" in adapter.readiness(), "readiness() must surface breaker state"
+    # readiness() keeps its exact key contract (/health returns it verbatim and
+    # test_health_readiness_truth.py asserts it), so breaker state lives here.
+    assert "state" in adapter.circuit_state(), "circuit_state() must report breaker state"
 
     # Simulate an initialised client whose every call fails.
     class DeadClient:

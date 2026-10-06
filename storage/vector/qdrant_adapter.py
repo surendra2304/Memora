@@ -41,28 +41,21 @@ class QdrantVectorAdapter:
         )
 
     def readiness(self) -> Dict[str, Any]:
-        """Describe whether vector operations can actually serve this process."""
-        breaker = self._breaker.snapshot()
+        """Describe whether vector operations can actually serve this process.
+
+        The exact key set here is part of the contract /health returns verbatim
+        and is asserted by tests/test_health_readiness_truth.py, so breaker state
+        is exposed separately through circuit_state() rather than added here.
+        """
         if self._initialized:
-            return {
-                "status": "connected",
-                "available": True,
-                "backend": "qdrant",
-                "circuit": breaker,
-            }
+            return {"status": "connected", "available": True, "backend": "qdrant"}
         if self.is_production():
-            return {
-                "status": "unavailable",
-                "available": False,
-                "backend": "qdrant",
-                "circuit": breaker,
-            }
-        return {
-            "status": "in_memory",
-            "available": True,
-            "backend": "process_local",
-            "circuit": breaker,
-        }
+            return {"status": "unavailable", "available": False, "backend": "qdrant"}
+        return {"status": "in_memory", "available": True, "backend": "process_local"}
+
+    def circuit_state(self) -> Dict[str, Any]:
+        """Breaker state for this dependency, kept out of readiness()."""
+        return self._breaker.snapshot()
 
     def connect(self):
         # In cloud without dedicated Qdrant instance, operate in internal vector mode

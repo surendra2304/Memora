@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from core.resilience.circuit_breaker import CircuitBreaker, CircuitState, circuit_registry
+from core.resilience.circuit_breaker import CircuitState, circuit_registry
 from core.resilience.self_healing import HealingReport, self_healing_supervisor
 from core.identity.service import IdentityService
 from storage.relational.models import (
@@ -18,6 +18,23 @@ from storage.relational.models import (
     MemoryRecord,
     MemoryType,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_vector_store_and_circuits():
+    """vector_adapter and circuit_registry are process-wide singletons.
+
+    Without this, a vector written by one test is visible to the next, which
+    made these tests pass alone and fail in the full suite.
+    """
+    from core.resilience.circuit_breaker import circuit_registry
+    from storage.vector.qdrant_adapter import vector_adapter
+
+    vector_adapter._mock_store.clear()
+    circuit_registry.reset_all()
+    yield
+    vector_adapter._mock_store.clear()
+    circuit_registry.reset_all()
 
 
 def _make_memory(db, agent_name="friday", state=LifecycleState.ACTIVE, importance=0.8,
