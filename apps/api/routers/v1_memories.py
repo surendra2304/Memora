@@ -18,7 +18,7 @@ from storage.relational.models import (
     Namespace
 )
 from core.memory.schemas import MemoryRecordRead, MemoryQuery, MemoryPromoteRequest
-from core.memory.pipeline.write_service import MemoryWriteService
+from core.memory.pipeline.write_service import MemoryWriteService, MemoryPipelineError
 from core.memory.pipeline.secret_scanner import SecretDetectedSecurityViolation
 from core.memory.pipeline.poison_detector import PoisonMemoryViolation
 from core.memory.service import MemoryService, MemoryNotFoundError, PermissionDeniedError
@@ -31,6 +31,45 @@ from core.memory.experience_service import ExperienceLearnerService, LearnExperi
 from core.memory.pipeline.preference_extractor import PreferenceExtractor
 from apps.api.dependencies import authenticate_agent, get_actor_header, get_purpose_header
 from datetime import datetime
+import logging
+
+logger = logging.getLogger("memora.api.memories")
+
+
+#: Exceptions whose message is authored by this codebase to describe a problem
+#: with the request. The caller needs the text; it says nothing about internals.
+_CLIENT_INPUT_ERRORS = (MemoryPipelineError, ValueError)
+
+
+def _unexpected_write_error(e: Exception, where: str) -> HTTPException:
+    """Map an unhandled exception onto the right status without leaking internals.
+
+    These handlers used to answer 400 with detail=str(e) for every exception,
+    which put internal exception text in the response body. When the failure was
+    a database error that meant shipping the failing SQL statement, the bound
+    parameter list and the sqlite3 exception class to the caller - observed live
+    under concurrent load, where a UNIQUE-constraint violation on the
+    idempotency index was returned verbatim.
+
+    It was also the wrong status for a server fault: reporting one as 400 tells a
+    caller to fix its payload when nothing about the payload was wrong.
+
+    Input rejections are the exception to that. They are raised deliberately by
+    this codebase with a message meant for the caller, and turning them into an
+    opaque 500 would make the API impossible to use correctly - a caller
+    submitting a malformed namespace path has to be told which part was bad.
+    """
+    if isinstance(e, _CLIENT_INPUT_ERRORS):
+        return HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    logger.exception("Unhandled error in %s", where)
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"Internal error while processing {where}. The detail has been "
+               f"logged server-side.",
+    )
 
 router = APIRouter(
     prefix="/v1/memories",
@@ -249,7 +288,7 @@ def write_memory_event(
     except PermissionDeniedError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise _unexpected_write_error(e, "this request")
 
 @router.post("/learn-experience", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
 def learn_experience_endpoint(
@@ -277,7 +316,7 @@ def learn_experience_endpoint(
             "provenance": record.provenance or {}
         }
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise _unexpected_write_error(e, "this request")
 
 @router.get("/search", response_model=List[HybridSearchResultResponse])
 def search_memories_get(
@@ -344,7 +383,7 @@ def get_experience_memories(
             for r in records
         ]
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise _unexpected_write_error(e, "this request")
 
 
 @router.get("/{memory_id}", response_model=MemoryRecordRead)
@@ -458,7 +497,7 @@ def share_memory_endpoint(
     except PermissionDeniedError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise _unexpected_write_error(e, "this request")
 
 @router.post("/{memory_id}/supersede")
 def supersede_memory_endpoint(
@@ -516,7 +555,7 @@ def create_memory_relationship(
     except InvalidRelationshipError as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise _unexpected_write_error(e, "this request")
 
     return {
         "status": "created",
@@ -764,4 +803,4 @@ def learn_outcome_endpoint(
             "storage_durability": storage["durability"],
         }
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise _unexpected_write_error(e, "this request")
