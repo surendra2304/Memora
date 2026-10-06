@@ -12,10 +12,30 @@ from adapters.base_adapter import (
 )
 from adapters.adapter_registry import adapter_registry
 from core.identity.service import IdentityService
+from storage.relational.session import get_db
 
 @pytest.fixture
-def mock_api_client():
-    return TestClient(app)
+def mock_api_client(test_db):
+    """A TestClient bound to the isolated test database.
+
+    This fixture used to return a bare TestClient(app), which leaves the app's
+    real get_db dependency in place, so every request resolved the configured
+    DATABASE_URL and touched whatever file happened to exist on disk. The tests
+    appeared to pass only because an earlier run had already created the tables
+    in that file; against a clean checkout SQLite auto-creates an empty database
+    and the very first query fails with "no such table: agents". That is why
+    these five tests passed locally but failed in CI, which starts from an
+    empty data/ directory on every run.
+
+    Routing the app at test_db makes the tests hermetic and order-independent.
+    """
+    def override_get_db():
+        yield test_db
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.pop(get_db, None)
 
 def test_adapter_registry_configuration_loading():
     """
