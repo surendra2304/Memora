@@ -9,14 +9,13 @@ import re
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
 
-from storage.relational.models import MemoryRelationship, Namespace, Agent, MemoryRecord, MemoryType, LifecycleState
+from storage.relational.models import MemoryRelationship, MemoryRecord, MemoryType, LifecycleState
 from core.identity.service import IdentityService
 from core.policy.engine import PolicyEngine
 from core.memory.search_service import SearchService, SearchResultItem
 from core.memory.context.reranker import ContextReranker
-from core.memory.context.budgeter import ContextBudgeter, BudgetedMemoryItem
+from core.memory.context.budgeter import ContextBudgeter
 from core.metrics.collector import metrics_collector
 from core.events.emitter import event_emitter
 
@@ -64,6 +63,10 @@ class ContextBundle:
             "created_at": self.created_at
         }
 
+#: Upper bound on rows the predictive prefetch will scan per request.
+_PREFETCH_SCAN_LIMIT = 200
+
+
 class ContextBuilderService:
     @classmethod
     def build_context_bundle(
@@ -99,6 +102,12 @@ class ContextBuilderService:
                 db=db,
                 query_text=task_query,
                 actor_name=actor.name,
+                # Pass the resolved tenant down. Without it hybrid_search
+                # re-resolved actor_name unscoped, which — now that agent names
+                # are unique per tenant rather than globally — could bind the
+                # request to a same-named agent in another tenant and return
+                # that tenant's memories.
+                tenant_id=getattr(actor, "tenant_id", "default"),
                 user_id=user_id,
                 workspace_id=workspace_id,
                 task_id=task_id,
@@ -106,12 +115,18 @@ class ContextBuilderService:
                 purpose=purpose,
                 limit=max_candidates
             )
-        except Exception as e:
+        except Exception:
             is_degraded = True
             search_results = SearchService.hybrid_search(
                 db=db,
                 query_text=task_query,
                 actor_name=actor.name,
+                # Pass the resolved tenant down. Without it hybrid_search
+                # re-resolved actor_name unscoped, which — now that agent names
+                # are unique per tenant rather than globally — could bind the
+                # request to a same-named agent in another tenant and return
+                # that tenant's memories.
+                tenant_id=getattr(actor, "tenant_id", "default"),
                 user_id=user_id,
                 workspace_id=workspace_id,
                 task_id=task_id,
@@ -129,11 +144,21 @@ class ContextBuilderService:
         existing_result_ids = {item.record.id for item in search_results}
         exp_query = db.query(MemoryRecord).filter(
             MemoryRecord.memory_type.in_([MemoryType.EXPERIENCE, MemoryType.PROCEDURAL]),
-            MemoryRecord.lifecycle_state.in_([LifecycleState.ACTIVE, LifecycleState.VERIFIED])
+            MemoryRecord.lifecycle_state.in_([LifecycleState.ACTIVE, LifecycleState.VERIFIED]),
+            # Scope the prefetch to the caller's tenant. Without this the query
+            # loaded every tenant's EXPERIENCE/PROCEDURAL rows on every context
+            # request; the fail-closed policy filter below happens to drop the
+            # foreign ones, but reading them at all crosses the isolation
+            # boundary and made this O(all tenants) per request.
+            MemoryRecord.tenant_id == getattr(actor, "tenant_id", "default"),
         )
         if user_id:
             exp_query = exp_query.filter(MemoryRecord.user_id == user_id)
-        exp_candidates = exp_query.all()
+        # Bound the scan. The loop below tokenises every row in Python, so an
+        # unbounded .all() on a growing store is an unbounded per-request cost.
+        exp_candidates = exp_query.order_by(MemoryRecord.importance.desc()).limit(
+            _PREFETCH_SCAN_LIMIT
+        ).all()
 
         q_tokens = set(re.split(r"[\s,.\-_/\\:;!?\"'()\[\]{}]+", task_query.lower()))
         stopwords = {"the", "a", "an", "is", "are", "and", "or", "in", "on", "at", "to", "for", "of", "with", "by", "how", "do", "we"}

@@ -3,7 +3,7 @@ Identity and Namespace Resolution Service
 Manages registered ecosystem agents, parent-subagent delegation with bounded contexts,
 and dynamic URI namespace resolution.
 """
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
 from storage.relational.models import Agent, Namespace, NamespaceType, AccessGrant
@@ -89,8 +89,23 @@ class IdentityService:
         return subagent
 
     @staticmethod
-    def get_agent_by_name(db: Session, name: str) -> Optional[Agent]:
-        return db.query(Agent).filter(Agent.name == name.lower()).first()
+    def get_agent_by_name(
+        db: Session,
+        name: str,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[Agent]:
+        """Resolve an agent by name.
+
+        Agent names are unique per tenant, not globally. When `tenant_id` is
+        supplied the lookup is scoped to it; when it is omitted the historical
+        global behaviour is preserved so the many existing call sites keep
+        working. Callers that have an authenticated tenant in hand should pass
+        it, otherwise an agent name owned by another tenant can be resolved.
+        """
+        query = db.query(Agent).filter(Agent.name == name.lower())
+        if tenant_id is not None:
+            query = query.filter(Agent.tenant_id == tenant_id)
+        return query.first()
 
     @staticmethod
     def get_agent_by_id(db: Session, agent_id: str) -> Optional[Agent]:
@@ -187,7 +202,10 @@ class IdentityService:
         tenant_id: str = "default"
     ) -> AccessGrant:
         if not agent_id and agent_name:
-            agent = IdentityService.get_agent_by_name(db, agent_name)
+            # Scope to the caller's tenant. Agent names are unique per tenant, so
+            # an unscoped lookup could attach this grant to an identically named
+            # agent belonging to a different tenant.
+            agent = IdentityService.get_agent_by_name(db, agent_name, tenant_id=tenant_id)
             if not agent:
                 agent = IdentityService.register_agent(db, agent_name, tenant_id=tenant_id)
             resolved_agent_id = agent.id
@@ -215,7 +233,12 @@ class IdentityService:
         if grant:
             grant.actions = action_list
             grant.purpose = purpose
-            grant.expires_at = expires_at
+            # Only move the expiry when the caller actually specified one. The
+            # unconditional assignment silently converted a time-boxed grant into
+            # a permanent one whenever someone re-granted to change the action
+            # list, which is a privilege upgrade nobody asked for.
+            if expires_at is not None:
+                grant.expires_at = expires_at
         else:
             grant = AccessGrant(
                 tenant_id=tenant_id,
@@ -231,11 +254,25 @@ class IdentityService:
         return grant
 
     @staticmethod
-    def revoke_access(db: Session, agent_id: str, namespace_id: str) -> bool:
-        grant = db.query(AccessGrant).filter(
+    def revoke_access(
+        db: Session,
+        agent_id: str,
+        namespace_id: str,
+        tenant_id: Optional[str] = None,
+    ) -> bool:
+        """Revoke a grant.
+
+        `tenant_id` scopes the lookup so a caller cannot revoke a grant that
+        belongs to another tenant. Omitted preserves the previous global
+        behaviour for existing callers.
+        """
+        query = db.query(AccessGrant).filter(
             AccessGrant.agent_id == agent_id,
             AccessGrant.namespace_id == namespace_id
-        ).first()
+        )
+        if tenant_id is not None:
+            query = query.filter(AccessGrant.tenant_id == tenant_id)
+        grant = query.first()
         if grant:
             db.delete(grant)
             db.commit()

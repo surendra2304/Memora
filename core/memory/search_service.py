@@ -5,14 +5,14 @@ Combines Dense Semantic Vector Search, Keyword Full-Text Search, Graph Traversal
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_, func
 
-from storage.relational.models import MemoryRecord, Namespace, Agent, LifecycleState, MemoryType
-from storage.vector.qdrant_adapter import vector_adapter, VectorSearchResult
+from storage.relational.models import MemoryRecord, Namespace, LifecycleState, MemoryType
+from storage.vector.qdrant_adapter import vector_adapter
 from storage.vector.embedding import EmbeddingGenerator
 from core.identity.service import IdentityService
 from core.policy.engine import PolicyEngine
 from core.memory.graph_service import GraphService
+from core.memory.retrieval_config import get_retrieval_config
 
 class SearchResultItem:
     def __init__(
@@ -78,14 +78,34 @@ class SearchService:
         include_superseded: bool = False,
         include_archived: bool = False,
         include_expired: bool = False,
-        vector_weight: float = 0.50,
-        keyword_weight: float = 0.35,
-        graph_weight: float = 0.15,
-        entity_boost_weight: float = 0.10,
+        # None means "take it from config/retrieval_config.json". Explicit values
+        # still win, so callers and the degraded-fallback path in
+        # ContextBuilderService can override.
+        vector_weight: Optional[float] = None,
+        keyword_weight: Optional[float] = None,
+        graph_weight: Optional[float] = None,
+        entity_boost_weight: Optional[float] = None,
         purpose: Optional[str] = None,
-        rrf_k: int = 60
+        rrf_k: Optional[int] = None
     ) -> List[SearchResultItem]:
-        actor = IdentityService.get_agent_by_name(db, actor_name) if actor_name else None
+        retrieval_cfg = get_retrieval_config()
+        vector_weight = retrieval_cfg["vector_weight"] if vector_weight is None else vector_weight
+        keyword_weight = retrieval_cfg["keyword_weight"] if keyword_weight is None else keyword_weight
+        graph_weight = retrieval_cfg["graph_weight"] if graph_weight is None else graph_weight
+        entity_boost_weight = (
+            retrieval_cfg["entity_boost_weight"] if entity_boost_weight is None else entity_boost_weight
+        )
+        rrf_k = retrieval_cfg["rrf_k"] if rrf_k is None else rrf_k
+
+        # Agent names are unique per tenant, not globally. When the caller
+        # supplies a tenant, resolve the actor inside it; an unscoped lookup can
+        # land on an identically named agent belonging to a different tenant and
+        # then return that tenant's memories.
+        actor = (
+            IdentityService.get_agent_by_name(db, actor_name, tenant_id=tenant_id)
+            if actor_name
+            else None
+        )
         resolved_tenant: str = str(tenant_id or (getattr(actor, "tenant_id", "default") if actor else "default"))
 
         # -------------------------------------------------------------
