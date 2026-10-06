@@ -4,7 +4,7 @@ Reduces importance of unverified, aging memories and consolidates cold records i
 Uses chunked cursor-based processing with bounded batches.
 """
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from storage.relational.models import MemoryRecord, LifecycleState
 from core.lifecycle.state_machine import MemoryLifecycleEngine
@@ -56,9 +56,10 @@ class MemoryDecayEngine:
                         archived_count += 1
                         continue
 
+                prov = dict(r.provenance) if isinstance(r.provenance, dict) else {}
+
                 # Skip pinned / protected records
-                is_pinned = (r.provenance or {}).get("pinned", False) if isinstance(r.provenance, dict) else False
-                if is_pinned or r.importance >= 0.99:
+                if prov.get("pinned", False) or r.importance >= 0.99:
                     continue
 
                 # Determine baseline age reference (last_verified_at or created_at)
@@ -68,19 +69,40 @@ class MemoryDecayEngine:
 
                 age_days = (now - ref_time).total_seconds() / 86400.0
 
-                if age_days >= unverified_threshold_days:
-                    # Calculate decay
-                    decay_factor = decay_rate_per_day * (age_days - unverified_threshold_days + 1)
-                    new_importance = max(0.01, round(r.importance - decay_factor, 4))
+                if age_days < unverified_threshold_days:
+                    continue
 
-                    if new_importance != r.importance:
-                        r.importance = new_importance
-                        decayed_count += 1
+                # Decay is derived from a STORED baseline and the absolute age, not
+                # from the already-decayed importance. The previous implementation
+                # subtracted a cumulative `rate * (age - threshold + 1)` penalty from
+                # r.importance on every cycle, so each run re-applied the whole
+                # accumulated penalty: a 15-day-old record dropped 0.50 -> 0.18 over
+                # eight same-day cycles and archived on the ninth, instead of holding
+                # at the 0.46 the documented model implies. Recomputing from a fixed
+                # baseline makes a cycle idempotent, which is what a scheduler needs.
+                baseline = prov.get("decay_baseline_importance")
+                if baseline is None:
+                    baseline = r.importance
+                    prov["decay_baseline_importance"] = baseline
+                    prov["decay_baseline_at"] = ref_time.isoformat()
 
-                        # Auto-archive if decayed below retention threshold
-                        if r.importance <= archive_importance_threshold:
-                            MemoryLifecycleEngine.transition(r, LifecycleState.ARCHIVED)
-                            archived_count += 1
+                decay_factor = decay_rate_per_day * (age_days - unverified_threshold_days + 1)
+                new_importance = max(0.01, round(float(baseline) - decay_factor, 4))
+
+                prov["decay_applied"] = round(decay_factor, 4)
+                prov["decay_age_days"] = round(age_days, 4)
+                # Reassign so SQLAlchemy sees the JSON column as dirty.
+                r.provenance = prov
+
+                if new_importance != r.importance:
+                    r.importance = new_importance
+                    decayed_count += 1
+
+                # Auto-archive if decayed below retention threshold
+                if r.importance <= archive_importance_threshold:
+                    if MemoryLifecycleEngine.can_transition(r.lifecycle_state, LifecycleState.ARCHIVED):
+                        MemoryLifecycleEngine.transition(r, LifecycleState.ARCHIVED)
+                        archived_count += 1
 
             # Commit per batch for bounded memory and transactions
             db.commit()

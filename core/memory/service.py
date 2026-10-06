@@ -2,19 +2,17 @@
 Memory Service
 Coordinates CRUD operations, policy enforcement, lifecycle transitions, supersession, and decay.
 """
-from typing import List, Optional, Tuple, Dict, Any
+from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_
+from sqlalchemy import or_
 
 from storage.relational.models import (
     MemoryRecord,
     Agent,
     Namespace,
-    NamespaceType,
     MemoryType,
     LifecycleState,
-    AuditLog,
     DeletionTombstone,
 )
 from storage.vector.qdrant_adapter import vector_adapter
@@ -23,7 +21,7 @@ from core.policy.engine import PolicyEngine, PolicyDecision
 from core.lifecycle.state_machine import MemoryLifecycleEngine
 from core.lifecycle.supersession import SupersessionEngine
 from core.lifecycle.decay import MemoryDecayEngine
-from core.memory.schemas import MemoryRecordCreate, MemoryRecordUpdate, MemoryQuery
+from core.memory.schemas import MemoryRecordCreate, MemoryQuery
 
 class PermissionDeniedError(Exception):
     pass
@@ -74,11 +72,21 @@ class MemoryService:
         if not decision.allowed:
             raise PermissionDeniedError(decision.reason)
 
-        # Idempotency Check
+        # Resolve the 6-dimension identity scope up front. Idempotency is scoped
+        # to the writing agent, so agent_id must be known before the check.
+        resolved_user = getattr(memory_in, "user_id", "default_user") or "default_user"
+        resolved_agent = getattr(memory_in, "agent_id", None) or owner.name
+        resolved_ws = getattr(memory_in, "workspace_id", "default_workspace") or "default_workspace"
+        resolved_dev = getattr(memory_in, "device_id", "default_device") or "default_device"
+        resolved_task = getattr(memory_in, "task_id", None)
+
+        # Idempotency Check. Scoped to the owner agent, matching the composite
+        # unique index on (tenant_id, agent_id, idempotency_key).
         idemp_key = getattr(memory_in, "idempotency_key", None)
         if idemp_key:
             existing_idemp = db.query(MemoryRecord).filter(
                 MemoryRecord.tenant_id == tenant_id,
+                MemoryRecord.agent_id == resolved_agent,
                 MemoryRecord.idempotency_key == idemp_key
             ).first()
             if existing_idemp:
@@ -101,13 +109,7 @@ class MemoryService:
                     "Write to EPISODIC or WORKING tier first, then promote via verified promotion workflow."
                 )
 
-        # Create record with 6-dimension identity scope
-        resolved_user = getattr(memory_in, "user_id", "default_user") or "default_user"
-        resolved_agent = getattr(memory_in, "agent_id", None) or owner.name
-        resolved_ws = getattr(memory_in, "workspace_id", "default_workspace") or "default_workspace"
-        resolved_dev = getattr(memory_in, "device_id", "default_device") or "default_device"
-        resolved_task = getattr(memory_in, "task_id", None)
-
+        # Create record with the 6-dimension identity scope resolved above.
         record = MemoryRecord(
             tenant_id=tenant_id,
             user_id=resolved_user,
