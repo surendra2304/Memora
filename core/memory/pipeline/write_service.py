@@ -133,7 +133,53 @@ class MemoryWriteService:
             if not actor:
                 actor = IdentityService.register_agent(db, name=resolved_actor_name, role="worker", tenant_id=resolved_tenant)
 
-            target_path = target_namespace_path or f"memora://{actor.name}/private"
+            target_path = IdentityService.validate_namespace_path(
+                target_namespace_path or f"memora://{actor.name}/private"
+            )
+
+            # ---------------------------------------------------------
+            # CLAIM CHECK: never let a caller create a namespace that
+            # belongs to somebody else.
+            #
+            # resolve_namespace creates a missing namespace owned by the
+            # CALLER. Naming a foreign path therefore minted the row with the
+            # attacker as owner, and the RULE_1 owner check at step 8 then
+            # approved the attacker's own write. Verified live: forge stored
+            # into memora://friday/private (201) and took ownership of it,
+            # after which friday itself got 403 writing to its own private
+            # space. Whoever wrote first won, and the real owner lost.
+            #
+            # The rule must not depend on the victim having registered yet.
+            # The live capture shows why: forge wrote memora://friday/private
+            # before friday had ever written anything, so the row was minted
+            # owned by forge; when friday's agent row was created afterwards,
+            # create_namespace adopted the row that already existed and friday
+            # inherited a 403 on its own private space. A check based on
+            # "is this root a registered agent" would have allowed it.
+            #
+            # memora://shared/projects/<id> is the documented shared-space idiom
+            # (see SentinelAdapter.publish_approved_remediation) and is covered
+            # by OPEN_NAMESPACE_ROOTS, so a publisher may still create it and
+            # grant peers access.
+            #
+            # An existing namespace is left alone — step 8 evaluates the caller
+            # against it properly, so a granted or shared space still works.
+            # Only *creation* is gated here.
+            # ---------------------------------------------------------
+            if IdentityService.get_namespace_by_path(db, target_path, tenant_id=resolved_tenant) is None:
+                owner_name = IdentityService.namespace_root(target_path)
+                in_own_scope = owner_name == actor.name
+                in_bounded_scope = bool(
+                    actor.bounded_scope and target_path.startswith(actor.bounded_scope)
+                )
+                if owner_name is not None and not (in_own_scope or in_bounded_scope):
+                    raise PermissionDeniedError(
+                        f"Cannot create namespace '{target_path}': it belongs to "
+                        f"agent '{owner_name}', and '{actor.name}' may only create "
+                        f"namespaces under its own name. An existing namespace can "
+                        f"still be written to if '{owner_name}' grants access."
+                    )
+
             namespace = IdentityService.resolve_namespace(db, target_path, owner_agent_id=actor.id, tenant_id=resolved_tenant)
             step_trace["step_2_authenticate_and_resolve"] = {
                 "tenant_id": resolved_tenant,

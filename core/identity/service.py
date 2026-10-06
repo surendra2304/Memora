@@ -9,7 +9,71 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from storage.relational.models import Agent, Namespace, NamespaceType, AccessGrant
 
+#: Path roots that are not owned by a single agent. Everything else in the first
+#: segment of a namespace path is the name of the agent that owns the space.
+OPEN_NAMESPACE_ROOTS = frozenset({"universe", "team", "public", "shared"})
+
+_NAMESPACE_PREFIX = "memora://"
+_MAX_SEGMENT_LEN = 128
+_MAX_PATH_LEN = 1024
+
+
 class IdentityService:
+    # ------------------------------------------------------------------
+    # Namespace path validation
+    # ------------------------------------------------------------------
+    @staticmethod
+    def validate_namespace_path(path: str) -> str:
+        """Normalise a namespace path and reject anything malformed.
+
+        Namespace paths were accepted verbatim, so `memora://../../etc/passwd`
+        was persisted as a real row. Paths are logical identifiers rather than
+        filesystem paths, so that alone was data hygiene — but they are also the
+        operand of prefix comparisons (a sub-agent's bounded_scope is matched
+        with `namespace.path.startswith(bounded_scope)`), so a traversal segment
+        can make a path that reads as belonging elsewhere satisfy a scope check.
+
+        Returns the normalised `memora://`-prefixed path.
+        """
+        if not isinstance(path, str):
+            raise ValueError("Namespace path must be a string.")
+        candidate = path.strip()
+        if not candidate:
+            raise ValueError("Namespace path must not be empty.")
+        if len(candidate) > _MAX_PATH_LEN:
+            raise ValueError(f"Namespace path exceeds {_MAX_PATH_LEN} characters.")
+
+        if not candidate.startswith(_NAMESPACE_PREFIX):
+            candidate = f"{_NAMESPACE_PREFIX}{candidate.lstrip('/')}"
+
+        body = candidate[len(_NAMESPACE_PREFIX):]
+        if not body:
+            raise ValueError(f"Namespace path '{path}' has no segments after 'memora://'.")
+
+        for segment in body.split("/"):
+            if segment in ("", ".", ".."):
+                raise ValueError(
+                    f"Namespace path '{path}' is malformed: segments must be non-empty "
+                    "and may not be '.' or '..'."
+                )
+            if len(segment) > _MAX_SEGMENT_LEN:
+                raise ValueError(
+                    f"Namespace path '{path}' has a segment longer than "
+                    f"{_MAX_SEGMENT_LEN} characters."
+                )
+        return candidate
+
+    @staticmethod
+    def namespace_root(path: str) -> Optional[str]:
+        """The agent that owns `path`, or None for a shared root.
+
+        `memora://forge/private` -> "forge" (owned by the forge agent)
+        `memora://team/shared`   -> None   (shared space, no single owner)
+        """
+        body = path[len(_NAMESPACE_PREFIX):] if path.startswith(_NAMESPACE_PREFIX) else path.lstrip("/")
+        root = body.split("/")[0]
+        return None if root in OPEN_NAMESPACE_ROOTS else root
+
     @staticmethod
     def register_agent(
         db: Session,
@@ -137,8 +201,7 @@ class IdentityService:
         agent_id: Optional[str] = None,
         tenant_id: str = "default"
     ) -> Namespace:
-        if not path.startswith("memora://"):
-            path = f"memora://{path.lstrip('/')}"
+        path = IdentityService.validate_namespace_path(path)
 
         existing = db.query(Namespace).filter(Namespace.path == path, Namespace.tenant_id == tenant_id).first()
         if existing:
@@ -174,8 +237,7 @@ class IdentityService:
         owner_agent_id: Optional[str] = None,
         tenant_id: str = "default"
     ) -> Namespace:
-        if not path.startswith("memora://"):
-            path = f"memora://{path.lstrip('/')}"
+        path = IdentityService.validate_namespace_path(path)
 
         ns = db.query(Namespace).filter(Namespace.path == path, Namespace.tenant_id == tenant_id).first()
         if ns:

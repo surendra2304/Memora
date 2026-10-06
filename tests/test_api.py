@@ -19,8 +19,14 @@ def test_root_serves_memora_memory_observatory_not_legacy_dashboard(client: Test
     assert "Policy-scoped memory search" in response.text
     assert "sample" not in response.text.lower()
 
+#: Identity creation is fabric administration, so it is performed as the Memora
+#: service identity rather than as an arbitrary peer.
+ADMIN = {"X-Agent-Name": "memora"}
+
+
 def test_agent_registration_and_list(client: TestClient):
-    response = client.post("/agents", json={"name": "futuris", "description": "Predictive Forecasting"})
+    response = client.post("/agents", headers=ADMIN,
+                           json={"name": "futuris", "description": "Predictive Forecasting"})
     assert response.status_code == 201
     data = response.json()
     assert data["name"] == "futuris"
@@ -29,6 +35,56 @@ def test_agent_registration_and_list(client: TestClient):
     assert list_resp.status_code == 200
     names = [a["name"] for a in list_resp.json()]
     assert "futuris" in names
+
+
+def test_a_peer_agent_cannot_mint_a_new_identity(client: TestClient):
+    """A valid credential is not authority to create identities.
+
+    Registering an agent is the root of every policy decision, so a peer being
+    able to do it — including with role="supervisor" — is an escalation. Verified
+    against a live server before the fix: intelx created 'rogue' as a supervisor.
+    """
+    resp = client.post("/agents", headers={"X-Agent-Name": "intelx"},
+                       json={"name": "rogue", "role": "supervisor"})
+    assert resp.status_code == 403
+
+    names = [a["name"] for a in client.get("/agents").json()]
+    assert "rogue" not in names, "the identity was created despite the 403"
+
+
+def test_an_agent_can_create_a_subagent_under_itself(client: TestClient):
+    """The endpoint used to read two fields absent from its own schema and 500."""
+    client.post("/agents", headers=ADMIN, json={"name": "forge", "role": "worker"})
+
+    resp = client.post("/agents/subagents", headers={"X-Agent-Name": "forge"}, json={
+        "name": "helper", "role": "worker",
+        "bounded_scope": "memora://forge/projects/app-1"})
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["name"].endswith("helper")
+    assert resp.json()["bounded_scope"] == "memora://forge/projects/app-1"
+
+
+def test_the_subagent_parent_is_the_caller_and_cannot_be_chosen(client: TestClient):
+    """No request field may name a parent, so none can name someone else's."""
+    client.post("/agents", headers=ADMIN, json={"name": "forge", "role": "worker"})
+    client.post("/agents", headers=ADMIN, json={"name": "friday", "role": "supervisor"})
+
+    resp = client.post("/agents/subagents", headers={"X-Agent-Name": "forge"}, json={
+        "name": "mole", "role": "worker", "parent_agent_name": "friday",
+        "bounded_scope": "memora://forge/projects/app-2"})
+    assert resp.status_code == 201
+    assert resp.json()["name"].startswith("forge:"), (
+        f"sub-agent was parented under someone other than the caller: {resp.json()['name']}"
+    )
+
+
+def test_an_unregistered_caller_cannot_create_a_subagent(client: TestClient):
+    """A caller with no identity must get 404, not have one minted for them."""
+    resp = client.post("/agents/subagents", headers={"X-Agent-Name": "ghost"}, json={
+        "name": "helper", "bounded_scope": "memora://ghost/projects/x"})
+    assert resp.status_code == 404
+    names = [a["name"] for a in client.get("/agents").json()]
+    assert "ghost" not in names, "an identity was created as a side effect"
 
 def test_memory_ingest_query_and_lifecycle(client: TestClient):
     # Ingest memory
@@ -61,11 +117,36 @@ def test_memory_ingest_query_and_lifecycle(client: TestClient):
     assert trans_resp.status_code == 200
     assert trans_resp.json()["lifecycle_state"] == "verified"
 
-    # Audit check
-    audit_resp = client.get("/audit", params={"memory_id": mem_id})
+    # Audit check. The trail spans actors, so reading another agent's entries
+    # requires the admin identity; a peer sees only its own.
+    audit_resp = client.get("/audit", headers=ADMIN, params={"memory_id": mem_id})
     assert audit_resp.status_code == 200
     audit_logs = audit_resp.json()
     assert len(audit_logs) >= 2
+
+
+def test_the_audit_trail_is_scoped_for_non_admin_callers(client: TestClient):
+    """A peer must not be able to read another agent's audit entries."""
+    client.post("/memories", headers={"X-Agent-Name": "intelx"}, json={
+        "owner_name": "intelx", "namespace_path": "memora://intelx/private",
+        "content_text": "intelx audited activity", "source": "intelx"})
+
+    # intelx can see its own trail.
+    own = client.get("/audit", headers={"X-Agent-Name": "intelx"})
+    assert own.status_code == 200
+
+    # A different peer sees none of intelx's entries.
+    other = client.get("/audit", headers={"X-Agent-Name": "forge"})
+    assert other.status_code == 200
+    intelx_ids = {e["actor_id"] for e in own.json()}
+    leaked = [e for e in other.json() if e["actor_id"] in intelx_ids]
+    assert leaked == [], f"forge read {len(leaked)} of intelx's audit entries"
+
+    # Asking explicitly for someone else's actor_id must not widen the scope.
+    if intelx_ids:
+        probe = client.get("/audit", headers={"X-Agent-Name": "forge"},
+                           params={"actor_id": next(iter(intelx_ids))})
+        assert probe.json() == [], "actor_id filter let a peer read another's trail"
 
 
 def test_legacy_memory_list_authenticates_and_enforces_private_namespace_policy(client, test_db, monkeypatch):

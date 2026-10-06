@@ -291,3 +291,64 @@ def test_idempotency_key_still_deduplicates_for_the_same_agent(client: TestClien
     assert retry.status_code == 201
     assert retry.json()["id"] == first.json()["id"]
     assert retry.json()["is_duplicate"] is True
+
+
+# ---------------------------------------------------------------------------
+# The task envelope reported failures as HTTP 200
+# ---------------------------------------------------------------------------
+
+def test_task_execute_failure_is_not_reported_as_http_200(client: TestClient, mesh):
+    """The route pinned status_code=200, so a failed task looked successful.
+
+    The outcome lived only in the response body. A caller that checks the HTTP
+    status — the normal thing to do — saw success for a task that did nothing,
+    which is the same failure mode as the original dead write path that answered
+    200 with status="ERROR" having stored no memory.
+    """
+    resp = client.post("/v1/task/execute", headers=mesh["friday"],
+                       json={"action": "teleport", "payload": {}})
+    assert resp.status_code == 422, (
+        f"an unknown action returned HTTP {resp.status_code}; the status code "
+        f"must reflect the outcome"
+    )
+    assert resp.json()["status"] == "ERROR"
+
+
+def test_task_execute_success_still_returns_200(client: TestClient, mesh):
+    resp = client.post("/v1/task/execute", headers=mesh["friday"],
+                       json={"action": "store",
+                             "payload": {"content_text": "a task-driven fact"}})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "SUCCESS"
+
+
+def test_task_execute_query_without_a_query_is_a_client_error(client: TestClient, mesh):
+    resp = client.post("/v1/task/execute", headers=mesh["friday"],
+                       json={"action": "recall", "payload": {}})
+    assert resp.status_code == 422
+    assert resp.json()["status"] == "ERROR"
+
+
+def test_task_execute_denial_maps_to_403(client: TestClient, mesh):
+    """A policy denial is an authorisation outcome, not a generic error."""
+    resp = client.post("/v1/task/execute", headers=mesh["intelx"], json={
+        "action": "store",
+        "payload": {
+            "content_text": "intelx writing into friday's private space",
+            "target_namespace_path": "memora://friday/private",
+        },
+    })
+    if resp.json()["status"] == "DENIED":
+        assert resp.status_code == 403, (
+            f"a DENIED envelope returned HTTP {resp.status_code}"
+        )
+
+
+def test_task_result_reports_the_requested_target_agent(client: TestClient, mesh):
+    """target_agent was hardcoded to "memora" in every response."""
+    resp = client.post("/v1/task/execute", headers=mesh["friday"], json={
+        "action": "store", "target_agent": "forge",
+        "payload": {"content_text": "addressed to forge"}})
+    assert resp.json()["target_agent"] == "forge", (
+        "the response misreported which agent the task was addressed to"
+    )

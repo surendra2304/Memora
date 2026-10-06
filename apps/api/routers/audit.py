@@ -5,12 +5,19 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from storage.relational.session import get_db
-from storage.relational.models import AuditLog
+from storage.relational.models import Agent, AuditLog
 from core.memory.schemas import AuditLogRead
-from apps.api.dependencies import authenticate_agent
+from apps.api.dependencies import (
+    ADMIN_AGENTS,
+    authenticate_agent,
+    get_actor_header,
+)
 
 # The audit trail records every policy decision, memory id, and denial reason in
-# the fabric, so it is authenticated like every other memory-bearing router.
+# the fabric. Authentication alone left it readable by any agent, which disclosed
+# every other agent's activity — verified against a live server, where intelx read
+# the full log including other agents' actor and memory ids. A caller may now see
+# its own entries; the whole trail is admin-only.
 router = APIRouter(
     prefix="/audit",
     tags=["Audit"],
@@ -23,10 +30,17 @@ def list_audit_logs(
     memory_id: Optional[str] = None,
     action: Optional[str] = None,
     limit: int = Query(default=100, le=500),
+    actor_name: str = Depends(get_actor_header),
     db: Session = Depends(get_db)
 ):
     query = db.query(AuditLog)
-    if actor_id:
+
+    if actor_name not in ADMIN_AGENTS:
+        me = db.query(Agent).filter(Agent.name == actor_name).first()
+        # Confine a non-admin to its own rows. Asking for someone else's actor_id
+        # must yield nothing rather than that agent's trail.
+        query = query.filter(AuditLog.actor_id == (me.id if me else "__none__"))
+    elif actor_id:
         query = query.filter(AuditLog.actor_id == actor_id)
     if memory_id:
         query = query.filter(AuditLog.memory_id == memory_id)
