@@ -145,6 +145,106 @@ def test_idempotency_race_recovery_is_flagged_in_the_trace(file_session_factory)
 
 
 # ---------------------------------------------------------------------------
+# The HTTP path, which is where the fix lives
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def api_client(tmp_path, monkeypatch):
+    """A TestClient whose requests each get their own session.
+
+    The shared client fixture hands every request one session, which cannot
+    express two transactions racing. Both get_db and the SessionLocal the write
+    route uses for its retry are pointed at the same file-backed database, so the
+    retry genuinely re-reads what the winning request committed.
+    """
+    from fastapi.testclient import TestClient
+
+    from apps.api.main import app
+    from apps.api.routers import v1_memories
+    from storage.relational.session import get_db
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'api_race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 30},
+    )
+    Base.metadata.create_all(bind=engine)
+    factory = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+    setup = factory()
+    IdentityService.register_agent(setup, name="forge", role="worker")
+    setup.close()
+
+    def override_get_db():
+        session = factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    # Provision forge's credential so the request goes through real
+    # authentication rather than the anonymous development path.
+    monkeypatch.setenv("FORGE_API_KEY", "test-key")
+    # raising=False so this test still runs against a build without the retry,
+    # where the route has no SessionLocal to point at - it must then fail on the
+    # race itself rather than on fixture setup.
+    monkeypatch.setattr(v1_memories, "SessionLocal", factory, raising=False)
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        with TestClient(app) as test_client:
+            yield test_client, factory
+    finally:
+        app.dependency_overrides.clear()
+        engine.dispose()
+
+
+def test_concurrent_http_writes_sharing_an_idempotency_key_all_succeed(api_client):
+    """The race that rejected 437 of 1080 writes under load must not reach callers.
+
+    Every racer must be told the write succeeded and be handed the same record,
+    which is what a sequential idempotent replay already returns.
+    """
+    client, factory = api_client
+    key = "http-shared-retry-token"
+    threads = 8
+    codes: list = []
+    ids: list = []
+    barrier = threading.Barrier(threads)
+
+    def worker(i: int) -> None:
+        barrier.wait(timeout=30)
+        resp = client.post(
+            "/v1/memories",
+            json={
+                "content_text": f"http concurrent write {i} for the same logical fact",
+                "idempotency_key": key,
+            },
+            headers={"X-Agent-Name": "forge", "X-API-Key": "test-key"},
+        )
+        codes.append(resp.status_code)
+        if resp.status_code == 201:
+            ids.append(resp.json()["id"])
+
+    pool = [threading.Thread(target=worker, args=(i,)) for i in range(threads)]
+    for t in pool:
+        t.start()
+    for t in pool:
+        t.join(timeout=120)
+
+    rejected = [c for c in codes if c != 201]
+    assert not rejected, f"{len(rejected)} racer(s) rejected with {sorted(set(rejected))}"
+    assert len(set(ids)) == 1, f"racers disagreed on the winning record: {set(ids)}"
+
+    check = factory()
+    try:
+        rows = check.query(MemoryRecord).filter(
+            MemoryRecord.idempotency_key == key
+        ).count()
+    finally:
+        check.close()
+    assert rows == 1, f"expected exactly one stored row, found {rows}"
+
+
+# ---------------------------------------------------------------------------
 # Error-detail leakage
 # ---------------------------------------------------------------------------
 
