@@ -5,6 +5,7 @@ and dynamic URI namespace resolution.
 """
 from typing import Optional, List
 from datetime import datetime, timezone, timedelta
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from storage.relational.models import Agent, Namespace, NamespaceType, AccessGrant
 
@@ -31,8 +32,21 @@ class IdentityService:
                 bounded_scope=bounded_scope
             )
             db.add(agent)
-            db.commit()
-            db.refresh(agent)
+            try:
+                db.commit()
+            except IntegrityError:
+                # Lost a race with a concurrent registration of the same
+                # (tenant_id, name). The composite unique index did its job;
+                # roll back and adopt the row the other request won with
+                # instead of surfacing a 400 to the caller.
+                db.rollback()
+                agent = db.query(Agent).filter(
+                    Agent.name == agent_name, Agent.tenant_id == tenant_id
+                ).first()
+                if agent is None:
+                    raise
+            else:
+                db.refresh(agent)
 
             # Create default private namespace for the agent if not bounded sub-agent
             if not bounded_scope:
@@ -137,7 +151,18 @@ class IdentityService:
             agent_id=agent_id
         )
         db.add(namespace)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            # Same check-then-insert race as register_agent: a concurrent caller
+            # created this (tenant_id, path) first. Adopt their row.
+            db.rollback()
+            winner = db.query(Namespace).filter(
+                Namespace.path == path, Namespace.tenant_id == tenant_id
+            ).first()
+            if winner is None:
+                raise
+            return winner
         db.refresh(namespace)
         return namespace
 
