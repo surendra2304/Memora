@@ -27,6 +27,9 @@ from apps.api.routers import (
     v1_task_router,
     v1_events_router,
     mesh_events_router,
+    v1_resilience_router,
+    v1_collaboration_router,
+    v1_reflection_router,
 )
 
 import os
@@ -206,6 +209,9 @@ app.include_router(v1_task_router)
 app.include_router(v1_events_router)
 app.include_router(mesh_events_router)
 app.include_router(audit_router)
+app.include_router(v1_resilience_router)
+app.include_router(v1_collaboration_router)
+app.include_router(v1_reflection_router)
 
 @app.api_route("/api/dashboard/sync", methods=["GET", "POST"], include_in_schema=False)
 def dashboard_sync(agent_name: str = Depends(authenticate_agent)):

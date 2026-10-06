@@ -13,8 +13,8 @@ import pytest
 
 from core.identity.service import IdentityService
 from core.memory.pipeline.write_service import MemoryWriteService
-from core.reflection.engine import ReflectionEngine, reflection_engine
-from storage.relational.models import EventLog, LifecycleState, MemoryRecord, MemoryType
+from core.reflection.engine import reflection_engine
+from storage.relational.models import Agent, EventLog, MemoryRecord, MemoryType
 
 
 @pytest.fixture(autouse=True)
@@ -233,10 +233,7 @@ def test_the_agent_with_most_memories_on_a_topic_is_identified(test_db):
         _write(test_db, "forge", f"xenon compressor repair procedure {i}")
     _write(test_db, "friday", "xenon compressor aside")
 
-    owners = {
-        a.id: a.name
-        for a in test_db.query(__import__("storage.relational.models", fromlist=["Agent"]).Agent).all()
-    }
+    owners = {a.id: a.name for a in test_db.query(Agent).all()}
     insights = reflection_engine.agent_specialisation(
         test_db, reflection_engine._load_corpus(test_db, "default"), owners, "default"
     )
@@ -249,8 +246,7 @@ def test_an_evenly_split_topic_has_no_single_authority(test_db):
     for agent in ("friday", "forge", "sentinel", "cortex"):
         _write(test_db, agent, "xenon compressor shared responsibility")
 
-    owners = {a.id: a.name for a in IdentityService.list_agents(test_db)} \
-        if hasattr(IdentityService, "list_agents") else {}
+    owners = {a.id: a.name for a in test_db.query(Agent).all()}
     insights = reflection_engine.agent_specialisation(
         test_db, reflection_engine._load_corpus(test_db, "default"), owners, "default"
     )

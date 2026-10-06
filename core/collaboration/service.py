@@ -50,6 +50,16 @@ logger = logging.getLogger(__name__)
 
 
 class CollaborationError(Exception):
+    """Base for collaboration failures."""
+
+
+class CollaborationPermissionError(CollaborationError):
+    """The caller is known but is not allowed to do this.
+
+    Kept distinct from CollaborationError so the API can return 403 instead of
+    404: classifying an authorisation refusal as a missing resource hides the
+    real reason from the caller and from the audit trail.
+    """
     """Raised when a collaboration request cannot be honoured."""
 
 
@@ -298,14 +308,18 @@ class CollaborationService:
         if not recipient:
             raise CollaborationError(f"unknown recipient '{recipient_name}'")
         if recipient.id == contributor.id:
-            raise CollaborationError("an agent cannot contribute to itself")
+            raise CollaborationPermissionError(
+                "an agent cannot contribute to itself"
+            )
 
         record = db.query(MemoryRecord).filter(MemoryRecord.id == memory_id).first()
         if not record:
             raise CollaborationError(f"memory '{memory_id}' not found")
         if record.owner_id != contributor.id:
-            # Never let an agent share someone else's memory.
-            raise CollaborationError(
+            # Never let an agent share someone else's memory. This is an
+            # authorisation failure, not a missing resource, so it raises the
+            # distinct type that lets callers answer 403 rather than 404.
+            raise CollaborationPermissionError(
                 f"'{contributor_name}' does not own memory '{memory_id}'"
             )
 

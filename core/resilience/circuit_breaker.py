@@ -25,7 +25,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, Optional, TypeVar
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -260,6 +260,20 @@ class CircuitRegistry:
         with self._lock:
             breakers = list(self._breakers.values())
         return {b.name: b.snapshot() for b in breakers}
+
+    def find(self, name: str) -> Optional[CircuitBreaker]:
+        """Look a breaker up WITHOUT creating it.
+
+        get() is the right call for a dependency that intends to make calls, but
+        an operator asking about a breaker by name must get a 404 for one that
+        does not exist rather than have the lookup silently register it.
+        """
+        with self._lock:
+            return self._breakers.get(name)
+
+    def names(self) -> List[str]:
+        with self._lock:
+            return sorted(self._breakers)
 
     def healthy(self) -> bool:
         """True when no registered dependency is currently open."""
