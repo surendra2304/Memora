@@ -1,0 +1,24 @@
+# GitGuardian configuration.
+#
+# Eight findings on this repository are false positives, and every one of them is
+# in the secret scanner's own code:
+#
+#   core/memory/pipeline/secret_scanner.py    detection regexes, e.g. the
+#                                             "Hardcoded Password" pattern
+#   tests/test_secret_scanner_coverage.py     the credentials those regexes must
+#                                             catch, planted as fixtures
+#
+# A test suite for a secret detector has to contain things that look like
+# secrets, so a scanner reading it will always fire. The fixtures are synthetic
+# and deliberately recognisable: AWS's documented example key
+# (wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY, AKIAIOSFODNN7EXAMPLE), alphabetical
+# and sequential bodies (sk-abcdefghijklmnopqrstuvwxyz0123456789), and named
+# placeholders (hunter2secret, SuperSecret123). None is a live credential.
+#
+# The exclusion is scoped to these two paths only, so a genuine secret committed
+# anywhere else - including in these files' neighbours - still fails the build.
+version: 2
+secret:
+  ignored_paths:
+    - 'core/memory/pipeline/secret_scanner.py'
+    - 'tests/test_secret_scanner_coverage.py'
