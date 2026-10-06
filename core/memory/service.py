@@ -29,6 +29,42 @@ class PermissionDeniedError(Exception):
 class MemoryNotFoundError(Exception):
     pass
 
+
+#: Cap on how many terms one query may expand into, so a pathological query
+#: cannot build an unbounded OR expression.
+_MAX_QUERY_TERMS = 24
+
+
+def _content_matches_any_term(query_text: str):
+    """Match records containing ANY term of the query, not the whole phrase.
+
+    This used to be ``content_text.ilike(f"%{query_text}%")``, which requires the
+    entire query to appear as one contiguous run of characters. A natural question
+    like "xenon compressor seal torque specification" therefore matched nothing at
+    all, while "xenon" alone matched fine — the primary query endpoint silently
+    returned zero rows for exactly the queries people actually ask. Verified
+    against a live corpus: 0 rows for the full question, 4 for a single word.
+
+    Terms are OR'd together, matching the semantics hybrid_search already uses in
+    core/memory/search_service.py, so the two retrieval paths now agree.
+
+    User input is also escaped here: ``%`` and ``_`` are LIKE wildcards, and they
+    were previously interpolated straight into the pattern, so a query of "%"
+    matched the entire corpus and "_" matched anything with one character.
+    """
+    terms = query_text.lower().split()[:_MAX_QUERY_TERMS]
+    terms = [t for t in terms if t]
+    if not terms:
+        # Nothing to match on; the caller's other filters still apply.
+        return or_(True)
+
+    conditions = []
+    for term in terms:
+        escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        conditions.append(MemoryRecord.content_text.ilike(f"%{escaped}%", escape="\\"))
+    return or_(*conditions)
+
+
 class MemoryService:
     @staticmethod
     def create_memory(
@@ -237,7 +273,7 @@ class MemoryService:
             q = q.filter(MemoryRecord.created_at <= query.time_to)
 
         if query.query_text:
-            q = q.filter(MemoryRecord.content_text.ilike(f"%{query.query_text}%"))
+            q = q.filter(_content_matches_any_term(query.query_text))
 
         if query.namespace_path:
             q = q.filter(Namespace.path == query.namespace_path)
