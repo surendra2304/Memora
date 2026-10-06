@@ -1,7 +1,6 @@
 """
 Tests for Namespace Policies and Access Boundaries
 """
-import pytest
 from storage.relational.models import Agent, Namespace, NamespaceType
 from core.policy.engine import PolicyEngine
 

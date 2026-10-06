@@ -136,7 +136,7 @@ def sync_database():
     try:
         mem_count = resp["results"][0]["response"]["result"]["rows"][0][0]["value"]
         agent_count = resp["results"][1]["response"]["result"]["rows"][0][0]["value"]
-        print(f"[SUCCESS] Turso Cloud is in 100% sync!")
+        print("[SUCCESS] Turso Cloud is in 100% sync!")
         print(f"  Total Agents: {agent_count}")
         print(f"  Total Memory Records: {mem_count}")
         print("\nBreakdown by Agent in Turso Cloud:")

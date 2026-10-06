@@ -3,8 +3,7 @@ SQLAlchemy Base Model and Metadata Definitions
 """
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import DateTime
+from sqlalchemy.orm import DeclarativeBase
 
 def get_utc_now() -> datetime:
     return datetime.now(timezone.utc)

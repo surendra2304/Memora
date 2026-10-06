@@ -2,21 +2,30 @@
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from storage.relational.session import get_db
-from storage.relational.models import MemoryRecord, MemoryType, LifecycleState, Namespace, Agent
-from core.memory.schemas import MemoryRecordRead
-from core.memory.pipeline.write_service import MemoryWriteService
+from storage.relational.models import MemoryType
+from core.memory.pipeline.write_service import MemoryWriteService, MemoryPipelineError
+from core.memory.pipeline.secret_scanner import SecretDetectedSecurityViolation
+from core.memory.pipeline.poison_detector import PoisonMemoryViolation
+from core.memory.search_service import SearchService
+from core.memory.service import PermissionDeniedError
 from apps.api.dependencies import get_actor_header
 
+logger = logging.getLogger(__name__)
+
 task_router = APIRouter(prefix="/v1/task", tags=["Universal Task Protocol"])
+
+_STORE_ACTIONS = {"store", "remember", "add", "record"}
+_QUERY_ACTIONS = {"query", "search", "recall", "retrieve", "find", "ask"}
 
 
 class TaskEnvelopeModel(BaseModel):
@@ -40,104 +49,224 @@ class TaskResultModel(BaseModel):
     execution_time_ms: int = 0
 
 
-@task_router.post("/execute", response_model=TaskResultModel, status_code=status.HTTP_200_OK)
+def _elapsed_ms(t0: float) -> int:
+    return int((time.time() - t0) * 1000)
+
+
+#: HTTP status for each envelope outcome.
+#:
+#: The endpoint used to return 200 for every result, including failures, because
+#: the route pinned status_code=200 and the outcome lived only in the body. A
+#: caller that checks the HTTP status - which is the normal thing to do - saw a
+#: successful response for a task that did nothing. This is the same class of
+#: defect as the original dead write path, which answered 200 with
+#: status="ERROR" having stored no memory.
+#:
+#: The envelope body is unchanged, so callers that parse it keep working; the
+#: status code now tells the truth as well.
+_HTTP_FOR_STATUS = {
+    "SUCCESS": status.HTTP_200_OK,
+    "DENIED": status.HTTP_403_FORBIDDEN,
+    # 422 as a literal: the named constant was renamed in Starlette
+    # (HTTP_422_UNPROCESSABLE_ENTITY -> _CONTENT) and using either name pins the
+    # code to one side of that rename or emits a deprecation warning.
+    "ERROR": 422,
+    "REJECTED": 422,
+}
+
+
+def _http_status_for(envelope_status: str) -> int:
+    """500 for anything unrecognised, so a new outcome cannot masquerade as 200."""
+    return _HTTP_FOR_STATUS.get(envelope_status, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@task_router.post("/execute", response_model=TaskResultModel)
 def execute_task(
     envelope: TaskEnvelopeModel,
+    response: Response,
     db: Session = Depends(get_db),
     actor: str = Depends(get_actor_header),
 ) -> TaskResultModel:
-    """Execute universal task envelope for persistent cognitive memory operations."""
+    """Execute universal task envelope for persistent cognitive memory operations.
+
+    The authenticated caller is authoritative for identity: `source_agent` in the
+    envelope is metadata, not a credential, and must never widen the caller's scope.
+    """
     t0 = time.time()
     action = envelope.action.lower().strip()
-    caller = envelope.source_agent or actor or "friday"
+
+    if action in _STORE_ACTIONS:
+        result = _execute_store(db, envelope, actor, t0)
+    elif action in _QUERY_ACTIONS:
+        result = _execute_query(db, envelope, actor, t0)
+    else:
+        result = TaskResultModel(
+            task_id=envelope.task_id,
+            target_agent=envelope.target_agent,
+            status="ERROR",
+            error=f"Unknown action '{envelope.action}'. Expected one of "
+                  f"{sorted(_STORE_ACTIONS | _QUERY_ACTIONS)}.",
+            execution_time_ms=_elapsed_ms(t0),
+        )
+
+    response.status_code = _http_status_for(result.status)
+    return result
+
+
+def _execute_store(
+    db: Session,
+    envelope: TaskEnvelopeModel,
+    actor: str,
+    t0: float,
+) -> TaskResultModel:
+    """Persist a memory through the canonical 10-step write pipeline."""
+    payload = envelope.payload
+    content = str(
+        payload.get("content")
+        or payload.get("text")
+        or payload.get("content_text")
+        or payload.get("query")
+        or str(payload)
+    )
+    ns_path = payload.get("target_namespace_path") or f"memora://{actor}/general"
+    mtype_str = str(payload.get("memory_type") or payload.get("type") or "observation").lower()
+
+    mtype = MemoryType.EPISODIC
+    if "semantic" in mtype_str:
+        mtype = MemoryType.SEMANTIC
+    elif "procedure" in mtype_str:
+        mtype = MemoryType.PROCEDURAL
+    elif "experience" in mtype_str:
+        mtype = MemoryType.EXPERIENCE
+    elif "working" in mtype_str:
+        mtype = MemoryType.WORKING
 
     try:
-        if action in ("store", "remember", "add", "record"):
-            content = str(
-                envelope.payload.get("content")
-                or envelope.payload.get("text")
-                or envelope.payload.get("content_text")
-                or envelope.payload.get("query")
-                or str(envelope.payload)
-            )
-            ns_path = envelope.payload.get("target_namespace_path") or f"memora://{caller}/general"
-            mtype_str = (envelope.payload.get("memory_type") or envelope.payload.get("type") or "observation").lower()
-            
-            # Map memory type
-            mtype = MemoryType.EPISODIC
-            if "semantic" in mtype_str:
-                mtype = MemoryType.SEMANTIC
-            elif "procedure" in mtype_str:
-                mtype = MemoryType.PROCEDURAL
-
-            write_service = MemoryWriteService(db)
-            write_res = write_service.process_write(
-                actor_name=caller,
-                content_text=content,
-                target_namespace_path=ns_path,
-                memory_type=mtype,
-                source=f"agent:{caller}",
-                provenance={"task_id": envelope.task_id, "trace_id": envelope.trace_id},
-                allow_duplicates=True,
-            )
-
-            lat = int((time.time() - t0) * 1000)
-            return TaskResultModel(
-                task_id=envelope.task_id,
-                target_agent="memora",
-                status="SUCCESS",
-                result={
-                    "memory_id": write_res.get("id"),
-                    "namespace_path": ns_path,
-                    "duplicate": write_res.get("is_duplicate", False),
-                },
-                summary=f"Stored memory into {ns_path} ({lat}ms)",
-                execution_time_ms=lat,
-            )
-
-        else:
-            # Query / Search memory
-            query = str(
-                envelope.payload.get("query")
-                or envelope.payload.get("task_query")
-                or envelope.payload.get("prompt")
-                or envelope.payload.get("content")
-                or ""
-            )
-
-            # Query database for recent matching records
-            q = db.query(MemoryRecord).filter(
-                MemoryRecord.lifecycle_state == LifecycleState.ACTIVE
-            )
-            if query:
-                q = q.filter(MemoryRecord.content_text.ilike(f"%{query[:50]}%"))
-
-            records = q.order_by(MemoryRecord.created_at.desc()).limit(5).all()
-            recalled = [
-                {"id": r.id, "content_text": r.content_text, "memory_type": r.memory_type.value if hasattr(r.memory_type, "value") else str(r.memory_type)}
-                for r in records
-            ]
-
-            lat = int((time.time() - t0) * 1000)
-            return TaskResultModel(
-                task_id=envelope.task_id,
-                target_agent="memora",
-                status="SUCCESS",
-                result={
-                    "count": len(recalled),
-                    "memories": recalled,
-                    "query": query,
-                },
-                summary=f"Retrieved {len(recalled)} memory item(s) in {lat}ms",
-                execution_time_ms=lat,
-            )
-
-    except Exception as e:
-        lat = int((time.time() - t0) * 1000)
+        write_res = MemoryWriteService.execute_pipeline(
+            db=db,
+            content_text=content,
+            caller_name=actor,
+            target_namespace_path=ns_path,
+            memory_type=mtype,
+            source=f"agent:{actor}",
+            provenance={"task_id": envelope.task_id, "trace_id": envelope.trace_id},
+            allow_duplicates=True,
+        )
+    except (SecretDetectedSecurityViolation, PoisonMemoryViolation) as exc:
+        # A security rejection is a refusal, not a server fault. Report it in-band
+        # so the calling agent can act on it, but never as SUCCESS.
         return TaskResultModel(
             task_id=envelope.task_id,
-            target_agent="memora",
-            status="ERROR",
-            error=str(e),
-            execution_time_ms=lat,
+            target_agent=envelope.target_agent,
+            status="REJECTED",
+            error=f"{type(exc).__name__}: {exc}",
+            summary="Write rejected by Memora security policy.",
+            execution_time_ms=_elapsed_ms(t0),
         )
+    except PermissionDeniedError as exc:
+        return TaskResultModel(
+            task_id=envelope.task_id,
+            target_agent=envelope.target_agent,
+            status="DENIED",
+            error=str(exc),
+            summary="Write denied by the Memora policy engine.",
+            execution_time_ms=_elapsed_ms(t0),
+        )
+    except MemoryPipelineError as exc:
+        return TaskResultModel(
+            task_id=envelope.task_id,
+            target_agent=envelope.target_agent,
+            status="ERROR",
+            error=str(exc),
+            summary="Memory write pipeline rejected the payload.",
+            execution_time_ms=_elapsed_ms(t0),
+        )
+
+    lat = _elapsed_ms(t0)
+    return TaskResultModel(
+        task_id=envelope.task_id,
+        target_agent=envelope.target_agent,
+        status="SUCCESS",
+        result={
+            "memory_id": write_res.record.id,
+            "namespace_path": ns_path,
+            "memory_type": mtype.value,
+            "duplicate": write_res.is_duplicate,
+        },
+        summary=f"Stored memory into {ns_path} ({lat}ms)",
+        execution_time_ms=lat,
+    )
+
+
+def _execute_query(
+    db: Session,
+    envelope: TaskEnvelopeModel,
+    actor: str,
+    t0: float,
+) -> TaskResultModel:
+    """Recall memories through hybrid search, which enforces the policy gate.
+
+    This previously ran a raw ORM `ilike` over every ACTIVE record with no tenant,
+    namespace, or policy filtering, which handed any caller the most recent matches
+    from every private namespace in the fabric.
+    """
+    payload = envelope.payload
+    query = str(
+        payload.get("query")
+        or payload.get("task_query")
+        or payload.get("prompt")
+        or payload.get("content")
+        or ""
+    ).strip()
+    limit = payload.get("limit") or 5
+    try:
+        limit = max(1, min(int(limit), 100))
+    except (TypeError, ValueError):
+        limit = 5
+
+    if not query:
+        return TaskResultModel(
+            task_id=envelope.task_id,
+            target_agent=envelope.target_agent,
+            status="ERROR",
+            error="A query, task_query, prompt, or content field is required to recall memories.",
+            execution_time_ms=_elapsed_ms(t0),
+        )
+
+    try:
+        results = SearchService.hybrid_search(
+            db=db,
+            query_text=query,
+            actor_name=actor,
+            namespace_path=payload.get("target_namespace_path"),
+            limit=limit,
+        )
+    except PermissionDeniedError as exc:
+        return TaskResultModel(
+            task_id=envelope.task_id,
+            target_agent=envelope.target_agent,
+            status="DENIED",
+            error=str(exc),
+            execution_time_ms=_elapsed_ms(t0),
+        )
+
+    recalled = [
+        {
+            "id": item.record.id,
+            "content_text": item.record.content_text,
+            "memory_type": item.record.memory_type.value,
+            "namespace_path": item.record.namespace.path if item.record.namespace else None,
+            "score": round(item.final_score, 4),
+        }
+        for item in results
+    ]
+
+    lat = _elapsed_ms(t0)
+    return TaskResultModel(
+        task_id=envelope.task_id,
+        target_agent=envelope.target_agent,
+        status="SUCCESS",
+        result={"count": len(recalled), "memories": recalled, "query": query},
+        summary=f"Retrieved {len(recalled)} memory item(s) in {lat}ms",
+        execution_time_ms=lat,
+    )

@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from apps.api.dependencies import authenticate_agent
 from core.config import settings
-from storage.relational.session import init_db, get_db, storage_ready
+from storage.relational.session import init_db, storage_ready
 from storage.relational.models import Agent, Namespace, MemoryRecord
 from storage.vector.qdrant_adapter import vector_adapter
 from core.events.emitter import event_emitter
@@ -27,6 +27,9 @@ from apps.api.routers import (
     v1_task_router,
     v1_events_router,
     mesh_events_router,
+    v1_resilience_router,
+    v1_collaboration_router,
+    v1_reflection_router,
 )
 
 import os
@@ -168,13 +171,29 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS
+# CORS.
+#
+# This previously hardcoded allow_origins=["*"] together with
+# allow_credentials=True. That pairing is invalid under the CORS spec — a
+# browser will not honour a wildcard Access-Control-Allow-Origin on a
+# credentialed request — and if a browser did accept it, any site could issue
+# authenticated cross-origin calls to this API.
+#
+# Origins are now configured via MEMORA_CORS_ORIGINS. The default is empty,
+# which allows no cross-origin browser access: correct for an agent-to-agent
+# API, where callers are servers and are unaffected by CORS. Credentials are
+# only enabled when the operator lists explicit origins, never with "*".
+_cors_origins = settings.get_cors_origins()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=bool(_cors_origins) and "*" not in _cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+logger.info(
+    "CORS configured for %s",
+    ", ".join(_cors_origins) if _cors_origins else "no cross-origin browser access",
 )
 
 # Mount Routers
@@ -190,6 +209,9 @@ app.include_router(v1_task_router)
 app.include_router(v1_events_router)
 app.include_router(mesh_events_router)
 app.include_router(audit_router)
+app.include_router(v1_resilience_router)
+app.include_router(v1_collaboration_router)
+app.include_router(v1_reflection_router)
 
 @app.api_route("/api/dashboard/sync", methods=["GET", "POST"], include_in_schema=False)
 def dashboard_sync(agent_name: str = Depends(authenticate_agent)):

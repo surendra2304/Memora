@@ -15,8 +15,6 @@ import os
 import sys
 import uuid
 import datetime
-import sqlite3
-import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -30,7 +28,6 @@ BASE_DIR = 'd:/FRIDAY Universe'
 
 def build_real_memories():
     real_records = []
-    now = datetime.datetime.now(datetime.timezone.utc)
 
     # -------------------------------------------------------------
     # 1. FRIDAY — Real Host Telemetry & Interaction History

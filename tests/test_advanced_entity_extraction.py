@@ -10,7 +10,7 @@ from apps.api.main import app
 from core.memory.pipeline.entity_extractor import EntityExtractor
 from core.memory.graph_service import GraphService
 from core.memory.pipeline.write_service import MemoryWriteService
-from storage.relational.models import MemoryType, LifecycleState
+from storage.relational.models import MemoryType
 
 @pytest.fixture
 def client():

@@ -6,7 +6,6 @@ can cleanly downgrade to 433bb01f2a2a and upgrade back to head.
 import os
 import tempfile
 import sqlite3
-import pytest
 from alembic.config import Config
 from alembic import command
 

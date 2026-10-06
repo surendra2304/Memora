@@ -2,7 +2,6 @@
 Tests for memora_upgrade overlay package modules.
 Ported from MEMORA_DEEP_UPGRADE overlay package tests.
 """
-from datetime import datetime, timezone, timedelta
 import pytest
 
 from memora_upgrade.models import (
@@ -20,7 +19,7 @@ from memora_upgrade.graph import MemoryGraph, Edge
 from memora_upgrade.cache import TenantScopedCache
 from memora_upgrade.ingestion import IngestionService
 from memora_upgrade.store import MemoryStore
-from memora_upgrade.retrieval import HybridRetriever, InMemoryVectorIndex
+from memora_upgrade.retrieval import HybridRetriever
 from memora_upgrade.security import SecretScanner, SecretRedactor
 
 

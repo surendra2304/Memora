@@ -3,7 +3,6 @@ Deep inspect real databases across FRIDAY, Forge, Sentinel, Inference, Cortex
 """
 import os
 import sqlite3
-import json
 
 base = 'd:/FRIDAY Universe'
 

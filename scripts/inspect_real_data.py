@@ -4,7 +4,6 @@ Inspect real data across all 9 agents in FRIDAY Universe
 import os
 import sqlite3
 import json
-import glob
 
 base = 'd:/FRIDAY Universe'
 

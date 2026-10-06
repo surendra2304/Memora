@@ -5,7 +5,6 @@ to fit strict token budgets without losing technical facts, decisions, or proven
 """
 import os
 import re
-import math
 import logging
 from typing import List, Dict, Any, Tuple, Optional, Set
 from collections import defaultdict
@@ -240,7 +239,7 @@ class ContextBudgeter:
         budgeted_items = []
         total_summarized_tokens = 0
 
-        for ns_path, cluster_items in clusters.items():
+        for _ns_path, cluster_items in clusters.items():
             if not cluster_items:
                 continue
 

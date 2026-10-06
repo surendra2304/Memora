@@ -1,8 +1,8 @@
-name: Verify Diary Constraints
+name: Verify
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, "arena/**" ]
   pull_request:
     branches: [ main ]
 
@@ -11,10 +11,70 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Run Diary Verification
+          cache: pip
+
+      # Install from requirements.txt so CI exercises the same dependency set the
+      # Dockerfile installs. pyproject.toml is kept in sync separately.
+      - name: Install dependencies
         run: |
-          python scripts/verify_diary.py
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install "ruff>=0.3.0"
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      # The full suite. This workflow previously ran only scripts/verify_diary.py,
+      # which checks diary markdown line counts, so 171 tests, the migration
+      # chain, and the Docker build had never gated a merge.
+      - name: Test (pytest)
+        env:
+          # The suite needs a writable SQLite target; the fail-closed auth tests
+          # clear MEMORA_ALLOW_ANONYMOUS_DEV themselves.
+          DATABASE_URL: sqlite:///./data/ci_memora.db
+          SQLITE_FALLBACK_URL: sqlite:///./data/ci_memora.db
+        run: |
+          mkdir -p data
+          pytest -q
+
+      - name: Migration chain converges
+        env:
+          DATABASE_URL: sqlite:///./data/ci_migrations.db
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+
+      - name: Diary verification
+        run: python scripts/verify_diary.py
+
+      # A real boot, not just an import: start the ASGI lifespan, serve a
+      # request, and assert the response. Note that walking app.routes for
+      # .path is unreliable here because this FastAPI version wraps included
+      # routers in _IncludedRouter objects, so the route inventory is read from
+      # the OpenAPI schema instead.
+      - name: Application boots and serves
+        env:
+          DATABASE_URL: sqlite:///./data/ci_boot.db
+          SQLITE_FALLBACK_URL: sqlite:///./data/ci_boot.db
+        run: |
+          python -c "
+          from fastapi.testclient import TestClient
+          from apps.api.main import app
+
+          paths = set(app.openapi()['paths'])
+          for required in ('/health', '/v1/memories', '/v1/context', '/v1/task/execute'):
+              assert required in paths, f'{required} missing from the route table'
+
+          with TestClient(app) as client:
+              health = client.get('/health')
+              assert health.status_code == 200, health.text
+              body = health.json()
+              assert body['service'] == 'memora-api', body
+              print(f'booted; {len(paths)} paths; /health -> {body[\"status\"]}')
+          "

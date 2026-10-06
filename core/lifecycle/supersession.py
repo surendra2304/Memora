@@ -3,9 +3,9 @@ Contradiction and Supersession Engine for Memora
 Enforces the core rule:
 "Never resolve contradictions using recency alone; use provenance and confidence first."
 """
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional
 from sqlalchemy.orm import Session
-from storage.relational.models import MemoryRecord, LifecycleState, Agent
+from storage.relational.models import MemoryRecord, LifecycleState
 from core.lifecycle.state_machine import MemoryLifecycleEngine
 
 class ContradictionResolutionDecision:

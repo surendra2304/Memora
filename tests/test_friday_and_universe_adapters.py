@@ -10,7 +10,7 @@ from adapters.adapter_registry import adapter_registry
 from adapters.friday.adapter import FridayAdapter
 from adapters.ai_universe.adapter import AIUniverseAdapter
 from core.identity.service import IdentityService
-from storage.relational.models import MemoryType, LifecycleState, NamespaceType
+from storage.relational.models import NamespaceType
 
 from storage.relational.session import get_db
 
@@ -76,7 +76,7 @@ def test_friday_delegate_task_with_bounded_context(mock_client, test_db):
     friday = IdentityService.get_agent_by_name(test_db, "friday")
     if not friday:
         friday = IdentityService.register_agent(test_db, "friday")
-    proj_ns = IdentityService.resolve_namespace(test_db, target_scope, owner_agent_id=friday.id, default_type=NamespaceType.PROJECT_PRIVATE)
+    IdentityService.resolve_namespace(test_db, target_scope, owner_agent_id=friday.id, default_type=NamespaceType.PROJECT_PRIVATE)
     
     # Register sub-agent with bounded scope
     IdentityService.register_subagent(
@@ -115,7 +115,7 @@ def test_ai_universe_ground_model_reasoning(mock_client, test_db):
     assert universe_adapter.default_namespace == "memora://universe/global"
 
     # Ingest 1 active memory and 1 verified memory
-    unverified_res = universe_adapter.write_memory(
+    universe_adapter.write_memory(
         content_text="Quantum encryption prototype beta candidate notes.",
         target_namespace_path="memora://universe/global"
     )

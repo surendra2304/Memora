@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from storage.relational.session import get_db
 from core.memory.context.builder import ContextBuilderService
-from core.policy.engine import PolicyEngine, PolicyDecision
 from apps.api.dependencies import get_actor_header, get_purpose_header
 
 router = APIRouter(prefix="/v1/context", tags=["v1 Context Pipeline"])

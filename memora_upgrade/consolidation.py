@@ -1,8 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable, Iterable
-import math
+from typing import Iterable
 
 from .models import MemoryItem, Lifecycle
 

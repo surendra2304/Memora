@@ -4,7 +4,6 @@ Tracks Retrieval relevance, Context usefulness, Staleness rate, Contradiction ra
 Write success rate, Policy denial rate, Latencies, and Phase 6 Advanced Metrics
 (llm_compaction_tokens_saved, cross_encoder_reranking_latency_ms, predictive_context_hits).
 """
-import time
 from typing import Dict, Any, List
 from collections import deque
 from datetime import datetime, timezone
@@ -123,35 +122,35 @@ class MetricsCollector:
     def get_prometheus_format(self) -> str:
         s = self.get_metrics_summary()
         lines = [
-            f"# HELP memora_write_success_rate Ratio of successful writes to total attempts",
-            f"# TYPE memora_write_success_rate gauge",
+            "# HELP memora_write_success_rate Ratio of successful writes to total attempts",
+            "# TYPE memora_write_success_rate gauge",
             f"memora_write_success_rate {s['write_success_rate']}",
-            f"# HELP memora_policy_denial_rate Ratio of denied access evaluations",
-            f"# TYPE memora_policy_denial_rate gauge",
+            "# HELP memora_policy_denial_rate Ratio of denied access evaluations",
+            "# TYPE memora_policy_denial_rate gauge",
             f"memora_policy_denial_rate {s['policy_denial_rate']}",
-            f"# HELP memora_contradiction_rate Rate of writes causing supersession",
-            f"# TYPE memora_contradiction_rate gauge",
+            "# HELP memora_contradiction_rate Rate of writes causing supersession",
+            "# TYPE memora_contradiction_rate gauge",
             f"memora_contradiction_rate {s['contradiction_rate']}",
-            f"# HELP memora_retrieval_relevance_avg Average relevance score of retrieved memories",
-            f"# TYPE memora_retrieval_relevance_avg gauge",
+            "# HELP memora_retrieval_relevance_avg Average relevance score of retrieved memories",
+            "# TYPE memora_retrieval_relevance_avg gauge",
             f"memora_retrieval_relevance_avg {s['retrieval_relevance_avg']}",
-            f"# HELP memora_context_usefulness_avg Average token budget utilization",
-            f"# TYPE memora_context_usefulness_avg gauge",
+            "# HELP memora_context_usefulness_avg Average token budget utilization",
+            "# TYPE memora_context_usefulness_avg gauge",
             f"memora_context_usefulness_avg {s['context_usefulness_avg']}",
-            f"# HELP memora_staleness_rate Percentage of retrieved memories > 30 days old",
-            f"# TYPE memora_staleness_rate gauge",
+            "# HELP memora_staleness_rate Percentage of retrieved memories > 30 days old",
+            "# TYPE memora_staleness_rate gauge",
             f"memora_staleness_rate {s['staleness_rate']}",
-            f"# HELP memora_llm_compaction_tokens_saved Total tokens saved via LLM summarization compaction",
-            f"# TYPE memora_llm_compaction_tokens_saved counter",
+            "# HELP memora_llm_compaction_tokens_saved Total tokens saved via LLM summarization compaction",
+            "# TYPE memora_llm_compaction_tokens_saved counter",
             f"memora_llm_compaction_tokens_saved {s['llm_compaction_tokens_saved']}",
-            f"# HELP memora_cross_encoder_reranking_latency_ms Average latency of neural cross-encoder in milliseconds",
-            f"# TYPE memora_cross_encoder_reranking_latency_ms gauge",
+            "# HELP memora_cross_encoder_reranking_latency_ms Average latency of neural cross-encoder in milliseconds",
+            "# TYPE memora_cross_encoder_reranking_latency_ms gauge",
             f"memora_cross_encoder_reranking_latency_ms {s['cross_encoder_reranking_latency_ms']}",
-            f"# HELP memora_predictive_context_hits Number of times experience memories were predictively injected",
-            f"# TYPE memora_predictive_context_hits counter",
+            "# HELP memora_predictive_context_hits Number of times experience memories were predictively injected",
+            "# TYPE memora_predictive_context_hits counter",
             f"memora_predictive_context_hits {s['predictive_context_hits']}",
-            f"# HELP memora_latency_ms API latency in milliseconds",
-            f"# TYPE memora_latency_ms summary",
+            "# HELP memora_latency_ms API latency in milliseconds",
+            "# TYPE memora_latency_ms summary",
             f'memora_latency_ms{{quantile="0.5"}} {s["latencies_ms"]["p50"]}',
             f'memora_latency_ms{{quantile="0.95"}} {s["latencies_ms"]["p95"]}',
             f'memora_latency_ms{{quantile="0.99"}} {s["latencies_ms"]["p99"]}',

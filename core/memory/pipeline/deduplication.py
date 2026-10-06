@@ -1,7 +1,7 @@
 """
 Deduplication and Contradiction Detection for Memora Write Pipeline
 """
-from typing import Optional, Tuple, List
+from typing import Optional
 from sqlalchemy.orm import Session
 from storage.relational.models import MemoryRecord, LifecycleState
 

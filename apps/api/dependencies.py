@@ -5,8 +5,6 @@ import hmac
 import os
 from typing import Optional
 from fastapi import Header, HTTPException, status
-from sqlalchemy.orm import Session
-from storage.relational.session import get_db
 from core.config import settings
 
 def get_actor_header(
@@ -22,6 +20,31 @@ def get_purpose_header(
 ) -> Optional[str]:
     """Extracts the stated purpose / intent for audit and policy verification."""
     return x_access_purpose
+
+
+#: Agents permitted to perform fabric-wide administration.
+#:
+#: Identity registration is the root of every policy decision in Memora, and the
+#: audit trail records every actor and denial reason across the mesh. Routers
+#: that expose those were authenticated but not authorised, so any agent holding
+#: a valid credential could mint a new identity — including one with
+#: role="supervisor" — and read other agents' audit entries. Verifying against a
+#: live server: intelx created agent 'rogue' with role=supervisor (HTTP 201) and
+#: read the whole audit log (HTTP 200).
+ADMIN_AGENTS = {"memora"}
+
+
+def require_admin(actor_name: str) -> str:
+    """Raise 403 unless the caller may administer the fabric."""
+    if actor_name not in ADMIN_AGENTS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"Agent '{actor_name}' may not perform fabric administration. "
+                f"Restricted to: {', '.join(sorted(ADMIN_AGENTS))}."
+            ),
+        )
+    return actor_name
 
 
 def authenticate_agent(

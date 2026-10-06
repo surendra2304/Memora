@@ -27,7 +27,7 @@ def lexical_score(query: str, text: str) -> float:
 def cosine(a: Sequence[float], b: Sequence[float]) -> float:
     if len(a) != len(b) or not a:
         return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
     return 0.0 if na == 0 or nb == 0 else dot / (na * nb)

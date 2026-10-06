@@ -3,23 +3,17 @@ Comprehensive Integration Tests for MEMORA Memory Lifecycle Manager
 Tests State Machine, Contradiction Resolution, Supersession, Soft/Hard Deletion, and Decay.
 """
 from datetime import datetime, timezone, timedelta
-import pytest
 from fastapi.testclient import TestClient
 
 from storage.relational.models import (
-    Agent,
-    Namespace,
     NamespaceType,
     MemoryRecord,
     MemoryType,
-    LifecycleState,
-    AuditLog
+    LifecycleState
 )
 from storage.vector.qdrant_adapter import vector_adapter
 from core.identity.service import IdentityService
-from core.memory.service import MemoryService
 from core.lifecycle.supersession import SupersessionEngine
-from core.lifecycle.decay import MemoryDecayEngine
 
 def test_verify_memory_endpoint(client: TestClient, test_db):
     """

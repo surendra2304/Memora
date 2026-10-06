@@ -7,19 +7,35 @@ from fastapi.testclient import TestClient
 
 from apps.api.main import app
 from adapters.base_adapter import (
-    BaseAgentAdapter,
-    MemoraAdapterError,
     MemoraAccessDeniedError,
-    MemoraSecurityViolationError,
-    MemoraNotFoundError
+    MemoraSecurityViolationError
 )
-from adapters.adapter_registry import AdapterRegistry, adapter_registry
+from adapters.adapter_registry import adapter_registry
 from core.identity.service import IdentityService
-from storage.relational.models import NamespaceType
+from storage.relational.session import get_db
 
 @pytest.fixture
-def mock_api_client():
-    return TestClient(app)
+def mock_api_client(test_db):
+    """A TestClient bound to the isolated test database.
+
+    This fixture used to return a bare TestClient(app), which leaves the app's
+    real get_db dependency in place, so every request resolved the configured
+    DATABASE_URL and touched whatever file happened to exist on disk. The tests
+    appeared to pass only because an earlier run had already created the tables
+    in that file; against a clean checkout SQLite auto-creates an empty database
+    and the very first query fails with "no such table: agents". That is why
+    these five tests passed locally but failed in CI, which starts from an
+    empty data/ directory on every run.
+
+    Routing the app at test_db makes the tests hermetic and order-independent.
+    """
+    def override_get_db():
+        yield test_db
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.pop(get_db, None)
 
 def test_adapter_registry_configuration_loading():
     """
@@ -92,15 +108,15 @@ def test_base_agent_adapter_graceful_403_access_denied_handling(mock_api_client,
     Test that BaseAgentAdapter catches HTTP 403 policy rejections and raises MemoraAccessDeniedError.
     """
     # Create private namespace for FRIDAY with a secret decision memory
-    friday = IdentityService.register_agent(test_db, "friday")
-    ns_friday = IdentityService.get_namespace_by_path(test_db, "memora://friday/private")
+    IdentityService.register_agent(test_db, "friday")
+    IdentityService.get_namespace_by_path(test_db, "memora://friday/private")
 
     friday_adapter = adapter_registry.get_adapter("friday", http_client=mock_api_client)
     res = friday_adapter.write_memory(
         content_text="Secret supervisor master architectural encryption tokens.",
         target_namespace_path="memora://friday/private"
     )
-    secret_mem_id = res["id"]
+    assert res["id"], "the secret-bearing write must still return an id"
 
     # FORGE attempts to write directly into FRIDAY's private namespace -> 403 Forbidden
     forge_adapter = adapter_registry.get_adapter("forge", http_client=mock_api_client)

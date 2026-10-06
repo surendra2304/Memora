@@ -16,6 +16,7 @@ from sqlalchemy import (
     JSON,
     Enum as SQLEnum,
     Index,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from storage.relational.base import Base, generate_uuid, get_utc_now
@@ -54,10 +55,16 @@ class Agent(Base):
     Supports hierarchical parent-subagent delegation with bounded scopes.
     """
     __tablename__ = "agents"
+    # Agent names are unique *per tenant*, not globally. A single-column unique
+    # constraint here contradicted the (name, tenant_id) lookups in
+    # IdentityService.register_agent and made it impossible for a second tenant
+    # to register an agent name the first one already used (sqlite raised
+    # "UNIQUE constraint failed: agents.name").
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_agents_tenant_name"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=generate_uuid)
     tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default", index=True)
-    name: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     role: Mapped[str] = mapped_column(String(64), nullable=False, default="worker")
     
@@ -83,10 +90,16 @@ class Namespace(Base):
     Represents logical memory boundaries (e.g. 'memora://friday/private').
     """
     __tablename__ = "namespaces"
+    # Namespace paths are unique *per tenant*, not globally. IdentityService
+    # resolve_namespace / get_namespace_by_path look namespaces up by
+    # (path, tenant_id), so a global unique constraint made it impossible for a
+    # second tenant to use a path the first one already had
+    # ("UNIQUE constraint failed: namespaces.path").
+    __table_args__ = (UniqueConstraint("tenant_id", "path", name="uq_namespaces_tenant_path"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=generate_uuid)
     tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default", index=True)
-    path: Mapped[str] = mapped_column(String(256), unique=True, index=True, nullable=False)
+    path: Mapped[str] = mapped_column(String(256), index=True, nullable=False)
     agent_id: Mapped[Optional[str]] = mapped_column(String(64), ForeignKey("agents.id", ondelete="CASCADE"), nullable=True)
     type: Mapped[NamespaceType] = mapped_column(
         SQLEnum(NamespaceType, values_callable=lambda obj: [e.value for e in obj]),
@@ -155,7 +168,11 @@ class MemoryRecord(Base):
     workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default_workspace", index=True)
     device_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default_device", index=True)
     task_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
-    idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, unique=True, index=True)
+    # Scoped to the writing identity, not globally. A global unique constraint made
+    # one agent's idempotency key shadow every other agent's inside the shared
+    # tenant: a second agent reusing the same key silently lost its own write and
+    # was handed back the first agent's record, content included.
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     namespace_id: Mapped[str] = mapped_column(String(64), ForeignKey("namespaces.id", ondelete="CASCADE"), nullable=False, index=True)
     owner_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
     memory_type: Mapped[MemoryType] = mapped_column(
@@ -193,6 +210,10 @@ class MemoryRecord(Base):
     incoming_relationships: Mapped[List["MemoryRelationship"]] = relationship("MemoryRelationship", foreign_keys="MemoryRelationship.target_memory_id", back_populates="target_memory", cascade="all, delete-orphan")
 
     __table_args__ = (
+        # Idempotency is per (tenant, writing agent). NULL is distinct from NULL in
+        # both SQLite and PostgreSQL unique indexes, so ordinary writes that carry no
+        # idempotency key are never constrained against each other.
+        Index("uq_memory_idempotency_scope", "tenant_id", "agent_id", "idempotency_key", unique=True),
         Index("ix_memory_owner_type", "owner_id", "memory_type"),
         Index("ix_memory_ns_state", "namespace_id", "lifecycle_state"),
         Index("ix_memory_tenant_owner", "tenant_id", "owner_id"),

@@ -2,7 +2,6 @@
 Comprehensive Integration Tests for MEMORA Infrastructure Finalization
 Tests Observability Metrics, Redis/Event Bus, Namespace Policy API, Memory Sharing, and Graceful Degradation.
 """
-import pytest
 from fastapi.testclient import TestClient
 
 from core.events.emitter import event_emitter
@@ -10,15 +9,11 @@ from core.identity.service import IdentityService
 from core.memory.context.builder import ContextBuilderService
 from core.metrics.collector import metrics_collector
 from storage.relational.models import (
-    Agent,
     LifecycleState,
     MemoryRecord,
     MemoryType,
-    Namespace,
     NamespaceType,
 )
-from storage.vector.embedding import EmbeddingGenerator
-from storage.vector.qdrant_adapter import vector_adapter
 
 
 def test_metrics_collector_and_endpoints(client: TestClient):
@@ -76,8 +71,8 @@ def test_namespace_policy_inspection_endpoint(client: TestClient, test_db):
     """
     Test GET /v1/namespaces/{id}/policy returns effective rules and grants.
     """
-    friday = IdentityService.register_agent(test_db, "friday", role="supervisor")
-    forge = IdentityService.register_agent(test_db, "forge", role="worker")
+    IdentityService.register_agent(test_db, "friday", role="supervisor")
+    IdentityService.register_agent(test_db, "forge", role="worker")
 
     ns = IdentityService.resolve_namespace(test_db, "memora://friday/projects/collab", default_type=NamespaceType.PROJECT_PRIVATE)
     IdentityService.grant_access(test_db, agent_name="forge", namespace_id=ns.id, actions=["read", "query"], purpose="Collab dev", ttl_hours=24)
@@ -97,7 +92,7 @@ def test_memory_sharing_endpoint(client: TestClient, test_db):
     Test POST /v1/memories/{id}/share explicitly grants access to another agent.
     """
     friday = IdentityService.register_agent(test_db, "friday")
-    forge = IdentityService.register_agent(test_db, "forge")
+    IdentityService.register_agent(test_db, "forge")
     ns = IdentityService.get_namespace_by_path(test_db, "memora://friday/private")
 
     mem = MemoryRecord(

@@ -3,7 +3,6 @@ Diary Verification Script for Memora
 Enforces strict line count, section structure, and voice rules across all diary files.
 """
 import sys
-import glob
 from pathlib import Path
 
 # Force UTF-8 on Windows stdout if possible

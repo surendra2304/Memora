@@ -1,7 +1,6 @@
 from __future__ import annotations
 import hashlib
 import math
-from typing import Sequence
 
 
 class DeterministicEmbedding:

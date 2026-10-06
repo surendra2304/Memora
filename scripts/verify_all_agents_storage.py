@@ -12,17 +12,12 @@ if str(REPO_ROOT) not in sys.path:
 
 from storage.relational.session import SessionLocal
 from storage.relational.models import (
-    Agent,
-    Namespace,
-    NamespaceType,
     MemoryRecord,
     MemoryType,
-    LifecycleState,
     AuditLog
 )
 from core.identity.service import IdentityService
 from core.memory.pipeline.write_service import MemoryWriteService
-from core.policy.engine import PolicyEngine
 from core.memory.service import MemoryService
 from core.memory.search_service import SearchService
 
@@ -86,7 +81,7 @@ def verify_all_agents():
             read_rec = MemoryService.get_memory_by_id(db, memory_id=mem_id, actor_name=name)
             assert read_rec is not None
             assert read_rec.content_text == test_content
-            print(f"    - Owner Read Check: SUCCESS")
+            print("    - Owner Read Check: SUCCESS")
             
             # 4. Isolation Verification: Another agent CANNOT read private memory without grant
             other_agent_name = "sentinel" if name != "sentinel" else "forge"
@@ -96,7 +91,7 @@ def verify_all_agents():
             except Exception:
                 denied = True
             assert denied, f"Security Violation: {other_agent_name} accessed private memory of {name}!"
-            print(f"    - Cross-Agent Isolation: ENFORCED (Blocked unauthorized peer read)")
+            print("    - Cross-Agent Isolation: ENFORCED (Blocked unauthorized peer read)")
             
             # 5. Hybrid Search Verification: Owner can search and find memory
             hits = SearchService.hybrid_search(

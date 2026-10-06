@@ -59,11 +59,42 @@ def _turso_sqlalchemy_url(url: str) -> str:
 
 def _new_sqlite_engine(url: str):
     _ensure_sqlite_dir(url)
-    return create_engine(
+
+    # Under concurrent load the default journal mode serialises readers against
+    # the single writer, and connections give up almost immediately with
+    # "database is locked". Verified with scripts/stress_memora.py: 6 agents
+    # writing while 6 readers queried produced OperationalError on both the
+    # event_log insert and the read path.
+    #
+    # WAL lets readers proceed concurrently with one writer, and busy_timeout
+    # makes a contended connection wait instead of failing. Both are set per
+    # connection because SQLite pragmas are not inherited from the file.
+    timeout_seconds = float(os.getenv("MEMORA_SQLITE_BUSY_TIMEOUT", "30"))
+
+    engine = create_engine(
         url,
-        connect_args={"check_same_thread": False} if "sqlite" in url else {},
+        connect_args={
+            "check_same_thread": False,
+            "timeout": timeout_seconds,
+        } if "sqlite" in url else {},
         echo=settings.DB_ECHO,
     )
+
+    if "sqlite" in url:
+        from sqlalchemy import event
+
+        @event.listens_for(engine, "connect")
+        def _set_sqlite_pragmas(dbapi_connection, _record):  # pragma: no cover - driver hook
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute(f"PRAGMA busy_timeout={int(timeout_seconds * 1000)}")
+                # WAL's recommended durability/performance trade-off.
+                cursor.execute("PRAGMA synchronous=NORMAL")
+            finally:
+                cursor.close()
+
+    return engine
 
 def create_db_engine():
     global _active_storage_backend, _active_storage_durable

@@ -17,7 +17,7 @@ from core.identity.service import IdentityService
 from core.policy.engine import PolicyEngine, PolicyDecision
 from core.metrics.collector import metrics_collector
 from core.events.emitter import event_emitter
-from core.memory.pipeline.secret_scanner import SecretScanner, SecretLeakageError
+from core.memory.pipeline.secret_scanner import SecretScanner
 from core.memory.pipeline.entity_extractor import EntityExtractor
 from core.memory.pipeline.deduplication import DeduplicationEngine
 from core.memory.service import PermissionDeniedError
@@ -133,7 +133,53 @@ class MemoryWriteService:
             if not actor:
                 actor = IdentityService.register_agent(db, name=resolved_actor_name, role="worker", tenant_id=resolved_tenant)
 
-            target_path = target_namespace_path or f"memora://{actor.name}/private"
+            target_path = IdentityService.validate_namespace_path(
+                target_namespace_path or f"memora://{actor.name}/private"
+            )
+
+            # ---------------------------------------------------------
+            # CLAIM CHECK: never let a caller create a namespace that
+            # belongs to somebody else.
+            #
+            # resolve_namespace creates a missing namespace owned by the
+            # CALLER. Naming a foreign path therefore minted the row with the
+            # attacker as owner, and the RULE_1 owner check at step 8 then
+            # approved the attacker's own write. Verified live: forge stored
+            # into memora://friday/private (201) and took ownership of it,
+            # after which friday itself got 403 writing to its own private
+            # space. Whoever wrote first won, and the real owner lost.
+            #
+            # The rule must not depend on the victim having registered yet.
+            # The live capture shows why: forge wrote memora://friday/private
+            # before friday had ever written anything, so the row was minted
+            # owned by forge; when friday's agent row was created afterwards,
+            # create_namespace adopted the row that already existed and friday
+            # inherited a 403 on its own private space. A check based on
+            # "is this root a registered agent" would have allowed it.
+            #
+            # memora://shared/projects/<id> is the documented shared-space idiom
+            # (see SentinelAdapter.publish_approved_remediation) and is covered
+            # by OPEN_NAMESPACE_ROOTS, so a publisher may still create it and
+            # grant peers access.
+            #
+            # An existing namespace is left alone — step 8 evaluates the caller
+            # against it properly, so a granted or shared space still works.
+            # Only *creation* is gated here.
+            # ---------------------------------------------------------
+            if IdentityService.get_namespace_by_path(db, target_path, tenant_id=resolved_tenant) is None:
+                owner_name = IdentityService.namespace_root(target_path)
+                in_own_scope = owner_name == actor.name
+                in_bounded_scope = bool(
+                    actor.bounded_scope and target_path.startswith(actor.bounded_scope)
+                )
+                if owner_name is not None and not (in_own_scope or in_bounded_scope):
+                    raise PermissionDeniedError(
+                        f"Cannot create namespace '{target_path}': it belongs to "
+                        f"agent '{owner_name}', and '{actor.name}' may only create "
+                        f"namespaces under its own name. An existing namespace can "
+                        f"still be written to if '{owner_name}' grants access."
+                    )
+
             namespace = IdentityService.resolve_namespace(db, target_path, owner_agent_id=actor.id, tenant_id=resolved_tenant)
             step_trace["step_2_authenticate_and_resolve"] = {
                 "tenant_id": resolved_tenant,
@@ -203,10 +249,14 @@ class MemoryWriteService:
             # -------------------------------------------------------------
             # STEP 6: DETECT DUPLICATES OR CONTRADICTIONS (WITH IDEMPOTENCY)
             # -------------------------------------------------------------
-            # Check Idempotency Key first
+            # Check Idempotency Key first. Scoped to the writing agent: a key is
+            # the caller's own retry token, not a fabric-wide identifier. Keying
+            # only on tenant let one agent's key swallow another agent's write and
+            # return the first agent's record, content included.
             if idempotency_key:
                 existing_idemp = db.query(MemoryRecord).filter(
                     MemoryRecord.tenant_id == resolved_tenant,
+                    MemoryRecord.agent_id == actor.name,
                     MemoryRecord.idempotency_key == idempotency_key
                 ).first()
                 if existing_idemp:
@@ -285,7 +335,15 @@ class MemoryWriteService:
             )
             canonical_evidence_refs = evidence_refs or (provenance or {}).get("evidence_refs") or []
 
+            # Caller-supplied provenance goes in FIRST so the canonical fields
+            # below always win. Spreading it last let any caller overwrite
+            # trust_level, created_by, source and confidence, so a worker agent
+            # could store a memory asserting trust_level="verified" and
+            # created_by="<some other agent>" — verified with forge writing
+            # trust_level=verified / created_by=friday / source=human_executive.
+            # Extra caller keys that do not collide are still preserved.
             combined_provenance = {
+                **(provenance or {}),
                 "source": source,
                 "source_type": canonical_source_type,
                 "trust_level": canonical_trust_level,
@@ -294,7 +352,6 @@ class MemoryWriteService:
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "expires_at": expires_at.isoformat() if expires_at else None,
                 "confidence": computed_confidence,
-                **(provenance or {}),
                 "content_sha256": content_hash,
                 "extracted_entities": extracted_meta,
                 "retention_tier": retention_tier,
@@ -358,7 +415,7 @@ class MemoryWriteService:
                         "trust_level": canonical_trust_level
                     }
                 )
-            except Exception as e:
+            except Exception:
                 vector_indexed = False
 
             storage = storage_receipt()
@@ -428,6 +485,6 @@ class MemoryWriteService:
                 is_duplicate=False
             )
 
-        except Exception as e:
+        except Exception:
             metrics_collector.record_write(success=False, is_contradiction=False, latency_ms=(time.time() - start_time) * 1000)
             raise

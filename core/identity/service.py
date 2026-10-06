@@ -3,12 +3,77 @@ Identity and Namespace Resolution Service
 Manages registered ecosystem agents, parent-subagent delegation with bounded contexts,
 and dynamic URI namespace resolution.
 """
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from datetime import datetime, timezone, timedelta
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from storage.relational.models import Agent, Namespace, NamespaceType, AccessGrant
 
+#: Path roots that are not owned by a single agent. Everything else in the first
+#: segment of a namespace path is the name of the agent that owns the space.
+OPEN_NAMESPACE_ROOTS = frozenset({"universe", "team", "public", "shared"})
+
+_NAMESPACE_PREFIX = "memora://"
+_MAX_SEGMENT_LEN = 128
+_MAX_PATH_LEN = 1024
+
+
 class IdentityService:
+    # ------------------------------------------------------------------
+    # Namespace path validation
+    # ------------------------------------------------------------------
+    @staticmethod
+    def validate_namespace_path(path: str) -> str:
+        """Normalise a namespace path and reject anything malformed.
+
+        Namespace paths were accepted verbatim, so `memora://../../etc/passwd`
+        was persisted as a real row. Paths are logical identifiers rather than
+        filesystem paths, so that alone was data hygiene — but they are also the
+        operand of prefix comparisons (a sub-agent's bounded_scope is matched
+        with `namespace.path.startswith(bounded_scope)`), so a traversal segment
+        can make a path that reads as belonging elsewhere satisfy a scope check.
+
+        Returns the normalised `memora://`-prefixed path.
+        """
+        if not isinstance(path, str):
+            raise ValueError("Namespace path must be a string.")
+        candidate = path.strip()
+        if not candidate:
+            raise ValueError("Namespace path must not be empty.")
+        if len(candidate) > _MAX_PATH_LEN:
+            raise ValueError(f"Namespace path exceeds {_MAX_PATH_LEN} characters.")
+
+        if not candidate.startswith(_NAMESPACE_PREFIX):
+            candidate = f"{_NAMESPACE_PREFIX}{candidate.lstrip('/')}"
+
+        body = candidate[len(_NAMESPACE_PREFIX):]
+        if not body:
+            raise ValueError(f"Namespace path '{path}' has no segments after 'memora://'.")
+
+        for segment in body.split("/"):
+            if segment in ("", ".", ".."):
+                raise ValueError(
+                    f"Namespace path '{path}' is malformed: segments must be non-empty "
+                    "and may not be '.' or '..'."
+                )
+            if len(segment) > _MAX_SEGMENT_LEN:
+                raise ValueError(
+                    f"Namespace path '{path}' has a segment longer than "
+                    f"{_MAX_SEGMENT_LEN} characters."
+                )
+        return candidate
+
+    @staticmethod
+    def namespace_root(path: str) -> Optional[str]:
+        """The agent that owns `path`, or None for a shared root.
+
+        `memora://forge/private` -> "forge" (owned by the forge agent)
+        `memora://team/shared`   -> None   (shared space, no single owner)
+        """
+        body = path[len(_NAMESPACE_PREFIX):] if path.startswith(_NAMESPACE_PREFIX) else path.lstrip("/")
+        root = body.split("/")[0]
+        return None if root in OPEN_NAMESPACE_ROOTS else root
+
     @staticmethod
     def register_agent(
         db: Session,
@@ -31,8 +96,21 @@ class IdentityService:
                 bounded_scope=bounded_scope
             )
             db.add(agent)
-            db.commit()
-            db.refresh(agent)
+            try:
+                db.commit()
+            except IntegrityError:
+                # Lost a race with a concurrent registration of the same
+                # (tenant_id, name). The composite unique index did its job;
+                # roll back and adopt the row the other request won with
+                # instead of surfacing a 400 to the caller.
+                db.rollback()
+                agent = db.query(Agent).filter(
+                    Agent.name == agent_name, Agent.tenant_id == tenant_id
+                ).first()
+                if agent is None:
+                    raise
+            else:
+                db.refresh(agent)
 
             # Create default private namespace for the agent if not bounded sub-agent
             if not bounded_scope:
@@ -89,8 +167,23 @@ class IdentityService:
         return subagent
 
     @staticmethod
-    def get_agent_by_name(db: Session, name: str) -> Optional[Agent]:
-        return db.query(Agent).filter(Agent.name == name.lower()).first()
+    def get_agent_by_name(
+        db: Session,
+        name: str,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[Agent]:
+        """Resolve an agent by name.
+
+        Agent names are unique per tenant, not globally. When `tenant_id` is
+        supplied the lookup is scoped to it; when it is omitted the historical
+        global behaviour is preserved so the many existing call sites keep
+        working. Callers that have an authenticated tenant in hand should pass
+        it, otherwise an agent name owned by another tenant can be resolved.
+        """
+        query = db.query(Agent).filter(Agent.name == name.lower())
+        if tenant_id is not None:
+            query = query.filter(Agent.tenant_id == tenant_id)
+        return query.first()
 
     @staticmethod
     def get_agent_by_id(db: Session, agent_id: str) -> Optional[Agent]:
@@ -108,8 +201,7 @@ class IdentityService:
         agent_id: Optional[str] = None,
         tenant_id: str = "default"
     ) -> Namespace:
-        if not path.startswith("memora://"):
-            path = f"memora://{path.lstrip('/')}"
+        path = IdentityService.validate_namespace_path(path)
 
         existing = db.query(Namespace).filter(Namespace.path == path, Namespace.tenant_id == tenant_id).first()
         if existing:
@@ -122,7 +214,18 @@ class IdentityService:
             agent_id=agent_id
         )
         db.add(namespace)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            # Same check-then-insert race as register_agent: a concurrent caller
+            # created this (tenant_id, path) first. Adopt their row.
+            db.rollback()
+            winner = db.query(Namespace).filter(
+                Namespace.path == path, Namespace.tenant_id == tenant_id
+            ).first()
+            if winner is None:
+                raise
+            return winner
         db.refresh(namespace)
         return namespace
 
@@ -134,8 +237,7 @@ class IdentityService:
         owner_agent_id: Optional[str] = None,
         tenant_id: str = "default"
     ) -> Namespace:
-        if not path.startswith("memora://"):
-            path = f"memora://{path.lstrip('/')}"
+        path = IdentityService.validate_namespace_path(path)
 
         ns = db.query(Namespace).filter(Namespace.path == path, Namespace.tenant_id == tenant_id).first()
         if ns:
@@ -187,7 +289,10 @@ class IdentityService:
         tenant_id: str = "default"
     ) -> AccessGrant:
         if not agent_id and agent_name:
-            agent = IdentityService.get_agent_by_name(db, agent_name)
+            # Scope to the caller's tenant. Agent names are unique per tenant, so
+            # an unscoped lookup could attach this grant to an identically named
+            # agent belonging to a different tenant.
+            agent = IdentityService.get_agent_by_name(db, agent_name, tenant_id=tenant_id)
             if not agent:
                 agent = IdentityService.register_agent(db, agent_name, tenant_id=tenant_id)
             resolved_agent_id = agent.id
@@ -215,7 +320,12 @@ class IdentityService:
         if grant:
             grant.actions = action_list
             grant.purpose = purpose
-            grant.expires_at = expires_at
+            # Only move the expiry when the caller actually specified one. The
+            # unconditional assignment silently converted a time-boxed grant into
+            # a permanent one whenever someone re-granted to change the action
+            # list, which is a privilege upgrade nobody asked for.
+            if expires_at is not None:
+                grant.expires_at = expires_at
         else:
             grant = AccessGrant(
                 tenant_id=tenant_id,
@@ -231,11 +341,25 @@ class IdentityService:
         return grant
 
     @staticmethod
-    def revoke_access(db: Session, agent_id: str, namespace_id: str) -> bool:
-        grant = db.query(AccessGrant).filter(
+    def revoke_access(
+        db: Session,
+        agent_id: str,
+        namespace_id: str,
+        tenant_id: Optional[str] = None,
+    ) -> bool:
+        """Revoke a grant.
+
+        `tenant_id` scopes the lookup so a caller cannot revoke a grant that
+        belongs to another tenant. Omitted preserves the previous global
+        behaviour for existing callers.
+        """
+        query = db.query(AccessGrant).filter(
             AccessGrant.agent_id == agent_id,
             AccessGrant.namespace_id == namespace_id
-        ).first()
+        )
+        if tenant_id is not None:
+            query = query.filter(AccessGrant.tenant_id == tenant_id)
+        grant = query.first()
         if grant:
             db.delete(grant)
             db.commit()

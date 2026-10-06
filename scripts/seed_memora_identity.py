@@ -6,7 +6,6 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from storage.relational.session import SessionLocal
-from storage.relational.models import MemoryRecord, MemoryType, LifecycleState
 from core.identity.service import IdentityService
 from adapters.ecosystem import EcosystemMemoryAdapter
 from core.memory.service import MemoryService

@@ -3,7 +3,7 @@ Policy Engine for Memora
 Evaluates access control across 5 operational dimensions:
 Who, What, Where, Why, How long.
 """
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 

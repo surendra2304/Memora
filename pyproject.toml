@@ -21,6 +21,16 @@ dependencies = [
     "psycopg2-binary>=2.9.9",
     "asyncpg>=0.29.0",
     "redis>=5.0.3",
+    # The vector adapter imports qdrant_client lazily, but it is the dense leg of
+    # hybrid search and must be present for a real deployment.
+    "qdrant-client>=1.8.0",
+    # Turso cloud sync and the mesh envelope path use urllib, but the startup
+    # import in apps/api/main.py and scripts use requests directly.
+    "requests>=2.31.0",
+    # adapters/adapter_config.yaml is loaded with PyYAML.
+    "pyyaml>=6.0.1",
+    # core/config.py reads .env through pydantic-settings, which needs this.
+    "python-dotenv>=1.0.0",
     "python-multipart>=0.0.9",
     "sqlalchemy-libsql==0.2.0",
 ]
@@ -32,6 +42,36 @@ dev = [
     "httpx>=0.27.0",
     "ruff>=0.3.0",
 ]
+
+[tool.ruff]
+# This codebase was written without a formatter; a 120-column budget keeps the
+# lint signal to real defects instead of reporting every long line in the repo.
+line-length = 120
+target-version = "py311"
+extend-exclude = ["migrations", "data"]
+
+[tool.ruff.lint]
+# F: real defects (unused/undefined names, redefinitions).
+# E9: syntax-level errors.
+# B: bugbear — mutable defaults, bare excepts, mutable loop bindings.
+# SIM/RET are deliberately not enabled; they are stylistic and would produce
+# thousands of findings that obscure the ones that matter.
+select = ["F", "E9", "B"]
+ignore = [
+    # Bare `except Exception` is a deliberate degradation strategy throughout the
+    # storage and vector layers; each site is reviewed individually.
+    "E722",
+    # `Depends(...)` / `Query(...)` in a signature default is the FastAPI
+    # dependency-injection idiom, not a mutable-default bug.
+    "B008",
+    # `raise ... from exc` is good practice but is a readability change, not a
+    # defect, and touching every raise site would dwarf the fixes it rides with.
+    "B904",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately shadow names and leave fixtures unused.
+"tests/*" = ["B011"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

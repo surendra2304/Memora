@@ -2,13 +2,11 @@
 MEMORA v1 Namespace Policy Endpoints
 Provides GET /v1/namespaces/{id}/policy to inspect effective access rules and grants.
 """
-from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from storage.relational.session import get_db
 from storage.relational.models import Namespace, AccessGrant, Agent, NamespaceType
-from core.identity.service import IdentityService
 from apps.api.dependencies import get_actor_header
 
 router = APIRouter(prefix="/v1/namespaces", tags=["v1 Namespaces"])

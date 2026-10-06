@@ -91,7 +91,7 @@ def run_e2e_test():
         db.commit()
         print(f"  [+] Provisioned Tenant A ({tenant_a}) Agents: {friday.name} ({friday.id}), {sentinel.name}, {forge.name}, {worker.name}")
         print(f"  [+] Provisioned Tenant B ({tenant_b}) Agent: {rogue.name} ({rogue.id})")
-        print(f"  [+] Namespaces created: global, sentinel-private, quantum-auth shared")
+        print("  [+] Namespaces created: global, sentinel-private, quantum-auth shared")
 
         # -------------------------------------------------------------
         # STAGE 2: PRE-PERSISTENCE SECRET SCANNING GATE
@@ -177,12 +177,12 @@ def run_e2e_test():
         # 4b. Supervisor Bypass Check: Friday attempts to access Sentinel's private store without grant
         dec_sup = PolicyEngine.evaluate_access(db, friday, ns_sentinel_private, "read")
         assert dec_sup.allowed is False
-        print(f"  [+] Supervisor loophole check: Friday without explicit grant is DENIED by default")
+        print("  [+] Supervisor loophole check: Friday without explicit grant is DENIED by default")
 
         # 4c. Forge attempts to access Sentinel private without promotion
         dec_forge = PolicyEngine.evaluate_access(db, forge, ns_sentinel_private, "read")
         assert dec_forge.allowed is False
-        print(f"  [+] Peer agent without explicit grant is DENIED by default")
+        print("  [+] Peer agent without explicit grant is DENIED by default")
 
         # 4d. Explicit Promotion: Sentinel grants Forge read capability on remediation
         IdentityService.grant_access(
