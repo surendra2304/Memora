@@ -7,7 +7,7 @@ import time
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -53,9 +53,37 @@ def _elapsed_ms(t0: float) -> int:
     return int((time.time() - t0) * 1000)
 
 
-@task_router.post("/execute", response_model=TaskResultModel, status_code=status.HTTP_200_OK)
+#: HTTP status for each envelope outcome.
+#:
+#: The endpoint used to return 200 for every result, including failures, because
+#: the route pinned status_code=200 and the outcome lived only in the body. A
+#: caller that checks the HTTP status - which is the normal thing to do - saw a
+#: successful response for a task that did nothing. This is the same class of
+#: defect as the original dead write path, which answered 200 with
+#: status="ERROR" having stored no memory.
+#:
+#: The envelope body is unchanged, so callers that parse it keep working; the
+#: status code now tells the truth as well.
+_HTTP_FOR_STATUS = {
+    "SUCCESS": status.HTTP_200_OK,
+    "DENIED": status.HTTP_403_FORBIDDEN,
+    # 422 as a literal: the named constant was renamed in Starlette
+    # (HTTP_422_UNPROCESSABLE_ENTITY -> _CONTENT) and using either name pins the
+    # code to one side of that rename or emits a deprecation warning.
+    "ERROR": 422,
+    "REJECTED": 422,
+}
+
+
+def _http_status_for(envelope_status: str) -> int:
+    """500 for anything unrecognised, so a new outcome cannot masquerade as 200."""
+    return _HTTP_FOR_STATUS.get(envelope_status, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@task_router.post("/execute", response_model=TaskResultModel)
 def execute_task(
     envelope: TaskEnvelopeModel,
+    response: Response,
     db: Session = Depends(get_db),
     actor: str = Depends(get_actor_header),
 ) -> TaskResultModel:
@@ -68,18 +96,21 @@ def execute_task(
     action = envelope.action.lower().strip()
 
     if action in _STORE_ACTIONS:
-        return _execute_store(db, envelope, actor, t0)
-    if action in _QUERY_ACTIONS:
-        return _execute_query(db, envelope, actor, t0)
+        result = _execute_store(db, envelope, actor, t0)
+    elif action in _QUERY_ACTIONS:
+        result = _execute_query(db, envelope, actor, t0)
+    else:
+        result = TaskResultModel(
+            task_id=envelope.task_id,
+            target_agent=envelope.target_agent,
+            status="ERROR",
+            error=f"Unknown action '{envelope.action}'. Expected one of "
+                  f"{sorted(_STORE_ACTIONS | _QUERY_ACTIONS)}.",
+            execution_time_ms=_elapsed_ms(t0),
+        )
 
-    return TaskResultModel(
-        task_id=envelope.task_id,
-        target_agent="memora",
-        status="ERROR",
-        error=f"Unknown action '{envelope.action}'. Expected one of "
-              f"{sorted(_STORE_ACTIONS | _QUERY_ACTIONS)}.",
-        execution_time_ms=_elapsed_ms(t0),
-    )
+    response.status_code = _http_status_for(result.status)
+    return result
 
 
 def _execute_store(
@@ -126,7 +157,7 @@ def _execute_store(
         # so the calling agent can act on it, but never as SUCCESS.
         return TaskResultModel(
             task_id=envelope.task_id,
-            target_agent="memora",
+            target_agent=envelope.target_agent,
             status="REJECTED",
             error=f"{type(exc).__name__}: {exc}",
             summary="Write rejected by Memora security policy.",
@@ -135,7 +166,7 @@ def _execute_store(
     except PermissionDeniedError as exc:
         return TaskResultModel(
             task_id=envelope.task_id,
-            target_agent="memora",
+            target_agent=envelope.target_agent,
             status="DENIED",
             error=str(exc),
             summary="Write denied by the Memora policy engine.",
@@ -144,7 +175,7 @@ def _execute_store(
     except MemoryPipelineError as exc:
         return TaskResultModel(
             task_id=envelope.task_id,
-            target_agent="memora",
+            target_agent=envelope.target_agent,
             status="ERROR",
             error=str(exc),
             summary="Memory write pipeline rejected the payload.",
@@ -154,7 +185,7 @@ def _execute_store(
     lat = _elapsed_ms(t0)
     return TaskResultModel(
         task_id=envelope.task_id,
-        target_agent="memora",
+        target_agent=envelope.target_agent,
         status="SUCCESS",
         result={
             "memory_id": write_res.record.id,
@@ -196,7 +227,7 @@ def _execute_query(
     if not query:
         return TaskResultModel(
             task_id=envelope.task_id,
-            target_agent="memora",
+            target_agent=envelope.target_agent,
             status="ERROR",
             error="A query, task_query, prompt, or content field is required to recall memories.",
             execution_time_ms=_elapsed_ms(t0),
@@ -213,7 +244,7 @@ def _execute_query(
     except PermissionDeniedError as exc:
         return TaskResultModel(
             task_id=envelope.task_id,
-            target_agent="memora",
+            target_agent=envelope.target_agent,
             status="DENIED",
             error=str(exc),
             execution_time_ms=_elapsed_ms(t0),
@@ -233,7 +264,7 @@ def _execute_query(
     lat = _elapsed_ms(t0)
     return TaskResultModel(
         task_id=envelope.task_id,
-        target_agent="memora",
+        target_agent=envelope.target_agent,
         status="SUCCESS",
         result={"count": len(recalled), "memories": recalled, "query": query},
         summary=f"Retrieved {len(recalled)} memory item(s) in {lat}ms",
