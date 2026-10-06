@@ -31,6 +31,7 @@ Every number below comes from a command I ran, not from reading code.
 | Typecheck | — | none configured in the repo |
 | Boot | real ASGI lifespan + `GET /health` | **200 healthy** |
 | Migrations | `upgrade head → downgrade base → upgrade head` | **converges, fully reversible** |
+| Migrations vs real data | `c2407f92e1ab → head` on a populated copy of `data/memora.db` | **4,960 rows preserved, 0 NULLs** |
 | Concurrency | `scripts/stress_memora.py --agents 6 --writes 25 --readers 6` | **PASSED** |
 | Secrets | `SecretScanner` over 202 tracked files | **no real credentials** |
 | OpenAPI surface | `app.openapi()['paths']` | **45 paths** (was 35) |
@@ -138,6 +139,8 @@ defaults to a dry run.
 | Full test suite (367) | **REAL** | `pytest -q` → 367 passed |
 | Lint gate | **REAL** | `ruff check .` clean; CI enforces it |
 | Migration chain reversibility | **REAL** | upgrade→base→head on a fresh DB; CI enforces |
+| Migrations against real data | **REAL** | `c2407f92e1ab → head` on a populated copy of `data/memora.db`: 4,960 memory_records / 10 agents / 29 namespaces all preserved, `tenant_id` backfilled with 0 NULLs |
+| Per-tenant uniqueness (HIGH-6) | **REAL** | verified behaviourally on that migrated copy: duplicate `(default, friday)` rejected, same name in a *different* tenant accepted, duplicate namespace path rejected |
 | App boot + `/health` | **REAL** | ASGI lifespan served 200, locally and in CI |
 | Concurrency safety | **REAL** | stress harness PASSED, 150/150 writes, 0 lock errors |
 | WAL + busy_timeout engaged | **REAL** | `PRAGMA` probe: `journal_mode=wal`, `busy_timeout=30000`, `synchronous=1` |
