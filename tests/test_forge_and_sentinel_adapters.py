@@ -11,8 +11,6 @@ from adapters.adapter_registry import adapter_registry
 from adapters.forge.adapter import ForgeAdapter
 from adapters.sentinel.adapter import SentinelAdapter
 from adapters.base_adapter import MemoraAccessDeniedError
-from core.identity.service import IdentityService
-from storage.relational.models import NamespaceType
 
 @pytest.fixture
 def mock_client():

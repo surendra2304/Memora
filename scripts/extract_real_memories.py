@@ -3,7 +3,6 @@ Extract real memory records directly from the 9 agent databases and systems
 """
 import os
 import sqlite3
-import json
 
 base = 'd:/FRIDAY Universe'
 

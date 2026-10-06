@@ -2,14 +2,9 @@
 Comprehensive Integration Tests for MEMORA Hybrid Storage and Search Architecture
 Tests Vector Embedding, Keyword Full-Text Search, Graph Store, and Reciprocal Rank Fusion (RRF).
 """
-import pytest
 from fastapi.testclient import TestClient
 from storage.relational.models import (
-    Agent,
-    Namespace,
-    NamespaceType,
     MemoryRecord,
-    MemoryRelationship,
     MemoryType,
     LifecycleState
 )

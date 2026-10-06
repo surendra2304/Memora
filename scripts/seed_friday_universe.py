@@ -440,7 +440,7 @@ def seed_database():
 
         db.commit()
 
-        print(f"\n[SUCCESS] Successfully seeded FRIDAY Universe!")
+        print("\n[SUCCESS] Successfully seeded FRIDAY Universe!")
         print(f"  Total Agents: {db.query(Agent).count()}")
         print(f"  Total Memories: {db.query(MemoryRecord).count()}")
         for a in db.query(Agent).all():

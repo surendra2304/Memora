@@ -7,24 +7,18 @@ Integration tests for Memora Deep Upgrade core system changes:
 - Cursor-based batched decay
 - Temporal validity & entity boost in hybrid search
 """
-import pytest
 from datetime import datetime, timezone, timedelta
 
 from storage.relational.models import (
-    Agent,
-    Namespace,
     NamespaceType,
     MemoryRecord,
     MemoryType,
-    LifecycleState,
-    AccessGrant,
-    AuditLog,
     DeletionTombstone,
 )
 from core.memory.schemas import MemoryRecordCreate, MemoryQuery
 from core.identity.service import IdentityService
 from core.policy.engine import PolicyEngine
-from core.memory.service import MemoryService, PermissionDeniedError
+from core.memory.service import MemoryService
 from core.memory.search_service import SearchService
 from core.lifecycle.decay import MemoryDecayEngine
 

@@ -1,7 +1,6 @@
 """
 Tests for Canonical Relational Data Models
 """
-import pytest
 from storage.relational.models import (
     Agent,
     Namespace,

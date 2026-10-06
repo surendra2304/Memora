@@ -7,7 +7,6 @@ idempotency, poison memory defenses, FRIDAY token budgeting, and peer contracts.
 import pytest
 from datetime import datetime, timezone, timedelta
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
 
 from apps.api.main import app
 from storage.relational.session import get_db
@@ -19,10 +18,9 @@ from storage.relational.models import (
     DeletionTombstone
 )
 from core.identity.service import IdentityService
-from core.memory.service import MemoryService, PermissionDeniedError, MemoryNotFoundError
-from core.memory.schemas import MemoryRecordCreate, MemoryQuery, MemoryPromoteRequest
+from core.memory.service import MemoryService, PermissionDeniedError
+from core.memory.schemas import MemoryRecordCreate, MemoryQuery
 from core.memory.pipeline.write_service import MemoryWriteService
-from core.memory.pipeline.poison_detector import PoisonDetector, PoisonMemoryViolation
 from core.memory.context.builder import ContextBuilderService
 from adapters.ecosystem import EcosystemMemoryAdapter
 from core.config import Settings

@@ -1,8 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable, Mapping
-import time
+from typing import Mapping
 import uuid
 
 from .models import MemoryItem, MemoryKind, MemoryScope, Provenance, Lifecycle

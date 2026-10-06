@@ -3,15 +3,11 @@ Comprehensive Integration Tests for MEMORA Retrieval & Context Pipeline
 Tests ContextBuilderService, ContextReranker, Token Budgeting, Policy Filtering, and Context Bundles.
 """
 from datetime import datetime, timezone, timedelta
-import pytest
 from fastapi.testclient import TestClient
 
 from storage.relational.models import (
-    Agent,
-    Namespace,
     NamespaceType,
     MemoryRecord,
-    MemoryRelationship,
     MemoryType,
     LifecycleState
 )
@@ -19,7 +15,7 @@ from storage.vector.embedding import EmbeddingGenerator
 from storage.vector.qdrant_adapter import vector_adapter
 from core.identity.service import IdentityService
 from core.memory.graph_service import GraphService
-from core.memory.search_service import SearchService, SearchResultItem
+from core.memory.search_service import SearchResultItem
 from core.memory.context.reranker import ContextReranker
 from core.memory.context.budgeter import ContextBudgeter
 from core.memory.context.builder import ContextBuilderService
@@ -95,7 +91,7 @@ def test_fail_closed_policy_isolation_in_context_bundle(test_db):
     Test that FORGE cannot receive FRIDAY's private memories in a Context Bundle.
     """
     friday = IdentityService.register_agent(test_db, "friday")
-    forge = IdentityService.register_agent(test_db, "forge")
+    IdentityService.register_agent(test_db, "forge")
 
     ns_friday = IdentityService.get_namespace_by_path(test_db, "memora://friday/private")
     ns_shared = IdentityService.resolve_namespace(test_db, "memora://universe/global", default_type=NamespaceType.UNIVERSE_GLOBAL)

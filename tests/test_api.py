@@ -1,9 +1,7 @@
 """
 Integration Tests for FastAPI Endpoints
 """
-import pytest
 from fastapi.testclient import TestClient
-from storage.relational.models import MemoryType, LifecycleState
 
 def test_health_check(client: TestClient):
     response = client.get("/health")

@@ -5,7 +5,7 @@ and semantic Subject-Predicate-Object (SPO) relationship triples.
 Supports local rule-based deep semantic parsing and optional LLM API fallback.
 """
 import re
-from typing import Dict, Any, List, Optional, Set, Tuple
+from typing import Dict, Any, List, Set
 import logging
 
 logger = logging.getLogger(__name__)

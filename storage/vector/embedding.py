@@ -4,7 +4,7 @@ Produces dense vector representations (e.g. all-MiniLM-L6-v2 384-dimensional).
 """
 import math
 import hashlib
-from typing import List, Optional
+from typing import List
 
 class EmbeddingGenerator:
     DEFAULT_DIMENSION = 384

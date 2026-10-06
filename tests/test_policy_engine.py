@@ -2,21 +2,12 @@
 Comprehensive Tests for Identity, Namespace Resolution, and 5D Policy Engine
 """
 from datetime import datetime, timezone, timedelta
-import pytest
 from storage.relational.models import (
-    Agent,
-    Namespace,
     NamespaceType,
-    AccessGrant,
-    AuditLog,
-    MemoryRecord,
-    MemoryType,
-    LifecycleState
+    AuditLog
 )
 from core.identity.service import IdentityService
-from core.policy.engine import PolicyEngine, PolicyDecision
-from core.memory.service import MemoryService, PermissionDeniedError
-from core.memory.schemas import MemoryRecordCreate, MemoryQuery
+from core.policy.engine import PolicyEngine
 
 def test_rule_1_private_by_default_isolation(test_db):
     """
@@ -24,7 +15,7 @@ def test_rule_1_private_by_default_isolation(test_db):
     FORGE cannot read FRIDAY's private namespace, and vice versa.
     """
     # Create agents
-    friday = IdentityService.register_agent(test_db, "friday", role="supervisor")
+    IdentityService.register_agent(test_db, "friday", role="supervisor")
     forge = IdentityService.register_agent(test_db, "forge", role="worker")
 
     # FRIDAY's private namespace
@@ -182,7 +173,7 @@ def test_time_bounded_and_purpose_grants(test_db):
 
     # Time-bounded grant in the past (expired)
     past_time = datetime.now(timezone.utc) - timedelta(hours=2)
-    expired_grant = IdentityService.grant_access(
+    IdentityService.grant_access(
         test_db,
         agent_id=intelx.id,
         namespace_id=target_ns.id,
@@ -197,7 +188,7 @@ def test_time_bounded_and_purpose_grants(test_db):
 
     # Update to valid future expiration
     future_time = datetime.now(timezone.utc) + timedelta(days=7)
-    valid_grant = IdentityService.grant_access(
+    IdentityService.grant_access(
         test_db,
         agent_id=intelx.id,
         namespace_id=target_ns.id,

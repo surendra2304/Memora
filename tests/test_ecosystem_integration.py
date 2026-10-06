@@ -18,9 +18,7 @@ from adapters.friday.adapter import FridayAdapter
 from adapters.sentinel.adapter import SentinelAdapter
 from adapters.forge.adapter import ForgeAdapter
 from adapters.base_adapter import MemoraAccessDeniedError
-from core.identity.service import IdentityService
 from core.metrics.collector import metrics_collector
-from storage.relational.models import NamespaceType
 
 from storage.relational.session import get_db
 

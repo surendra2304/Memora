@@ -4,7 +4,7 @@ Extracts user preferences, declarative facts, constraints, and favorites
 from conversation turns and operational text.
 """
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 class ExtractedFact:
     def __init__(
@@ -132,7 +132,7 @@ class PreferenceExtractor:
                     
                     # Special semantic expansion for prawns/curry
                     if "prawn" in item_name:
-                        normalized = f"User likes prawns. User's favourite curry/food is prawns."
+                        normalized = "User likes prawns. User's favourite curry/food is prawns."
                         entities.extend(["prawns", "curry", "food", "favorite"])
                     elif is_food:
                         normalized = f"User likes {item_name} (preference: food/dish)."

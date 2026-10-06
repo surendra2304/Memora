@@ -3,7 +3,7 @@ Tests for Core Memory Service and Ecosystem Adapters
 """
 import pytest
 from core.identity.service import IdentityService
-from core.memory.service import MemoryService, MemoryNotFoundError, PermissionDeniedError
+from core.memory.service import MemoryService, PermissionDeniedError
 from core.memory.schemas import MemoryRecordCreate, MemoryQuery
 from adapters.ecosystem import EcosystemMemoryAdapter
 from storage.relational.models import MemoryType, LifecycleState, NamespaceType
@@ -22,7 +22,7 @@ def test_identity_and_namespace_creation(test_db):
     assert team_ns.type == NamespaceType.TEAM_SHARED
 
 def test_memory_crud_service(test_db):
-    agent = IdentityService.register_agent(test_db, "nexus")
+    IdentityService.register_agent(test_db, "nexus")
     
     # Ingest
     mem_create = MemoryRecordCreate(
@@ -50,12 +50,12 @@ def test_memory_crud_service(test_db):
     assert retrieved.content_text == record.content_text
 
     # Unauthorized access rejection
-    other_agent = IdentityService.register_agent(test_db, "rogue_agent")
+    IdentityService.register_agent(test_db, "rogue_agent")
     with pytest.raises(PermissionDeniedError):
         MemoryService.get_memory_by_id(test_db, record.id, actor_name="rogue_agent")
 
 def test_ecosystem_adapters(test_db):
-    friday = IdentityService.register_agent(test_db, "friday")
+    IdentityService.register_agent(test_db, "friday")
     
     # Format episodic event
     episodic_in = EcosystemMemoryAdapter.format_episodic_event(

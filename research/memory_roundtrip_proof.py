@@ -161,13 +161,6 @@ def main() -> int:
             f"HTTP {r.status_code} body={r.text[:220]}",
         )
 
-        mem_id = None
-        if wrote:
-            try:
-                mem_id = r.json().get("memory_id") or r.json().get("id")
-            except Exception:
-                pass
-
         # ------------------------------------------------------------------
         # 3. The memory must be genuinely recallable, not just accepted.
         r = httpx.get(f"{base}/v1/memories/search", params={"q": marker}, headers=good, timeout=30)

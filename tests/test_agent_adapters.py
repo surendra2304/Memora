@@ -7,15 +7,11 @@ from fastapi.testclient import TestClient
 
 from apps.api.main import app
 from adapters.base_adapter import (
-    BaseAgentAdapter,
-    MemoraAdapterError,
     MemoraAccessDeniedError,
-    MemoraSecurityViolationError,
-    MemoraNotFoundError
+    MemoraSecurityViolationError
 )
-from adapters.adapter_registry import AdapterRegistry, adapter_registry
+from adapters.adapter_registry import adapter_registry
 from core.identity.service import IdentityService
-from storage.relational.models import NamespaceType
 
 @pytest.fixture
 def mock_api_client():
@@ -92,15 +88,15 @@ def test_base_agent_adapter_graceful_403_access_denied_handling(mock_api_client,
     Test that BaseAgentAdapter catches HTTP 403 policy rejections and raises MemoraAccessDeniedError.
     """
     # Create private namespace for FRIDAY with a secret decision memory
-    friday = IdentityService.register_agent(test_db, "friday")
-    ns_friday = IdentityService.get_namespace_by_path(test_db, "memora://friday/private")
+    IdentityService.register_agent(test_db, "friday")
+    IdentityService.get_namespace_by_path(test_db, "memora://friday/private")
 
     friday_adapter = adapter_registry.get_adapter("friday", http_client=mock_api_client)
     res = friday_adapter.write_memory(
         content_text="Secret supervisor master architectural encryption tokens.",
         target_namespace_path="memora://friday/private"
     )
-    secret_mem_id = res["id"]
+    assert res["id"], "the secret-bearing write must still return an id"
 
     # FORGE attempts to write directly into FRIDAY's private namespace -> 403 Forbidden
     forge_adapter = adapter_registry.get_adapter("forge", http_client=mock_api_client)
