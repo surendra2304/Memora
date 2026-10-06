@@ -30,7 +30,7 @@ from core.policy.engine import PolicyEngine, PolicyDecision
 from core.events.emitter import event_emitter
 from core.memory.experience_service import ExperienceLearnerService, LearnExperienceRequest
 from core.memory.pipeline.preference_extractor import PreferenceExtractor
-from apps.api.dependencies import authenticate_agent, get_actor_header, get_purpose_header
+from apps.api.dependencies import authenticate_agent, get_actor_header, get_purpose_header, require_admin
 from datetime import datetime
 import logging
 
@@ -173,9 +173,13 @@ class MemorySupersedeRequest(BaseModel):
     reason: Optional[str] = None
 
 class MemoryDecayRequest(BaseModel):
-    decay_rate_per_day: float = 0.02
-    unverified_threshold_days: int = 14
-    archive_threshold: float = 0.15
+    #: Bounded on purpose. `decay_factor` is `rate * (age - threshold + 1)`, so an
+    #: unbounded rate drives every record straight to the 0.01 floor, and a rate of
+    #: 1e9 paired with archive_threshold 999 archived the entire corpus in one call.
+    #: importance is a 0..1 quantity, so both thresholds are bounded to match.
+    decay_rate_per_day: float = Field(default=0.02, ge=0.0, le=1.0)
+    unverified_threshold_days: int = Field(default=14, ge=0, le=3650)
+    archive_threshold: float = Field(default=0.15, ge=0.0, le=1.0)
 
 class MemoryRelationshipCreate(BaseModel):
     target_memory_id: str = Field(..., description="Destination memory ID")
@@ -650,6 +654,16 @@ def trigger_memory_decay(
     actor_name: str = Depends(get_actor_header),
     db: Session = Depends(get_db)
 ):
+    """Run one retention cycle over the corpus.
+
+    Fabric administration, not a per-record operation: a cycle rewrites importance
+    and archives records across the whole tenant, so it is gated the same way as
+    /v1/resilience/repair and /v1/reflection/run. Verified against a live server
+    that without this gate intelx - holding no grant on any of forge's namespaces -
+    archived all 10 records in the corpus, 9 of them forge's, and got HTTP 200.
+    """
+    require_admin(actor_name)
+
     rate = req.decay_rate_per_day if req else 0.02
     threshold_days = req.unverified_threshold_days if req else 14
     archive_thresh = req.archive_threshold if req else 0.15

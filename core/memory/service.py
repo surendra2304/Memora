@@ -687,11 +687,17 @@ class MemoryService:
         actor_name: Optional[str] = None
     ) -> Dict[str, Any]:
         actor = IdentityService.get_agent_by_name(db, actor_name) if actor_name else None
+        # Scope the cycle to the acting tenant. MemoryDecayEngine accepts a
+        # tenant_id but it was never passed, so a cycle swept every record in the
+        # database across all tenants - a maintenance pass for one tenant could
+        # archive another tenant's records.
+        tenant_id = getattr(actor, "tenant_id", None) or "default"
         results = MemoryDecayEngine.apply_time_decay(
             db=db,
             decay_rate_per_day=decay_rate_per_day,
             unverified_threshold_days=unverified_threshold_days,
-            archive_importance_threshold=archive_threshold
+            archive_importance_threshold=archive_threshold,
+            tenant_id=tenant_id
         )
 
         PolicyEngine.log_audit_decision(
