@@ -2,7 +2,6 @@
 Memora Core Configuration
 Manages environment variables, connection URLs, and system constants.
 """
-import os
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -35,6 +34,17 @@ class Settings(BaseSettings):
     MEMORA_MASTER_KEY: Optional[str] = None
     DEFAULT_CONFIDENCE_THRESHOLD: float = 0.75
     DEFAULT_IMPORTANCE_THRESHOLD: float = 0.50
+
+    # CORS. Comma-separated list of allowed browser origins, e.g.
+    # MEMORA_CORS_ORIGINS=https://app.example.com,https://admin.example.com
+    # An empty value (the default) allows no cross-origin browser access, which
+    # is correct for an agent-to-agent API. "*" is permitted but is mutually
+    # exclusive with credentialed requests per the CORS spec, so credentials are
+    # disabled automatically when it is used.
+    MEMORA_CORS_ORIGINS: str = ""
+
+    def get_cors_origins(self) -> list[str]:
+        return [o.strip() for o in self.MEMORA_CORS_ORIGINS.split(",") if o.strip()]
 
     def get_memora_api_key(self) -> str:
         key = self.MEMORA_API_KEY or self.MEMORA_MASTER_KEY
