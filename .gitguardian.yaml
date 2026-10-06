@@ -16,7 +16,17 @@
 # placeholders (hunter2secret, SuperSecret123). None is a live credential.
 #
 # The exclusion is scoped to these two paths only, so a genuine secret committed
-# anywhere else - including in these files' neighbours - still fails the build.
+# anywhere else still fails a scan.
+#
+# SCOPE OF THIS FILE - read before assuming the PR check is fixed. This config is
+# honoured by the ggshield CLI (local runs, pre-commit hooks, the IDE extension).
+# It is NOT read by the GitGuardian GitHub App that reports on pull requests.
+# Verified empirically on PR #1: this file was added at the branch tip, the app
+# re-scanned (25 commits, up from 24) and returned the identical 8 findings in the
+# identical 2 files. Clearing that check requires marking those 8 incidents as
+# false positives in the GitGuardian dashboard, which cannot be done from the
+# repository. Until someone does, "GitGuardian Security Checks" stays red on this
+# branch while the project's own `verify` gate passes.
 version: 2
 secret:
   ignored_paths:
