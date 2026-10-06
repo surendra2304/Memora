@@ -4,10 +4,8 @@ Synthesizes task outcomes (successes and failures) into high-importance
 Experience memories (MemoryType.EXPERIENCE) providing predictive operational guidelines,
 failure mode alerts, and automated behavioral adaptations across all 9 agents.
 """
-import os
-import re
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
@@ -38,7 +36,6 @@ class ExperienceLearnerService:
         Derives concrete, actionable prevention rules from specific error signatures.
         """
         err_lower = (error_log or "").lower()
-        dom = domain or task_name
 
         if "permission" in err_lower or "access denied" in err_lower or "elevat" in err_lower:
             return f"Verify process security privilege and administrator execution rights before running '{task_name}'."

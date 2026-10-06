@@ -8,7 +8,7 @@ import math
 import time
 import re
 import logging
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Optional
 from datetime import datetime, timezone
 from storage.relational.models import MemoryRecord, MemoryType
 from core.memory.search_service import SearchResultItem
@@ -90,7 +90,7 @@ class NeuralCrossEncoderEngine:
         if not q_tokens or not t_tokens:
             return 0.1
 
-        stopwords = {"the", "a", "an", "is", "are", "and", "or", "in", "on", "at", "to", "for", "of", "with", "by", "how", "do", "we", "at"}
+        stopwords = {"the", "a", "an", "is", "are", "and", "or", "in", "on", "at", "to", "for", "of", "with", "by", "how", "do", "we"}
         meaningful_q = q_tokens - stopwords
         if not meaningful_q:
             meaningful_q = q_tokens

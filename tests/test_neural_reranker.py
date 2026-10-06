@@ -3,11 +3,10 @@ Unit and Integration Tests for Neural Cross-Encoder Reranker
 Compares Heuristic-only baseline vs Neural Cross-Encoder reranking
 proving conceptual relevance is prioritized over superficial keyword overlap.
 """
-import pytest
 from datetime import datetime, timezone, timedelta
 from storage.relational.models import MemoryRecord, MemoryType, LifecycleState
 from core.memory.search_service import SearchResultItem
-from core.memory.context.reranker import ContextReranker, NeuralCrossEncoderEngine
+from core.memory.context.reranker import ContextReranker
 
 def test_heuristic_vs_cross_encoder_semantic_prioritization(test_db):
     """
