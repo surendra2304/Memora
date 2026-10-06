@@ -7,8 +7,15 @@ from sqlalchemy.orm import Session
 from storage.relational.session import get_db
 from core.identity.service import IdentityService
 from core.memory.schemas import AgentCreate, SubAgentCreate, AgentRead
+from apps.api.dependencies import authenticate_agent
 
-router = APIRouter(prefix="/agents", tags=["Agents"])
+# Agent identity is the root of every policy decision, so identity registration
+# and enumeration require a mesh credential.
+router = APIRouter(
+    prefix="/agents",
+    tags=["Agents"],
+    dependencies=[Depends(authenticate_agent)],
+)
 
 @router.post("", response_model=AgentRead, status_code=status.HTTP_201_CREATED)
 def register_agent(agent_in: AgentCreate, db: Session = Depends(get_db)):

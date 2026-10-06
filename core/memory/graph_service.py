@@ -2,16 +2,26 @@
 Graph and Relationship Service for Memora
 Manages semantic knowledge graph edges, dependencies, entity resolution, and neighborhood traversals.
 """
-from typing import List, Optional, Dict, Any, Set
+from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
-import json
 import logging
 
 from storage.relational.models import MemoryRelationship, MemoryRecord, LifecycleState
 from core.memory.pipeline.entity_extractor import EntityExtractor
+from core.policy.engine import PolicyEngine
 
 logger = logging.getLogger(__name__)
+
+#: Canonical lifecycle states eligible for graph linkage. Kept as enum members
+#: only; mixing raw strings into the same in_() clause relies on implicit
+#: coercion the SQLAlchemy Enum type does not guarantee.
+_LINKABLE_STATES = [LifecycleState.ACTIVE, LifecycleState.VERIFIED]
+
+
+class InvalidRelationshipError(Exception):
+    """Raised when a requested graph edge cannot exist."""
+
 
 class GraphService:
     @staticmethod
@@ -27,8 +37,24 @@ class GraphService:
         relationship_type: str = "relates_to",
         weight: float = 1.0
     ) -> MemoryRelationship:
+        # A self-edge carries no information and previously returned None, which
+        # the API layer then dereferenced into an AttributeError.
         if source_memory_id == target_memory_id:
-            return None
+            raise InvalidRelationshipError("A memory cannot be linked to itself.")
+
+        # Reject dangling edges. Both endpoints must exist, otherwise the graph
+        # accumulates references to records that were never written or were since
+        # purged, and traversal silently reports phantom neighbours.
+        endpoint_ids = {source_memory_id, target_memory_id}
+        found = {
+            row[0]
+            for row in db.query(MemoryRecord.id).filter(MemoryRecord.id.in_(endpoint_ids)).all()
+        }
+        missing = endpoint_ids - found
+        if missing:
+            raise InvalidRelationshipError(
+                f"Cannot link to unknown memory id(s): {', '.join(sorted(missing))}."
+            )
 
         existing = db.query(MemoryRelationship).filter(
             MemoryRelationship.source_memory_id == source_memory_id,
@@ -70,10 +96,14 @@ class GraphService:
         if not canonical_entities:
             return []
 
-        # Find existing active memories with overlapping text/entities
+        # Find existing active memories with overlapping text/entities. Scoped to
+        # the writing record's tenant: without this the graph was wired across
+        # tenant boundaries, linking memories that no shared policy would ever
+        # allow to be read together.
         existing_records = db.query(MemoryRecord).filter(
             MemoryRecord.id != memory_record.id,
-            MemoryRecord.lifecycle_state.in_([LifecycleState.ACTIVE, LifecycleState.VERIFIED, "active", "verified"])
+            MemoryRecord.tenant_id == getattr(memory_record, "tenant_id", "default"),
+            MemoryRecord.lifecycle_state.in_(_LINKABLE_STATES)
         ).order_by(MemoryRecord.created_at.desc()).limit(50).all()
 
         created_edges = []
@@ -116,15 +146,56 @@ class GraphService:
     def get_connected_memories(
         db: Session,
         memory_id: str,
-        max_hops: int = 2
+        max_hops: int = 2,
+        actor: Optional[Any] = None,
+        purpose: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Traverses 1-hop and 2-hop neighborhoods from a focal memory node.
+
+        When an `actor` is supplied, traversal is filtered through the policy
+        engine: nodes the caller may not read are neither returned nor walked
+        through. Without this the endpoint disclosed the ids of memories in other
+        agents' private namespaces, which is a leak even with no content shown.
         """
         visited_nodes = {memory_id}
         visited_edge_keys = set()
         edges = []
         current_layer = {memory_id}
+        #: Ids the caller may not see, cached so each record is checked once.
+        readable: Dict[str, bool] = {}
+
+        def _may_read(candidate_id: str) -> bool:
+            """Fail closed: an unreadable neighbour is never revealed or traversed."""
+            if actor is None:
+                return True
+            if candidate_id in readable:
+                return readable[candidate_id]
+            record = db.query(MemoryRecord).filter(MemoryRecord.id == candidate_id).first()
+            if record is None:
+                readable[candidate_id] = False
+                return False
+            decision = PolicyEngine.evaluate_access(
+                db,
+                actor=actor,
+                namespace=record.namespace,
+                action="read",
+                purpose=purpose,
+                memory_id=record.id,
+                log_audit=False,
+            )
+            readable[candidate_id] = bool(decision.allowed)
+            return readable[candidate_id]
+
+        if actor is not None and not _may_read(memory_id):
+            # The caller cannot even read the focal node, so there is no
+            # neighbourhood to disclose.
+            return {
+                "root_memory_id": memory_id,
+                "connected_memory_ids": [],
+                "total_nodes": 0,
+                "edges": []
+            }
 
         for hop in range(1, max_hops + 1):
             next_layer = set()
@@ -136,6 +207,13 @@ class GraphService:
             ).all()
 
             for r in rels:
+                neighbor = r.target_memory_id if r.source_memory_id in current_layer else r.source_memory_id
+
+                # Both endpoints must be readable before an edge is disclosed:
+                # the edge itself proves the existence of the far node.
+                if not (_may_read(r.source_memory_id) and _may_read(r.target_memory_id)):
+                    continue
+
                 edge_key = (r.source_memory_id, r.target_memory_id, r.relationship_type)
                 if edge_key not in visited_edge_keys:
                     visited_edge_keys.add(edge_key)
@@ -147,7 +225,6 @@ class GraphService:
                         "hop": hop
                     })
 
-                neighbor = r.target_memory_id if r.source_memory_id in current_layer else r.source_memory_id
                 if neighbor not in visited_nodes:
                     visited_nodes.add(neighbor)
                     next_layer.add(neighbor)

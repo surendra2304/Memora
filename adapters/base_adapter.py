@@ -4,8 +4,7 @@ Standardizes how external ecosystem agents (FRIDAY, FORGE, FUTURIS, IntelX, MT5,
 authenticate and interact with the MEMORA Persistent Memory Infrastructure API.
 """
 from abc import ABC
-from typing import Optional, Dict, Any, List, Union
-import json
+from typing import Optional, Dict, Any, List
 import logging
 
 logger = logging.getLogger(__name__)
@@ -29,10 +28,13 @@ class MemoraSecurityViolationError(MemoraAdapterError):
     """Raised when a write is rejected due to security scanning (e.g. secret leakage)."""
     pass
 
-class BaseAgentAdapter(ABC):
+class BaseAgentAdapter(ABC):  # noqa: B024 - intentional: a complete base, not a contract
     """
-    Abstract Base Adapter standardizing agent-MEMORA communication.
-    Provides convenience methods for memory write, search, context retrieval, verification, and sharing.
+    Base Adapter standardizing agent-MEMORA communication.
+    Provides complete default implementations for memory write, search, context
+    retrieval, verification, and sharing; the eight concrete adapters specialise
+    the agent identity rather than override behaviour, so there is deliberately
+    no abstract method for subclasses to satisfy.
     """
     def __init__(
         self,
@@ -51,16 +53,25 @@ class BaseAgentAdapter(ABC):
         self._http_client = http_client
 
     def _get_headers(self, purpose: Optional[str] = None) -> Dict[str, str]:
-        """Constructs canonical authentication and metadata headers for requests."""
+        """Constructs canonical authentication and metadata headers for requests.
+
+        Header names must match what `apps/api/dependencies.py` actually reads:
+        `X-API-Key` (or an Authorization bearer) for the credential and
+        `X-Access-Purpose` for the stated intent. This method previously emitted
+        `X-Agent-Key` and `X-Purpose`, neither of which the server recognises, so
+        every adapter call reached a fail-closed Memora with no credential at all
+        and was rejected with 401 "Missing agent credentials".
+        """
         headers = {
             "X-Agent-Name": self.agent_name,
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
         if self.api_key:
-            headers["X-Agent-Key"] = self.api_key
+            headers["X-API-Key"] = self.api_key
+            headers["Authorization"] = f"Bearer {self.api_key}"
         if purpose:
-            headers["X-Purpose"] = purpose
+            headers["X-Access-Purpose"] = purpose
         return headers
 
     def _dispatch_request(
@@ -72,14 +83,13 @@ class BaseAgentAdapter(ABC):
         purpose: Optional[str] = None
     ) -> Dict[str, Any]:
         """Dispatches HTTP request to the MEMORA API with standardized error handling."""
-        url = f"{self.base_url}{endpoint}"
         headers = self._get_headers(purpose=purpose)
 
         # Dispatch via provided custom client (e.g. TestClient or httpx.Client) or default httpx
         if self._http_client:
             client = self._http_client
             if hasattr(client, "request"):
-                resp = client.request(method=method, url=endpoint if not endpoint.startswith("http") else endpoint, json=json_body, params=params, headers=headers)
+                resp = client.request(method=method, url=endpoint, json=json_body, params=params, headers=headers)
             elif method.upper() == "GET":
                 resp = client.get(endpoint, params=params, headers=headers)
             elif method.upper() == "POST":

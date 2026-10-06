@@ -2,7 +2,7 @@
 AI Universe Specialized Ecosystem Adapter for Memora
 Provides model reasoning grounding against verified canonical memories to eliminate hallucinations.
 """
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 import logging
 
 from adapters.base_adapter import BaseAgentAdapter

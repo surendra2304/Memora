@@ -7,8 +7,15 @@ from sqlalchemy.orm import Session
 from storage.relational.session import get_db
 from storage.relational.models import AuditLog
 from core.memory.schemas import AuditLogRead
+from apps.api.dependencies import authenticate_agent
 
-router = APIRouter(prefix="/audit", tags=["Audit"])
+# The audit trail records every policy decision, memory id, and denial reason in
+# the fabric, so it is authenticated like every other memory-bearing router.
+router = APIRouter(
+    prefix="/audit",
+    tags=["Audit"],
+    dependencies=[Depends(authenticate_agent)],
+)
 
 @router.get("", response_model=List[AuditLogRead])
 def list_audit_logs(

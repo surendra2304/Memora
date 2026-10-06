@@ -5,8 +5,6 @@ import hmac
 import os
 from typing import Optional
 from fastapi import Header, HTTPException, status
-from sqlalchemy.orm import Session
-from storage.relational.session import get_db
 from core.config import settings
 
 def get_actor_header(
