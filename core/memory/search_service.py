@@ -148,15 +148,24 @@ class SearchService:
         if memory_types:
             kw_query = kw_query.filter(MemoryRecord.memory_type.in_(memory_types))
 
-        # Query token matching
+        # Query token matching.
+        #
+        # Only the id and the text are needed to score a row, so ask for just
+        # those two columns. Loading whole entities here was the single largest
+        # cost in the search path: every row carried its provenance and entities
+        # JSON columns, and deserialising them accounted for roughly half of a
+        # ~280ms search over a 3,000-record corpus (18,210 JSON decode calls
+        # across three searches) for values this loop never reads.
         tokens = query_text.lower().split()
         lexical_matches = []
-        for r in kw_query.all():
-            text_lower = r.content_text.lower()
+        for r_id, r_text in kw_query.with_entities(
+            MemoryRecord.id, MemoryRecord.content_text
+        ).all():
+            text_lower = (r_text or "").lower()
             matched_count = sum(1 for t in tokens if t in text_lower)
             if matched_count > 0:
                 lexical_score = matched_count / len(tokens)
-                lexical_matches.append((r.id, lexical_score))
+                lexical_matches.append((r_id, lexical_score))
 
         lexical_matches.sort(key=lambda x: x[1], reverse=True)
         keyword_ranks = {item[0]: (rank + 1, item[1]) for rank, item in enumerate(lexical_matches[:limit * 3])}
