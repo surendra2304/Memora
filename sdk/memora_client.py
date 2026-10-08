@@ -223,7 +223,7 @@ class MemoraClient:
         """
         payload = {
             "content_text": fact_text,
-            "memory_type": "semantic",
+            "memory_type": "episodic",
             "source": f"agent:{agent_name.lower()}",
             "confidence": 1.0,
             "importance": importance,
@@ -406,7 +406,7 @@ class MemoraClient:
 
     def _get_agent_and_ns_ids(self, conn: sqlite3.Connection, agent_name: str) -> tuple[str, str]:
         c = conn.cursor()
-        c.execute("SELECT id FROM agents WHERE name = ?", (agent_name.lower(),))
+        c.execute("SELECT id FROM agents WHERE name = ? AND tenant_id = 'default'", (agent_name.lower(),))
         row = c.fetchone()
         if row:
             aid = row[0]
@@ -452,19 +452,26 @@ class MemoraClient:
                 aid, nid = self._get_agent_and_ns_ids(conn, agent_name)
                 c = conn.cursor()
 
-                # 1. Save extracted facts as SEMANTIC memories
+                # 1. Save unverified extracted facts as EPISODIC candidates.
+                from core.memory.pipeline.secret_scanner import SecretScanner
+                from core.memory.pipeline.poison_detector import PoisonDetector
+
                 for fact in extracted_facts:
+                    SecretScanner.validate_content_safety(fact.normalized_fact)
+                    PoisonDetector.validate_content_safety(fact.normalized_fact)
                     mid = str(uuid.uuid4())
                     c.execute("""
                         INSERT INTO memory_records 
                         (id, namespace_id, owner_id, memory_type, content_text, source, confidence, importance, lifecycle_state, tenant_id, created_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (mid, nid, aid, "semantic", fact.normalized_fact, f"agent:{agent_name.lower()}", fact.confidence, fact.importance, "active", "default", now_iso))
+                    """, (mid, nid, aid, "episodic", fact.normalized_fact, f"agent:{agent_name.lower()}", fact.confidence, fact.importance, "active", "default", now_iso))
                     created_ids.append(mid)
 
-                # 2. Save dialogue as EPISODIC memory
-                mid_ep = str(uuid.uuid4())
+                # 2. Save dialogue as EPISODIC memory after the same safety checks.
                 dialogue_text = f"User: {user_input} | Assistant: {agent_output}"
+                SecretScanner.validate_content_safety(dialogue_text)
+                PoisonDetector.validate_content_safety(dialogue_text)
+                mid_ep = str(uuid.uuid4())
                 c.execute("""
                     INSERT INTO memory_records 
                     (id, namespace_id, owner_id, memory_type, content_text, source, confidence, importance, lifecycle_state, tenant_id, created_at)
@@ -492,6 +499,11 @@ class MemoraClient:
         now_iso = time.strftime("%Y-%m-%d %H:%M:%S")
         mid = str(uuid.uuid4())
         try:
+            from core.memory.pipeline.secret_scanner import SecretScanner
+            from core.memory.pipeline.poison_detector import PoisonDetector
+
+            SecretScanner.validate_content_safety(fact_text)
+            PoisonDetector.validate_content_safety(fact_text)
             with sqlite3.connect(self.local_db_path, timeout=5.0) as conn:
                 aid, nid = self._get_agent_and_ns_ids(conn, agent_name)
                 c = conn.cursor()
@@ -499,9 +511,9 @@ class MemoraClient:
                     INSERT INTO memory_records 
                     (id, namespace_id, owner_id, memory_type, content_text, source, confidence, importance, lifecycle_state, tenant_id, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (mid, nid, aid, "semantic", fact_text, f"agent:{agent_name.lower()}", 1.0, importance, "active", "default", now_iso))
+                """, (mid, nid, aid, "episodic", fact_text, f"agent:{agent_name.lower()}", 1.0, importance, "candidate", "default", now_iso))
                 conn.commit()
-            return {"status": "success", "id": mid, "memory_type": "semantic"}
+            return {"status": "success", "id": mid, "memory_type": "episodic"}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
@@ -521,14 +533,28 @@ class MemoraClient:
         try:
             with sqlite3.connect(self.local_db_path, timeout=5.0) as conn:
                 c = conn.cursor()
+                c.execute(
+                    "SELECT id FROM agents WHERE name = ? AND tenant_id = 'default'",
+                    (agent_name.lower(),),
+                )
+                actor_row = c.fetchone()
+                if actor_row is None:
+                    return []
+
                 like_clauses = " OR ".join(["m.content_text LIKE ?" for _ in search_words])
-                params = [f"%{w}%" for w in search_words]
+                params = [actor_row[0], *[f"%{w}%" for w in search_words]]
 
                 c.execute(f"""
-                    SELECT m.id, m.content_text, m.memory_type, m.importance, m.created_at, a.name 
+                    SELECT m.id, m.content_text, m.memory_type, m.importance, m.created_at, a.name
                     FROM memory_records m
                     JOIN agents a ON m.owner_id = a.id
-                    WHERE m.lifecycle_state = 'active' AND ({like_clauses})
+                    JOIN namespaces n ON m.namespace_id = n.id
+                    WHERE m.tenant_id = 'default'
+                      AND (m.owner_id = ?
+                           OR n.path LIKE 'memora://universe/%'
+                           OR n.path LIKE 'memora://public/%')
+                      AND m.lifecycle_state = 'active'
+                      AND ({like_clauses})
                     ORDER BY m.importance DESC, m.created_at DESC
                     LIMIT 200
                 """, params)

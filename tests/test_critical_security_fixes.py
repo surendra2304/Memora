@@ -17,11 +17,13 @@ INTELX_KEY = "intelx-regression-key"
 
 
 @pytest.fixture
-def mesh(client: TestClient, monkeypatch):
+def mesh(client: TestClient, test_db, monkeypatch):
     """Two provisioned mesh agents talking to a fail-closed Memora."""
     monkeypatch.delenv("MEMORA_ALLOW_ANONYMOUS_DEV", raising=False)
     monkeypatch.setenv("FRIDAY_API_KEY", FRIDAY_KEY)
     monkeypatch.setenv("INTELX_API_KEY", INTELX_KEY)
+    IdentityService.register_agent(test_db, "friday", role="supervisor")
+    IdentityService.register_agent(test_db, "intelx", role="worker")
     return {
         "friday": {"X-Agent-Name": "friday", "X-API-Key": FRIDAY_KEY},
         "intelx": {"X-Agent-Name": "intelx", "X-API-Key": INTELX_KEY},

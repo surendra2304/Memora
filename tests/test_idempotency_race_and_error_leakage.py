@@ -48,22 +48,6 @@ def file_session_factory(tmp_path):
         engine.dispose()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "OPEN BUG, not yet fixed. The write pipeline checks for an existing row "
-        "with the same (tenant_id, agent_id, idempotency_key) and returns it, "
-        "but two concurrent writers can both clear that check and then collide "
-        "on the unique index. The loser's IntegrityError reaches the caller: "
-        "scripts/stress_memora.py at 9 agents x 40 writes rejected 437 of 1080 "
-        "writes this way. Recovery is harder than it looks - the failed flush "
-        "leaves the session in a pending-rollback state, and reading the winner "
-        "back re-raises the original violation, so the loser still errors. Needs "
-        "an atomic upsert or a retry with a fresh session at the API boundary. "
-        "Kept in the suite as a strict xfail so it is visible and flips loudly "
-        "the moment it is actually fixed."
-    ),
-)
 def test_concurrent_writes_with_the_same_idempotency_key_all_succeed(file_session_factory):
     """Every racer must be handed the winning record; none may error.
 
@@ -86,7 +70,7 @@ def test_concurrent_writes_with_the_same_idempotency_key_all_succeed(file_sessio
             barrier.wait(timeout=30)
             res = MemoryWriteService.execute_pipeline(
                 db=db,
-                content_text=f"concurrent write attempt {i} for the same logical fact",
+                content_text="the same logical concurrent write payload for every retry",
                 actor_name="forge",
                 idempotency_key=key,
                 source="api",

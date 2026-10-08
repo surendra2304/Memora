@@ -123,7 +123,7 @@ def test_untrusted_semantic_guard_rejects_ocr_web_and_tool_outputs(test_db):
                 source=case["source"],
                 trust_level="untrusted"
             )
-        assert "is prohibited from direct write into SEMANTIC memory tier" in str(exc_info.value)
+        assert "Direct SEMANTIC writes are restricted to the authenticated memora service identity" in str(exc_info.value)
 
     # However, writing untrusted inputs to EPISODIC or WORKING tier is permitted
     episodic_res = MemoryWriteService.execute_pipeline(
@@ -453,12 +453,12 @@ def test_peer_contract_fixtures_all_8_agents():
     forge_mem = EcosystemMemoryAdapter.format_forge_build_artifact(user_id, task_id, "Inference", "a1b2c3d4e5f6", "Build passed.")
     assert forge_mem.agent_id == "forge"
     assert forge_mem.memory_type == MemoryType.PROCEDURAL
-    assert forge_mem.provenance["trust_level"] == "verified"
+    assert forge_mem.provenance["trust_level"] == "candidate"
 
     # 4. Sentinel
     sentinel_mem = EcosystemMemoryAdapter.format_sentinel_audit_finding(user_id, task_id, "api_auth", "critical", "SQL injection patch verified.")
     assert sentinel_mem.agent_id == "sentinel"
-    assert sentinel_mem.provenance["trust_level"] == "verified"
+    assert sentinel_mem.provenance["trust_level"] == "candidate"
 
     # 5. Cortex
     cortex_mem = EcosystemMemoryAdapter.format_cortex_research_memory(user_id, "Transformer Attention", "Dense attention analysis.", ["doi:10.1000/123"])

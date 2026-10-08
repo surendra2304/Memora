@@ -90,7 +90,7 @@ def test_write_pipeline_entity_resolution_and_graph_auto_wiring(test_db):
         content_text="FORGE implemented high-throughput connection pooling for pg_db.",
         actor_name="forge",
         target_namespace_path="memora://forge/projects/architecture",
-        memory_type=MemoryType.PROCEDURAL,
+        memory_type=MemoryType.EPISODIC,
         confidence=0.95,
         importance=0.85
     )

@@ -262,7 +262,7 @@ def ingest_envelope(
         if not key or not supplied or not hmac.compare_digest(key, supplied):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid sender credentials")
     if sender not in _AGENTS or recipient not in _AGENTS | {"all"}:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown sender or recipient")
+        raise HTTPException(status_code=422, detail="Unknown sender or recipient")
     if envelope.intent == "futuris.forecast":
         if sender != "futuris":
             raise HTTPException(status_code=403, detail="Only authenticated Futuris may publish forecast advisories")

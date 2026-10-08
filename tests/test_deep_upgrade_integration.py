@@ -202,7 +202,8 @@ def test_deep_upgrade_durable_hard_delete(test_db):
         test_db,
         memory_id=mem_id,
         actor_name="admin_agent",
-        hard_delete=True
+        hard_delete=True,
+        tenant_id="tenant_del",
     )
 
     assert res["status"] in ["deleted", "converged", "hard_deleted"]

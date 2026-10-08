@@ -59,8 +59,8 @@ class EcosystemMemoryAdapter:
         prov = provenance or {}
         prov.setdefault("skill_name", skill_name)
         prov.setdefault("source", "skill_registry")
-        prov.setdefault("source_type", "verified_fact")
-        prov.setdefault("trust_level", "verified")
+        prov.setdefault("source_type", "agent_generated")
+        prov.setdefault("trust_level", "candidate")
         prov.setdefault("created_by", agent_name)
         prov.setdefault("confidence", 1.0)
 
@@ -77,7 +77,7 @@ class EcosystemMemoryAdapter:
             provenance=prov,
             confidence=1.0,
             importance=0.85,
-            lifecycle_state=LifecycleState.VERIFIED
+            lifecycle_state=LifecycleState.CANDIDATE
         )
 
     # -------------------------------------------------------------------------
@@ -177,14 +177,14 @@ class EcosystemMemoryAdapter:
             provenance={
                 "source": "forge:build_runner",
                 "source_type": "tool_output",
-                "trust_level": "verified",
+                "trust_level": "candidate",
                 "evidence_refs": [f"git://{repo_name}#{commit_hash}"],
                 "created_by": "forge",
                 "confidence": 1.0
             },
             confidence=1.0,
             importance=0.9,
-            lifecycle_state=LifecycleState.VERIFIED
+            lifecycle_state=LifecycleState.CANDIDATE
         )
 
     @classmethod
@@ -210,8 +210,8 @@ class EcosystemMemoryAdapter:
             source="sentinel:security_auditor",
             provenance={
                 "source": "sentinel:security_auditor",
-                "source_type": "verified_fact",
-                "trust_level": "verified",
+                "source_type": "agent_generated",
+                "trust_level": "candidate",
                 "evidence_refs": [f"asset://{asset_id}"],
                 "created_by": "sentinel",
                 "confidence": 0.99
@@ -340,13 +340,13 @@ class EcosystemMemoryAdapter:
             source="stratex:planner",
             provenance={
                 "source": "stratex:planner",
-                "source_type": "verified_fact",
-                "trust_level": "verified",
+                "source_type": "agent_generated",
+                "trust_level": "candidate",
                 "evidence_refs": governing_rules,
                 "created_by": "stratex",
                 "confidence": 0.98
             },
             confidence=0.98,
             importance=0.92,
-            lifecycle_state=LifecycleState.VERIFIED
+            lifecycle_state=LifecycleState.CANDIDATE
         )

@@ -145,8 +145,32 @@ class QdrantVectorAdapter:
             self._mock_store[memory_id] = {"vector": vector, "payload": stored_payload, "tenant_id": resolved_tenant}
             return False
 
+    @staticmethod
+    def _entry_tenant_id(entry: Dict[str, Any]) -> Optional[str]:
+        """Return an unambiguous tenant label; missing/conflicting labels fail closed."""
+        if not isinstance(entry, dict):
+            return None
+        payload = entry.get("payload")
+        payload_tenant = payload.get("tenant_id") if isinstance(payload, dict) else None
+        top_level_tenant = entry.get("tenant_id")
+        if (
+            top_level_tenant is not None
+            and payload_tenant is not None
+            and top_level_tenant != payload_tenant
+        ):
+            return None
+        return top_level_tenant if top_level_tenant is not None else payload_tenant
+
     def delete_embedding(self, memory_id: str, tenant_id: str = "default") -> bool:
-        if memory_id in self._mock_store:
+        entry = self._mock_store.get(memory_id)
+        if entry is not None:
+            if self._entry_tenant_id(entry) != tenant_id:
+                logger.warning(
+                    "Refusing vector delete for '%s': tenant metadata does not match '%s'.",
+                    memory_id,
+                    tenant_id,
+                )
+                return False
             del self._mock_store[memory_id]
 
         if not self._initialized:
@@ -156,10 +180,22 @@ class QdrantVectorAdapter:
             return True
 
         def _do_delete():
-            from qdrant_client.http.models import PointIdsList
+            from qdrant_client.http.models import (
+                FieldCondition,
+                Filter,
+                FilterSelector,
+                HasIdCondition,
+                MatchValue,
+            )
+            tenant_filter = Filter(
+                must=[
+                    FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id)),
+                    HasIdCondition(has_id=[memory_id]),
+                ]
+            )
             self._client.delete(
                 collection_name=self.collection_name,
-                points_selector=PointIdsList(points=[memory_id])
+                points_selector=FilterSelector(filter=tenant_filter),
             )
 
         try:
@@ -224,7 +260,7 @@ class QdrantVectorAdapter:
         # In-memory cosine search fallback (strictly filtered by tenant_id)
         scored = []
         for mem_id, data in self._mock_store.items():
-            if data.get("tenant_id", data.get("payload", {}).get("tenant_id", "default")) != tenant_id:
+            if self._entry_tenant_id(data) != tenant_id:
                 continue
             sim = self._cosine_similarity(query_vector, data["vector"])
             if sim >= score_threshold:

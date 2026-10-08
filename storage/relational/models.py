@@ -17,6 +17,7 @@ from sqlalchemy import (
     Enum as SQLEnum,
     Index,
     UniqueConstraint,
+    true,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from storage.relational.base import Base, generate_uuid, get_utc_now
@@ -292,6 +293,12 @@ class DeletionTombstone(Base):
     vector_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     cache_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     graph_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # A local hard delete is converged only after an enabled Turso write-through
+    # replica has also recorded a durable deletion fence. Existing tombstones
+    # default to complete because older versions did not track this replica.
+    turso_deleted: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), nullable=False
+    )
     status: Mapped[str] = mapped_column(String(32), default="PENDING", nullable=False, index=True)  # PENDING, CONVERGED, FAILED
     retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now, nullable=False)
@@ -302,7 +309,13 @@ class DeletionTombstone(Base):
     )
 
     def is_converged(self) -> bool:
-        return self.relational_deleted and self.vector_deleted and self.cache_deleted and self.graph_deleted
+        return (
+            self.relational_deleted
+            and self.vector_deleted
+            and self.cache_deleted
+            and self.graph_deleted
+            and bool(self.turso_deleted)
+        )
 
     def __repr__(self) -> str:
         return f"<DeletionTombstone(memory_id={self.memory_id}, status={self.status})>"

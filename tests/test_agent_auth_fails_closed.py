@@ -75,6 +75,13 @@ def test_matching_key_authenticates(auth, monkeypatch):
     assert auth.authenticate_agent(**_headers(x_agent_name="friday", x_api_key="f" * 43)) == "friday"
 
 
+def test_ai_universe_has_a_dedicated_production_credential(auth, monkeypatch):
+    monkeypatch.setenv("AI_UNIVERSE_API_KEY", "u" * 43)
+    assert auth.authenticate_agent(
+        **_headers(x_agent_name="ai_universe", x_api_key="u" * 43)
+    ) == "ai_universe"
+
+
 def test_anonymous_access_requires_an_explicit_opt_in(auth, monkeypatch):
     monkeypatch.delenv("FRIDAY_API_KEY", raising=False)
     with pytest.raises(HTTPException):

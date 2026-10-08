@@ -33,9 +33,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from core.identity.service import IdentityService
+from core.identity.service import AgentDelegationError, IdentityService
 from core.memory.search_service import SearchService
 from core.policy.engine import PolicyDecision, PolicyEngine
 from storage.relational.models import (
@@ -113,7 +114,11 @@ def _namespace_path(db: Session, namespace_id: str, tenant_id: str, prefix: str)
         .filter(Namespace.id == namespace_id, Namespace.tenant_id == tenant_id)
         .first()
     )
-    return bool(row and row[0].startswith(prefix))
+    if not row:
+        return False
+    path = row[0].rstrip("/")
+    scope = prefix.rstrip("/")
+    return path == scope or path.startswith(f"{scope}/")
 
 
 class CollaborationService:
@@ -132,7 +137,7 @@ class CollaborationService:
         query: str,
         purpose: str = "collaboration",
         limit: int = 5,
-        tenant_id: Optional[str] = None,
+        tenant_id: Optional[str] = "default",
     ) -> AssistanceResponse:
         """Find peers who can help with `query`.
 
@@ -145,9 +150,13 @@ class CollaborationService:
              a grant to, and at agents whose role/domain matches the query terms.
              Only ids and names are disclosed, never content.
         """
-        requester = IdentityService.get_agent_by_name(db, requester_name, tenant_id=tenant_id)
+        requester = IdentityService.get_agent_by_name(
+            db, requester_name, tenant_id=tenant_id
+        )
         if not requester:
-            requester = IdentityService.register_agent(db, requester_name, tenant_id=tenant_id or "default")
+            raise CollaborationError(
+                f"unknown requester '{requester_name}' in tenant '{tenant_id or 'default'}'"
+            )
 
         response = AssistanceResponse(requester=requester.name, query=query)
 
@@ -186,21 +195,34 @@ class CollaborationService:
         # --- 2. who else might help ---------------------------------------
         # Peers are identified from grants the requester already holds and from
         # role/domain matches. No private content is read to build this list.
-        granted_namespace_ids = {
-            row[0]
-            for row in db.query(AccessGrant.namespace_id)
-            .filter(AccessGrant.agent_id == requester.id)
+        active_read_grants = [
+            grant
+            for grant in db.query(AccessGrant)
+            .filter(
+                AccessGrant.tenant_id == requester.tenant_id,
+                AccessGrant.agent_id == requester.id,
+            )
             .all()
-        }
+            if not grant.is_expired() and "read" in (grant.actions or [])
+        ]
+        granted_namespace_ids = {grant.namespace_id for grant in active_read_grants}
         owners_of_granted: Dict[str, int] = {}
         if granted_namespace_ids:
+            now = datetime.now(timezone.utc)
+            temporally_visible = (
+                or_(MemoryRecord.expires_at.is_(None), MemoryRecord.expires_at > now),
+                or_(MemoryRecord.valid_from.is_(None), MemoryRecord.valid_from <= now),
+                or_(MemoryRecord.valid_until.is_(None), MemoryRecord.valid_until >= now),
+            )
             for owner_id, count in (
-                db.query(MemoryRecord.owner_id, db.query(MemoryRecord).count())
+                db.query(MemoryRecord.owner_id, func.count(MemoryRecord.id))
                 .filter(
+                    MemoryRecord.tenant_id == requester.tenant_id,
                     MemoryRecord.namespace_id.in_(list(granted_namespace_ids)),
                     MemoryRecord.lifecycle_state.in_(
                         [LifecycleState.ACTIVE, LifecycleState.VERIFIED]
                     ),
+                    *temporally_visible,
                 )
                 .group_by(MemoryRecord.owner_id)
                 .all()
@@ -228,11 +250,13 @@ class CollaborationService:
                     row[0]
                     for row in db.query(MemoryRecord.id)
                     .filter(
+                        MemoryRecord.tenant_id == requester.tenant_id,
                         MemoryRecord.owner_id == peer.id,
                         MemoryRecord.namespace_id.in_(list(granted_namespace_ids)),
                         MemoryRecord.lifecycle_state.in_(
                             [LifecycleState.ACTIVE, LifecycleState.VERIFIED]
                         ),
+                        *temporally_visible,
                     )
                     .limit(limit)
                     .all()
@@ -293,13 +317,28 @@ class CollaborationService:
         purpose: str = "collaboration",
         actions: Optional[List[str]] = None,
         ttl_hours: Optional[int] = None,
-        tenant_id: Optional[str] = None,
+        tenant_id: Optional[str] = "default",
     ) -> Dict[str, Any]:
-        """Offer one memory to a peer: creates a scoped, expiring grant.
+        """Offer a memory by granting temporary read/query access to its namespace.
 
-        Only the owner may contribute. The grant is time-boxed by default so
-        helping once does not permanently widen another agent's access.
+        AccessGrant is namespace-scoped today, so every active memory in that
+        namespace becomes visible to the recipient for the grant lifetime. The
+        response makes that scope explicit; owners who need item-level isolation
+        should use a dedicated namespace until the schema supports memory grants.
         """
+        requested_actions = list(dict.fromkeys(
+            str(action).strip().lower()
+            for action in (actions or ["read", "query"])
+        ))
+        if not requested_actions or any(
+            action not in {"read", "query"} for action in requested_actions
+        ):
+            raise CollaborationPermissionError(
+                "Contributions may grant only read and query access; mutation and wildcard actions are forbidden."
+            )
+        if ttl_hours is not None and not 1 <= ttl_hours <= 24 * 30:
+            raise CollaborationPermissionError("Contribution TTL must be between 1 and 720 hours.")
+
         contributor = IdentityService.get_agent_by_name(db, contributor_name, tenant_id=tenant_id)
         if not contributor:
             raise CollaborationError(f"unknown contributor '{contributor_name}'")
@@ -312,7 +351,10 @@ class CollaborationService:
                 "an agent cannot contribute to itself"
             )
 
-        record = db.query(MemoryRecord).filter(MemoryRecord.id == memory_id).first()
+        record = db.query(MemoryRecord).filter(
+            MemoryRecord.id == memory_id,
+            MemoryRecord.tenant_id == contributor.tenant_id,
+        ).first()
         if not record:
             raise CollaborationError(f"memory '{memory_id}' not found")
         if record.owner_id != contributor.id:
@@ -323,32 +365,64 @@ class CollaborationService:
                 f"'{contributor_name}' does not own memory '{memory_id}'"
             )
 
-        namespace = db.query(Namespace).filter(Namespace.id == record.namespace_id).first()
+        namespace = db.query(Namespace).filter(
+            Namespace.id == record.namespace_id,
+            Namespace.tenant_id == record.tenant_id,
+        ).first()
         if not namespace:
             raise CollaborationError(f"namespace for memory '{memory_id}' not found")
 
-        grant = IdentityService.grant_access(
+        # A memory owner is not automatically the administrator of its containing
+        # namespace. Since grants expose the entire namespace, a write-only member
+        # must not be able to "contribute" one row and thereby grant a recipient
+        # read access to everyone else's records in the same project.
+        share_decision = PolicyEngine.evaluate_access(
             db,
-            agent_id=recipient.id,
-            namespace_id=namespace.id,
-            actions=actions or ["read", "query"],
+            actor=contributor,
+            namespace=namespace,
+            action="share",
             purpose=purpose,
-            ttl_hours=ttl_hours or cls.DEFAULT_GRANT_HOURS,
-            tenant_id=record.tenant_id,
+            memory_id=record.id,
+            log_audit=False,
         )
+        if not share_decision.allowed:
+            PolicyEngine.log_audit_decision(
+                db,
+                share_decision,
+                actor_id=contributor.id,
+                memory_id=memory_id,
+                tenant_id=record.tenant_id,
+            )
+            db.commit()
+            raise CollaborationPermissionError(share_decision.reason)
 
-        PolicyEngine.log_audit_decision(
-            db,
-            PolicyDecision(
-                True,
-                f"Memory contributed by {contributor.name} to {recipient.name}",
-                "COLLABORATION_CONTRIBUTE",
-            ),
-            actor_id=contributor.id,
-            memory_id=memory_id,
-            tenant_id=record.tenant_id,
-        )
-        db.commit()
+        try:
+            grant = IdentityService.grant_access(
+                db,
+                agent_id=recipient.id,
+                namespace_id=namespace.id,
+                actions=requested_actions,
+                purpose=purpose,
+                ttl_hours=ttl_hours if ttl_hours is not None else cls.DEFAULT_GRANT_HOURS,
+                tenant_id=record.tenant_id,
+                commit=False,
+            )
+
+            PolicyEngine.log_audit_decision(
+                db,
+                PolicyDecision(
+                    True,
+                    f"Memory contributed by {contributor.name} to {recipient.name}",
+                    "COLLABORATION_CONTRIBUTE",
+                ),
+                actor_id=contributor.id,
+                memory_id=memory_id,
+                tenant_id=record.tenant_id,
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
 
         return {
             "status": "contributed",
@@ -369,7 +443,7 @@ class CollaborationService:
         subagent_name: str,
         task_description: str,
         bounded_scope: Optional[str] = None,
-        tenant_id: Optional[str] = None,
+        tenant_id: Optional[str] = "default",
     ) -> Dict[str, Any]:
         """Hand a task to a sub-agent with a bounded scope."""
         delegator = IdentityService.get_agent_by_name(db, delegator_name, tenant_id=tenant_id)
@@ -377,13 +451,16 @@ class CollaborationService:
             raise CollaborationError(f"unknown delegator '{delegator_name}'")
 
         scope = bounded_scope or f"memora://{delegator.name}/delegated/{subagent_name}"
-        subagent = IdentityService.register_subagent(
-            db,
-            parent_agent_name=delegator.name,
-            subagent_name=subagent_name,
-            bounded_scope=scope,
-            tenant_id=delegator.tenant_id,
-        )
+        try:
+            subagent = IdentityService.register_subagent(
+                db,
+                parent_agent_name=delegator.name,
+                subagent_name=subagent_name,
+                bounded_scope=scope,
+                tenant_id=delegator.tenant_id,
+            )
+        except AgentDelegationError as exc:
+            raise CollaborationPermissionError(str(exc)) from exc
 
         PolicyEngine.log_audit_decision(
             db,

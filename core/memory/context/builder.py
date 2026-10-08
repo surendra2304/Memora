@@ -10,7 +10,13 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
-from storage.relational.models import MemoryRelationship, MemoryRecord, MemoryType, LifecycleState
+from storage.relational.models import (
+    LifecycleState,
+    MemoryRecord,
+    MemoryRelationship,
+    MemoryType,
+    Namespace,
+)
 from core.identity.service import IdentityService
 from core.policy.engine import PolicyEngine
 from core.memory.search_service import SearchService, SearchResultItem
@@ -80,7 +86,8 @@ class ContextBuilderService:
         token_budget: int = 4000,
         namespace_path: Optional[str] = None,
         purpose: Optional[str] = None,
-        max_candidates: int = 30
+        max_candidates: int = 30,
+        tenant_id: Optional[str] = "default",
     ) -> ContextBundle:
         start_time = time.time()
         is_degraded = False
@@ -88,11 +95,15 @@ class ContextBuilderService:
         # -------------------------------------------------------------
         # 1. RESOLVE IDENTITY & SCOPE
         # -------------------------------------------------------------
-        actor = IdentityService.get_agent_by_id(db, agent_id_or_name)
+        actor = IdentityService.get_agent_by_id(
+            db, agent_id_or_name, tenant_id=tenant_id
+        )
         if not actor:
-            actor = IdentityService.get_agent_by_name(db, agent_id_or_name)
+            actor = IdentityService.get_agent_by_name(
+                db, agent_id_or_name, tenant_id=tenant_id
+            )
         if not actor:
-            actor = IdentityService.register_agent(db, agent_id_or_name)
+            raise ValueError("The requested context agent is not registered in the selected tenant.")
 
         # -------------------------------------------------------------
         # 2. HYBRID RETRIEVAL WITH GRACEFUL DEGRADATION
@@ -154,6 +165,14 @@ class ContextBuilderService:
         )
         if user_id:
             exp_query = exp_query.filter(MemoryRecord.user_id == user_id)
+        if workspace_id:
+            exp_query = exp_query.filter(MemoryRecord.workspace_id == workspace_id)
+        if task_id:
+            exp_query = exp_query.filter(MemoryRecord.task_id == task_id)
+        if namespace_path:
+            exp_query = exp_query.join(Namespace).filter(
+                Namespace.path == namespace_path
+            )
         # Bound the scan. The loop below tokenises every row in Python, so an
         # unbounded .all() on a growing store is an unbounded per-request cost.
         exp_candidates = exp_query.order_by(MemoryRecord.importance.desc()).limit(
@@ -267,7 +286,6 @@ class ContextBuilderService:
 
         event_emitter.publish("context.generated", {
             "bundle_id": bundle_id,
-            "query": task_query,
             "agent": actor.name,
             "tokens": total_tokens,
             "memories_count": len(budgeted_memories),

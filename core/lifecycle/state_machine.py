@@ -54,6 +54,10 @@ class MemoryLifecycleEngine:
         target_state: LifecycleState,
         superseded_by_id: Optional[str] = None
     ) -> MemoryRecord:
+        if record.lifecycle_state == target_state:
+            # Repeated lifecycle requests are idempotent. In particular, repeated
+            # verification must not keep increasing the confidence score.
+            return record
         if not cls.can_transition(record.lifecycle_state, target_state):
             raise InvalidStateTransitionError(
                 f"Cannot transition memory {record.id} from {record.lifecycle_state} to {target_state}"

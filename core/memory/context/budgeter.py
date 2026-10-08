@@ -184,6 +184,26 @@ class ContextBudgeter:
         return max(1, int(len(text) / cls.CHARS_PER_TOKEN))
 
     @classmethod
+    def _truncate_to_tokens(cls, text: str, max_tokens: int) -> str:
+        """Hard-cap a string using the estimator's characters-per-token ratio."""
+        if max_tokens <= 0:
+            return ""
+        max_chars = int(max_tokens * cls.CHARS_PER_TOKEN)
+        if len(text) <= max_chars:
+            return text
+        if max_chars <= 0:
+            return ""
+
+        ellipsis = "…"
+        body = text[: max(0, max_chars - len(ellipsis))]
+        if len(body) > 8 and " " in body:
+            word_boundary = body.rfind(" ")
+            if word_boundary > 0:
+                body = body[:word_boundary]
+        result = (body + ellipsis)[:max_chars]
+        return result or text[:max_chars]
+
+    @classmethod
     def fit_to_budget(
         cls,
         reranked_items: List[RerankedMemoryItem],
@@ -191,20 +211,22 @@ class ContextBudgeter:
         similarity_dedup_threshold: float = 0.85,
         query: Optional[str] = None
     ) -> Tuple[List[BudgetedMemoryItem], int, str]:
-        """
-        Fits candidate memories to target token budget.
-        If total tokens exceed max_tokens:
-        - Clusters memories by topic / namespace.
-        - Applies Hierarchical LLM Summarization on clusters.
-        - Returns (budgeted_items, total_tokens, compaction_strategy).
+        """Fit context to a strict token ceiling, including singleton clusters.
+
+        The former 20-token per-cluster floor exceeded small budgets, and the
+        singleton summarizer returned the original full text regardless of its
+        allocation. Allocations now sum to at most `max_tokens`, and every
+        returned string is hard-capped after any optional LLM/local summary.
         """
         if not reranked_items:
             return [], 0, "none"
+        if max_tokens <= 0:
+            return [], 0, "truncated"
 
-        # Check total raw token volume
-        total_raw_tokens = sum(cls.estimate_tokens(item.record.content_text) for item in reranked_items)
+        total_raw_tokens = sum(
+            cls.estimate_tokens(item.record.content_text) for item in reranked_items
+        )
 
-        # Case 1: All memories fit without compaction
         if total_raw_tokens <= max_tokens:
             budgeted_items = []
             current_tokens = 0
@@ -218,53 +240,93 @@ class ContextBudgeter:
                         score=item.final_score,
                         is_truncated=False,
                         is_summarized=False,
-                        source_memory_ids=[item.record.id]
+                        source_memory_ids=[item.record.id],
                     )
                 )
                 current_tokens += tokens
             return budgeted_items, current_tokens, "none"
 
-        # Case 2: Exceeds token budget -> Hierarchical LLM Summarization
-        logger.info(f"Retrieved {total_raw_tokens} tokens exceeding budget of {max_tokens}. Triggering Hierarchical Summarization...")
-        
-        # 1. Cluster memories by namespace or topic
         clusters: Dict[str, List[RerankedMemoryItem]] = defaultdict(list)
         for item in reranked_items:
             ns_path = item.record.namespace.path if item.record.namespace else "global"
             clusters[ns_path].append(item)
 
-        num_clusters = len(clusters)
-        tokens_per_cluster = max(20, int((max_tokens * 0.95) / max(1, num_clusters)))
+        cluster_items = list(clusters.items())
+        num_clusters = len(cluster_items)
+        base_allocation, remainder = divmod(max_tokens, num_clusters)
+        allocations = [
+            base_allocation + (1 if index < remainder else 0)
+            for index in range(num_clusters)
+        ]
 
-        budgeted_items = []
-        total_summarized_tokens = 0
+        budgeted_items: List[BudgetedMemoryItem] = []
+        total_tokens = 0
+        did_summarize = False
+        did_truncate = False
 
-        for _ns_path, cluster_items in clusters.items():
-            if not cluster_items:
+        for (_ns_path, memories), allocation in zip(cluster_items, allocations, strict=True):
+            if not memories or allocation <= 0:
+                did_truncate = True
                 continue
 
-            # Summarize cluster
             summary_text, source_ids = LLMContextSummarizer.summarize_cluster(
-                memories=cluster_items,
-                target_tokens=tokens_per_cluster,
-                query=query
+                memories=memories,
+                target_tokens=allocation,
+                query=query,
             )
+            if not summary_text:
+                did_truncate = True
+                continue
 
-            tokens = cls.estimate_tokens(summary_text)
-            lead_record = cluster_items[0].record
-            lead_score = max(item.final_score for item in cluster_items)
+            capped_text = cls._truncate_to_tokens(summary_text, allocation)
+            is_truncated = capped_text != summary_text
+            tokens = cls.estimate_tokens(capped_text)
+            if tokens > allocation:
+                # Defensive correction in case a future estimator changes its
+                # rounding behavior; never trust a summarizer to enforce budget.
+                capped_text = capped_text[: int(allocation * cls.CHARS_PER_TOKEN)]
+                tokens = cls.estimate_tokens(capped_text)
+                is_truncated = True
 
+            lead_record = memories[0].record
             budgeted_items.append(
                 BudgetedMemoryItem(
                     record=lead_record,
-                    content_text=summary_text,
+                    content_text=capped_text,
                     token_count=tokens,
-                    score=lead_score,
-                    is_truncated=False,
-                    is_summarized=True,
-                    source_memory_ids=source_ids
+                    score=max(item.final_score for item in memories),
+                    is_truncated=is_truncated,
+                    is_summarized=len(memories) > 1,
+                    source_memory_ids=source_ids,
                 )
             )
-            total_summarized_tokens += tokens
+            total_tokens += tokens
+            did_summarize = did_summarize or len(memories) > 1
+            did_truncate = did_truncate or is_truncated
 
-        return budgeted_items, total_summarized_tokens, "summarized"
+        if total_tokens > max_tokens:
+            # This should be unreachable because allocations partition the
+            # budget, but retain a final invariant check at the boundary.
+            remaining = max_tokens
+            bounded_items: List[BudgetedMemoryItem] = []
+            for item in budgeted_items:
+                if remaining <= 0:
+                    did_truncate = True
+                    break
+                if item.token_count > remaining:
+                    item.content_text = cls._truncate_to_tokens(item.content_text, remaining)
+                    item.token_count = cls.estimate_tokens(item.content_text)
+                    item.is_truncated = True
+                    did_truncate = True
+                bounded_items.append(item)
+                remaining -= item.token_count
+            budgeted_items = bounded_items
+            total_tokens = sum(item.token_count for item in budgeted_items)
+
+        if did_summarize:
+            strategy = "summarized"
+        elif did_truncate or len(budgeted_items) < num_clusters:
+            strategy = "truncated"
+        else:
+            strategy = "none"
+        return budgeted_items, total_tokens, strategy

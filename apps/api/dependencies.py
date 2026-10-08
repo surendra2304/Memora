@@ -22,6 +22,77 @@ def get_purpose_header(
     return x_access_purpose
 
 
+def resolve_agent_selector(
+    db,
+    authenticated_name: str,
+    requested_name: Optional[str],
+    *,
+    allow_direct_subagent: bool = False,
+) -> str:
+    """Bind a body agent selector to the authenticated principal.
+
+    Most routes must use the authenticated agent only. The context route is the
+    one exception: a parent may build context for one of its registered direct
+    children, but never for an unrelated agent. The child's bounded scope is then
+    enforced by the normal policy-filtered retrieval path.
+    """
+    principal = (authenticated_name or "").strip().lower()
+    requested = str(requested_name or "").strip()
+
+    # Import locally to keep the HTTP dependency module lightweight and to avoid
+    # making identity/model imports part of authentication's import cycle.
+    from core.identity.service import IdentityService
+    from storage.relational.models import Agent
+
+    # API credentials do not yet carry a tenant claim. Resolve the credential's
+    # own principal in the API-bound tenant even when the body omits an agent
+    # selector; otherwise downstream services can resolve the same name globally
+    # and bind the request to a same-named identity in a foreign tenant.
+    if not principal:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="An authenticated agent identity is required.",
+        )
+    actor = IdentityService.get_agent_by_name(db, principal, tenant_id="default")
+    if actor is None:
+        # The credential has already authenticated the principal. Bootstrap only
+        # that exact principal into the API-bound tenant rather than adopting a
+        # same-named row from elsewhere. This also preserves the SDK's first-write
+        # workflow while keeping tenant selection unambiguous.
+        actor = IdentityService.register_agent(
+            db, principal, role="worker", tenant_id="default"
+        )
+
+    if not requested or requested.lower() == principal:
+        return actor.name
+
+    if requested == actor.id:
+        return actor.name
+
+    candidate = db.query(Agent).filter(
+        Agent.tenant_id == actor.tenant_id,
+        Agent.id == requested,
+    ).first()
+    if candidate is None:
+        candidate = db.query(Agent).filter(
+            Agent.tenant_id == actor.tenant_id,
+            Agent.name == requested.lower(),
+        ).first()
+
+    if (
+        allow_direct_subagent
+        and candidate is not None
+        and candidate.parent_agent_id == actor.id
+        and candidate.bounded_scope
+    ):
+        return candidate.name
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="The requested agent does not match the authenticated identity or an authorized direct sub-agent.",
+    )
+
+
 #: Agents permitted to perform fabric-wide administration.
 #:
 #: Identity registration is the root of every policy decision in Memora, and the
@@ -63,6 +134,7 @@ def authenticate_agent(
         "cortex": "CORTEX_API_KEY",
         "forge": "FORGE_API_KEY",
         "sentinel": "SENTINEL_API_KEY",
+        "ai_universe": "AI_UNIVERSE_API_KEY",
         "memora": "MEMORA_API_KEY",
     }
     supplied = x_api_key

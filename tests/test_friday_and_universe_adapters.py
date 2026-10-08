@@ -16,6 +16,16 @@ from storage.relational.session import get_db
 
 @pytest.fixture
 def mock_client(test_db):
+    # v1 memory routes require tenant-bound principals and the open universe
+    # namespace to be provisioned before a regular agent can append to it.
+    IdentityService.register_agent(test_db, "friday", role="supervisor")
+    IdentityService.register_agent(test_db, "ai_universe", role="global")
+    IdentityService.resolve_namespace(
+        test_db,
+        "memora://universe/global",
+        default_type=NamespaceType.UNIVERSE_GLOBAL,
+    )
+
     def override_get_db():
         try:
             yield test_db

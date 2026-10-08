@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, Response, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from storage.relational.session import get_db
@@ -29,14 +30,42 @@ _QUERY_ACTIONS = {"query", "search", "recall", "retrieve", "find", "ask"}
 
 
 class TaskEnvelopeModel(BaseModel):
-    task_id: str = Field(default_factory=lambda: f"task_{uuid.uuid4().hex[:12]}")
-    source_agent: str = Field(default="friday")
-    target_agent: str = Field(default="memora")
-    action: str = Field(default="store")
+    task_id: str = Field(default_factory=lambda: f"task_{uuid.uuid4().hex[:12]}", min_length=1, max_length=128)
+    source_agent: str = Field(default="friday", min_length=1, max_length=128)
+    target_agent: str = Field(default="memora", min_length=1, max_length=128)
+    action: str = Field(default="store", min_length=1, max_length=64)
     payload: dict[str, Any] = Field(default_factory=dict)
-    priority: str = Field(default="normal")
-    created_at: str | None = None
-    trace_id: str | None = None
+    priority: str = Field(default="normal", min_length=1, max_length=32)
+    created_at: str | None = Field(default=None, max_length=64)
+    trace_id: str | None = Field(default=None, max_length=128)
+
+    @field_validator("payload")
+    @classmethod
+    def validate_payload_size(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if len(value) > 32:
+            raise ValueError("Task payload may contain at most 32 top-level fields.")
+        try:
+            encoded_size = len(
+                json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+                .encode("utf-8")
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Task payload must contain finite JSON-compatible values.") from exc
+        if encoded_size > 128 * 1024:
+            raise ValueError("Task payload exceeds the 131072-byte limit.")
+
+        pending = [(value, 0)]
+        node_count = 0
+        while pending:
+            item, depth = pending.pop()
+            node_count += 1
+            if node_count > 4096 or depth > 16:
+                raise ValueError("Task payload nesting or item count exceeds its safety limit.")
+            if isinstance(item, dict):
+                pending.extend((child, depth + 1) for child in item.values())
+            elif isinstance(item, list):
+                pending.extend((child, depth + 1) for child in item)
+        return value
 
 
 class TaskResultModel(BaseModel):
@@ -128,6 +157,14 @@ def _execute_store(
         or payload.get("query")
         or str(payload)
     )
+    if len(content) > 100_000:
+        return TaskResultModel(
+            task_id=envelope.task_id,
+            target_agent=envelope.target_agent,
+            status="ERROR",
+            error="Task memory content exceeds the 100000-character limit.",
+            execution_time_ms=_elapsed_ms(t0),
+        )
     ns_path = payload.get("target_namespace_path") or f"memora://{actor}/general"
     mtype_str = str(payload.get("memory_type") or payload.get("type") or "observation").lower()
 
@@ -146,6 +183,7 @@ def _execute_store(
             db=db,
             content_text=content,
             caller_name=actor,
+            tenant_id="default",
             target_namespace_path=ns_path,
             memory_type=mtype,
             source=f"agent:{actor}",
@@ -232,12 +270,21 @@ def _execute_query(
             error="A query, task_query, prompt, or content field is required to recall memories.",
             execution_time_ms=_elapsed_ms(t0),
         )
+    if len(query) > 4096:
+        return TaskResultModel(
+            task_id=envelope.task_id,
+            target_agent=envelope.target_agent,
+            status="ERROR",
+            error="Task query exceeds the 4096-character limit.",
+            execution_time_ms=_elapsed_ms(t0),
+        )
 
     try:
         results = SearchService.hybrid_search(
             db=db,
             query_text=query,
             actor_name=actor,
+            tenant_id="default",
             namespace_path=payload.get("target_namespace_path"),
             limit=limit,
         )

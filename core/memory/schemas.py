@@ -32,15 +32,15 @@ class SubAgentCreate(BaseModel):
     tenant_id: str = Field(default="default")
 
 class AccessGrantCreate(BaseModel):
-    tenant_id: str = Field(default="default")
-    agent_id: Optional[str] = None
-    agent_name: Optional[str] = None
-    namespace_id: Optional[str] = None
-    namespace_path: Optional[str] = None
-    actions: List[str] = Field(default_factory=lambda: ["read"])
-    purpose: Optional[str] = None
+    tenant_id: str = Field(default="default", min_length=1, max_length=64)
+    agent_id: Optional[str] = Field(default=None, max_length=64)
+    agent_name: Optional[str] = Field(default=None, min_length=2, max_length=128)
+    namespace_id: Optional[str] = Field(default=None, max_length=64)
+    namespace_path: Optional[str] = Field(default=None, min_length=3, max_length=1024)
+    actions: List[str] = Field(default_factory=lambda: ["read"], min_length=1, max_length=3)
+    purpose: Optional[str] = Field(default=None, max_length=512)
     expires_at: Optional[datetime] = None
-    ttl_hours: Optional[int] = None
+    ttl_hours: Optional[int] = Field(default=None, ge=1, le=8760)
 
 class AccessGrantRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -57,9 +57,9 @@ class AccessGrantRead(BaseModel):
 class NamespaceCreate(BaseModel):
     path: str = Field(..., min_length=3, max_length=256, description="URI format path (e.g. 'memora://forge/projects/alpha')")
     type: NamespaceType = Field(default=NamespaceType.AGENT_PRIVATE)
-    tenant_id: str = Field(default="default")
-    agent_id: Optional[str] = None
-    agent_name: Optional[str] = None
+    tenant_id: str = Field(default="default", min_length=1, max_length=64)
+    agent_id: Optional[str] = Field(default=None, max_length=64)
+    agent_name: Optional[str] = Field(default=None, min_length=2, max_length=128)
 
 class NamespaceRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -83,19 +83,19 @@ class ProvenanceMetadata(BaseModel):
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
 
 class MemoryRecordCreate(BaseModel):
-    tenant_id: str = Field(default="default")
-    user_id: str = Field(default="default_user", description="Identity scope: User identifier")
-    agent_id: Optional[str] = Field(default=None, description="Identity scope: Agent identifier")
-    workspace_id: str = Field(default="default_workspace", description="Identity scope: Workspace boundary")
-    device_id: str = Field(default="default_device", description="Identity scope: Device ID")
-    task_id: Optional[str] = Field(default=None, description="Identity scope: Task context ID")
-    idempotency_key: Optional[str] = Field(default=None, description="Idempotency key for deduplicated writes")
-    content_text: str = Field(..., min_length=1)
+    tenant_id: str = Field(default="default", min_length=1, max_length=64)
+    user_id: str = Field(default="default_user", max_length=128, description="Identity scope: User identifier")
+    agent_id: Optional[str] = Field(default=None, max_length=128, description="Identity scope: Agent identifier")
+    workspace_id: str = Field(default="default_workspace", max_length=128, description="Identity scope: Workspace boundary")
+    device_id: str = Field(default="default_device", max_length=128, description="Identity scope: Device ID")
+    task_id: Optional[str] = Field(default=None, max_length=128, description="Identity scope: Task context ID")
+    idempotency_key: Optional[str] = Field(default=None, max_length=128, description="Idempotency key for deduplicated writes")
+    content_text: str = Field(..., min_length=1, max_length=100_000)
     memory_type: MemoryType = Field(default=MemoryType.EPISODIC)
-    namespace_path: Optional[str] = None
-    namespace_id: Optional[str] = None
-    owner_name: Optional[str] = None
-    owner_id: Optional[str] = None
+    namespace_path: Optional[str] = Field(default=None, max_length=1024)
+    namespace_id: Optional[str] = Field(default=None, max_length=64)
+    owner_name: Optional[str] = Field(default=None, max_length=128)
+    owner_id: Optional[str] = Field(default=None, max_length=64)
     source: str = Field(default="unknown")
     provenance: Optional[Dict[str, Any]] = Field(default_factory=dict)
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
@@ -107,7 +107,7 @@ class MemoryRecordCreate(BaseModel):
     entities: List[str] = Field(default_factory=list)
 
 class MemoryRecordUpdate(BaseModel):
-    content_text: Optional[str] = None
+    content_text: Optional[str] = Field(default=None, max_length=100_000)
     confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     importance: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     lifecycle_state: Optional[LifecycleState] = None
@@ -146,37 +146,39 @@ class MemoryRecordRead(BaseModel):
     entities: Optional[List[str]] = None
 
 class MemoryQuery(BaseModel):
-    tenant_id: str = "default"
-    user_id: Optional[str] = None
-    agent_id: Optional[str] = None
-    workspace_id: Optional[str] = None
-    task_id: Optional[str] = None
-    trust_level: Optional[str] = None
+    tenant_id: str = Field(default="default", min_length=1, max_length=64)
+    user_id: Optional[str] = Field(default=None, max_length=128)
+    agent_id: Optional[str] = Field(default=None, max_length=128)
+    workspace_id: Optional[str] = Field(default=None, max_length=128)
+    task_id: Optional[str] = Field(default=None, max_length=128)
+    trust_level: Optional[str] = Field(default=None, max_length=32)
     time_from: Optional[datetime] = None
     time_to: Optional[datetime] = None
     query_text: Optional[str] = None
-    namespace_path: Optional[str] = None
-    owner_name: Optional[str] = None
-    memory_types: Optional[List[MemoryType]] = None
-    lifecycle_states: Optional[List[LifecycleState]] = None
+    namespace_path: Optional[str] = Field(default=None, max_length=1024)
+    owner_name: Optional[str] = Field(default=None, max_length=128)
+    memory_types: Optional[List[MemoryType]] = Field(default=None, max_length=12)
+    lifecycle_states: Optional[List[LifecycleState]] = Field(default=None, max_length=6)
     include_superseded: bool = False
     include_archived: bool = False
     include_deleted: bool = False
     include_expired: bool = False
-    min_confidence: Optional[float] = None
-    min_importance: Optional[float] = None
-    limit: int = 50
-    offset: int = 0
+    min_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    min_importance: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    limit: int = Field(default=50, ge=1, le=200)
+    offset: int = Field(default=0, ge=0, le=1_000_000)
 
 class MemoryTransitionRequest(BaseModel):
     target_state: LifecycleState
-    superseded_by_id: Optional[str] = None
-    purpose: Optional[str] = None
+    superseded_by_id: Optional[str] = Field(default=None, max_length=64)
+    purpose: Optional[str] = Field(default=None, max_length=512)
 
 class MemoryPromoteRequest(BaseModel):
-    """Explicit promotion request from episodic or working memory into semantic memory."""
-    promoted_by: str = Field(default="friday", description="Agent or user promoting this memory")
-    verification_evidence: List[str] = Field(..., min_length=1, description="Evidence references or corroborating sources")
+    """Evidence-backed promotion; the actor always comes from authentication."""
+    verification_evidence: List[str] = Field(
+        ..., min_length=1, max_length=32,
+        description="Evidence references or corroborating sources",
+    )
     target_confidence: float = Field(default=0.95, ge=0.85, le=1.0, description="Calibrated confidence score")
     purpose: Optional[str] = Field(default="Verified empirical promotion into semantic tier")
 

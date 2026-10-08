@@ -29,16 +29,19 @@ def list_audit_logs(
     actor_id: Optional[str] = None,
     memory_id: Optional[str] = None,
     action: Optional[str] = None,
-    limit: int = Query(default=100, le=500),
+    limit: int = Query(default=100, ge=1, le=500),
     actor_name: str = Depends(get_actor_header),
     db: Session = Depends(get_db)
 ):
-    query = db.query(AuditLog)
+    query = db.query(AuditLog).filter(AuditLog.tenant_id == "default")
 
     if actor_name not in ADMIN_AGENTS:
-        me = db.query(Agent).filter(Agent.name == actor_name).first()
-        # Confine a non-admin to its own rows. Asking for someone else's actor_id
-        # must yield nothing rather than that agent's trail.
+        me = db.query(Agent).filter(
+            Agent.name == actor_name,
+            Agent.tenant_id == "default",
+        ).first()
+        # Confine a non-admin to its own tenant-bound rows. Asking for someone
+        # else's actor_id must yield nothing rather than that agent's trail.
         query = query.filter(AuditLog.actor_id == (me.id if me else "__none__"))
     elif actor_id:
         query = query.filter(AuditLog.actor_id == actor_id)

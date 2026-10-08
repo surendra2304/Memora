@@ -74,7 +74,14 @@ def test_namespace_policy_inspection_endpoint(client: TestClient, test_db):
     IdentityService.register_agent(test_db, "friday", role="supervisor")
     IdentityService.register_agent(test_db, "forge", role="worker")
 
-    ns = IdentityService.resolve_namespace(test_db, "memora://friday/projects/collab", default_type=NamespaceType.PROJECT_PRIVATE)
+    ns = IdentityService.resolve_namespace(
+        test_db,
+        "memora://friday/projects/collab",
+        default_type=NamespaceType.PROJECT_PRIVATE,
+        owner_agent_id=IdentityService.get_agent_by_name(
+            test_db, "friday", tenant_id="default"
+        ).id,
+    )
     IdentityService.grant_access(test_db, agent_name="forge", namespace_id=ns.id, actions=["read", "query"], purpose="Collab dev", ttl_hours=24)
     test_db.commit()
 

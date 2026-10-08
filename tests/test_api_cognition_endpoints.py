@@ -257,14 +257,17 @@ def test_delegation_creates_a_bounded_subagent(client, test_db):
 # reflection
 # ---------------------------------------------------------------------------
 
-def test_reflection_defaults_to_a_dry_run(client, test_db):
+def test_reflection_defaults_to_a_dry_run_and_only_uses_visible_memories(client, test_db):
     _seed_corpus(test_db)
     response = client.post("/v1/reflection/run", json={},
                            headers={"X-Agent-Name": "forge"})
     assert response.status_code == 200
     body = response.json()
     assert body["stored"] == 0, "a non-admin must not be able to store insights"
-    assert body["insight_count"] > 0
+    # The default tenant has three agents' private records. Forge sees only its
+    # own row, so the cross-agent contradiction must not appear in its report.
+    assert body["scanned_memories"] == 1
+    assert body["insight_count"] == 0
 
 
 def test_a_non_admin_cannot_store_reflections(client, test_db):
@@ -281,14 +284,19 @@ def test_memora_may_store_reflections_and_read_them_back(client, test_db):
     assert run.status_code == 200
     assert run.json()["stored"] > 0
 
+    peer_listing = client.get("/v1/reflection/insights",
+                              headers={"X-Agent-Name": "forge"})
+    assert peer_listing.status_code == 200
+    assert "42" not in peer_listing.text and "38" not in peer_listing.text
+
     listing = client.get("/v1/reflection/insights",
-                         headers={"X-Agent-Name": "forge"})
+                         headers={"X-Agent-Name": "memora"})
     assert listing.status_code == 200
     body = listing.json()
     assert body["count"] > 0
     kinds = {i["kind"] for i in body["insights"]}
     assert "contradiction" in kinds, (
-        "the seeded 42 Nm vs 38 Nm conflict should have been recorded"
+        "the seeded 42 Nm vs 38 Nm conflict should have been recorded for the admin view"
     )
 
 

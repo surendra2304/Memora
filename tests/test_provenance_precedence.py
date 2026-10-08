@@ -6,9 +6,10 @@ canonical fields, so a caller could overwrite trust-critical and integrity
 fields. Verified before the fix: forge wrote a record carrying
 trust_level="verified", created_by="friday", source="human_executive".
 
-`trust_level`, `confidence` and `source_type` remain caller inputs on purpose —
-they are documented parameters of execute_pipeline — but attribution and
-integrity fields must not be.
+A caller's provenance bundle cannot authenticate a trust claim. Confidence and
+source classification remain useful caller-supplied metadata, but untrusted
+agents' ``verified``/``operator_confirmed`` labels are canonicalized to
+``candidate``; trusted tiers require the separate Memora promotion boundary.
 """
 import hashlib
 
@@ -29,10 +30,9 @@ OWNED_FIELDS = {
     "pipeline_version",
 }
 
-# Deliberately NOT owned: trust_level, confidence, source_type and evidence_refs
-# are explicit caller inputs. execute_pipeline resolves each as
-# `param or provenance.get(...) or default`, so supplying them through the
-# provenance bag is the documented path, not a bypass.
+# Caller metadata may be retained, but a caller's trust assertion is never
+# accepted as verification. The pipeline owns trust classification; verified
+# status is established only through the authorized promotion workflow.
 
 
 
@@ -58,6 +58,7 @@ def test_caller_cannot_spoof_attribution(test_db):
 
     assert provenance["created_by"] == "forge", "attribution must name the real caller"
     assert provenance["source"] == "api", "source must be the real ingest channel"
+    assert provenance["trust_level"] == "candidate", "caller-supplied trust is not proof"
 
 
 def test_caller_cannot_forge_the_content_hash(test_db):
@@ -93,8 +94,8 @@ def test_unrelated_caller_keys_are_still_preserved(test_db):
     assert provenance["ingest_batch"] == "b-42"
 
 
-def test_documented_trust_inputs_still_reach_the_record(test_db):
-    """trust_level/confidence are deliberate caller inputs; do not break them."""
+def test_agent_claimed_verified_trust_is_downgraded_but_metadata_is_retained(test_db):
+    """A write credential cannot self-assert a verified trust level."""
     IdentityService.register_agent(test_db, "forge")
     result = MemoryWriteService.execute_pipeline(
         test_db,
@@ -106,7 +107,7 @@ def test_documented_trust_inputs_still_reach_the_record(test_db):
     )
     provenance = result.record.provenance or {}
 
-    assert provenance["trust_level"] == "verified"
+    assert provenance["trust_level"] == "candidate"
     assert provenance["confidence"] == 0.42
     assert provenance["source_type"] == "verified_fact"
     # ...while attribution stays honest.

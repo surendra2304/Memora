@@ -5,7 +5,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from storage.relational.session import get_db
-from core.identity.service import IdentityService
+from core.identity.service import AgentDelegationError, IdentityService
 from core.memory.schemas import AgentCreate, SubAgentCreate, AgentRead
 from apps.api.dependencies import authenticate_agent, get_actor_header, require_admin
 
@@ -57,7 +57,12 @@ def register_subagent(
     the parent would have been an escalation. There is no longer a way to ask for
     a parent you are not.
     """
-    caller = IdentityService.get_agent_by_name(db, actor_name, tenant_id=subagent_in.tenant_id)
+    if subagent_in.tenant_id != "default":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The requested tenant must match the default tenant bound to API credentials.",
+        )
+    caller = IdentityService.get_agent_by_name(db, actor_name, tenant_id="default")
     if not caller:
         # register_subagent would otherwise silently create an agent named after
         # the caller, minting an identity as a side effect of a failed request.
@@ -65,23 +70,32 @@ def register_subagent(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Authenticated agent '{actor_name}' is not registered in Memora.",
         )
-    subagent = IdentityService.register_subagent(
-        db,
-        parent_agent_name=caller.name,
-        subagent_name=subagent_in.name,
-        bounded_scope=subagent_in.bounded_scope,
-        description=subagent_in.description,
-        tenant_id=caller.tenant_id,
-    )
+    try:
+        subagent = IdentityService.register_subagent(
+            db,
+            parent_agent_name=caller.name,
+            subagent_name=subagent_in.name,
+            bounded_scope=subagent_in.bounded_scope,
+            description=subagent_in.description,
+            tenant_id=caller.tenant_id,
+        )
+    except AgentDelegationError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
     return subagent
 
 @router.get("", response_model=List[AgentRead])
 def list_agents(db: Session = Depends(get_db)):
-    return IdentityService.list_agents(db)
+    # The request credentials do not carry a tenant claim; expose names only
+    # from the tenant currently bound to the API rather than the global table.
+    return IdentityService.list_agents(db, tenant_id="default")
 
 @router.get("/{name}", response_model=AgentRead)
 def get_agent(name: str, db: Session = Depends(get_db)):
-    agent = IdentityService.get_agent_by_name(db, name=name)
+    agent = IdentityService.get_agent_by_name(db, name=name, tenant_id="default")
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Agent '{name}' not found.")
     return agent

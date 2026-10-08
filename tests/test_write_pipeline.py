@@ -179,10 +179,10 @@ def test_api_v1_memories_edge_cases_empty_and_unicode(client: TestClient):
     unicode_payload = {
         "content_text": "⚡ 🧠 Memora 认知记忆引擎: 支持多语言 (Japanese: 記憶, Hindi: स्मृति, Arabic: ذاكرة) and mathematical formulas: E = mc².",
         "target_namespace_path": "memora://friday/private",
-        "memory_type": "semantic"
+        "memory_type": "episodic"
     }
     uni_resp = client.post("/v1/memories", json=unicode_payload, headers={"X-Agent-Name": "friday"})
     assert uni_resp.status_code == 201
     uni_data = uni_resp.json()
     assert "Memora 认知记忆引擎" in uni_data["content_text"]
-    assert uni_data["memory_type"] == "semantic"
+    assert uni_data["memory_type"] == "episodic"

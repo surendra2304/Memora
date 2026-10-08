@@ -85,9 +85,9 @@ class SupersessionEngine:
             if new_record.lifecycle_state == LifecycleState.CANDIDATE:
                 MemoryLifecycleEngine.transition(new_record, target_state=LifecycleState.ACTIVE)
 
-            db.commit()
-            db.refresh(existing_record)
-            db.refresh(new_record)
+            # Leave transaction ownership to the caller so lifecycle changes and
+            # the associated authorization/audit record commit atomically.
+            db.flush()
 
             return ContradictionResolutionDecision(
                 winner_id=new_record.id,
@@ -103,9 +103,9 @@ class SupersessionEngine:
                 target_state=LifecycleState.SUPERSEDED,
                 superseded_by_id=existing_record.id
             )
-            db.commit()
-            db.refresh(existing_record)
-            db.refresh(new_record)
+            # Leave transaction ownership to the caller so lifecycle changes and
+            # the associated authorization/audit record commit atomically.
+            db.flush()
 
             return ContradictionResolutionDecision(
                 winner_id=existing_record.id,

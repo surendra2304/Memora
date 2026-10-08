@@ -65,7 +65,7 @@ class SearchService:
         db: Session,
         query_text: str,
         actor_name: Optional[str] = None,
-        tenant_id: Optional[str] = None,
+        tenant_id: Optional[str] = "default",
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         workspace_id: Optional[str] = None,
@@ -106,6 +106,11 @@ class SearchService:
             if actor_name
             else None
         )
+        if actor_name and actor is None:
+            # A named caller without a tenant-bound identity must not fall through
+            # to an unfiltered corpus query. API credentials are not tenant claims,
+            # so resolve failure is a closed denial, not an administrative search.
+            return []
         resolved_tenant: str = str(tenant_id or (getattr(actor, "tenant_id", "default") if actor else "default"))
 
         # -------------------------------------------------------------
@@ -174,7 +179,11 @@ class SearchService:
         if not all_candidate_ids:
             return []
 
-        cand_q = db.query(MemoryRecord).filter(
+        # Reapply every caller scope to the union of lexical, vector, and graph
+        # candidates. The lexical leg is pre-filtered above, but vector/graph
+        # candidates can otherwise reintroduce records outside a requested
+        # namespace or memory-type constraint.
+        cand_q = db.query(MemoryRecord).join(Namespace).filter(
             MemoryRecord.id.in_(all_candidate_ids),
             MemoryRecord.tenant_id == resolved_tenant,
             MemoryRecord.lifecycle_state.in_(allowed_states)
@@ -187,6 +196,10 @@ class SearchService:
             cand_q = cand_q.filter(MemoryRecord.workspace_id == workspace_id)
         if task_id:
             cand_q = cand_q.filter(MemoryRecord.task_id == task_id)
+        if namespace_path:
+            cand_q = cand_q.filter(Namespace.path == namespace_path)
+        if memory_types:
+            cand_q = cand_q.filter(MemoryRecord.memory_type.in_(memory_types))
 
         records = cand_q.all()
         record_map = {r.id: r for r in records}
@@ -227,7 +240,8 @@ class SearchService:
                     action="read",
                     purpose=purpose,
                     memory_id=record.id,
-                    log_audit=False
+                    log_audit=False,
+                    allow_expired=include_expired,
                 )
                 if not decision.allowed:
                     continue

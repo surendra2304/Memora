@@ -43,11 +43,13 @@ from sqlalchemy.orm import Session
 
 from core.identity.service import IdentityService
 from storage.relational.models import (
+    AccessGrant,
     Agent,
     EventLog,
     LifecycleState,
     MemoryRecord,
     MemoryType,
+    NamespaceType,
 )
 
 logger = logging.getLogger(__name__)
@@ -161,11 +163,21 @@ class ReflectionEngine:
         db: Session,
         tenant_id: str = "default",
         store_insights: bool = True,
+        actor: Optional[Agent] = None,
     ) -> ReflectionReport:
-        """Run every reflection over the tenant's corpus."""
+        """Analyse a tenant corpus, optionally filtered to what `actor` may read.
+
+        Fabric-wide stored reflections are reserved for the Memora service. A
+        regular agent's dry run uses the same namespace visibility rules as
+        retrieval, so summaries cannot disclose another agent's private corpus.
+        """
         started = datetime.now(timezone.utc)
+        if actor is not None and actor.tenant_id != tenant_id:
+            raise ValueError("Reflection actor and requested tenant do not match.")
 
         records = self._load_corpus(db, tenant_id)
+        if actor is not None and actor.name != "memora":
+            records = self._filter_visible_records(db, records, actor)
         report = ReflectionReport(tenant_id=tenant_id, scanned_memories=len(records))
 
         if not records:
@@ -180,7 +192,6 @@ class ReflectionEngine:
             self.recurring_themes,
             self.contradictions,
             self.stale_knowledge,
-            self.knowledge_gaps,
             self.agent_specialisation,
         ]
         for reflection in reflections:
@@ -190,11 +201,25 @@ class ReflectionEngine:
                 logger.exception("reflection %s failed", reflection.__name__)
                 db.rollback()
 
-        already_known = self._known_fingerprints(db, tenant_id)
-        novel = [i for i in report.insights if i.fingerprint() not in already_known]
+        try:
+            report.insights.extend(
+                self.knowledge_gaps(
+                    db,
+                    records,
+                    owners,
+                    tenant_id,
+                    actor_name=(actor.name if actor is not None and actor.name != "memora" else None),
+                )
+            )
+        except Exception:
+            logger.exception("reflection %s failed", self.knowledge_gaps.__name__)
+            db.rollback()
 
-        if store_insights and novel:
-            report.stored = self._store_insights(db, novel, tenant_id)
+        if store_insights:
+            already_known = self._known_fingerprints(db, tenant_id)
+            novel = [i for i in report.insights if i.fingerprint() not in already_known]
+            if novel:
+                report.stored = self._store_insights(db, novel, tenant_id)
 
         report.duration_ms = (datetime.now(timezone.utc) - started).total_seconds() * 1000
         return report
@@ -221,6 +246,62 @@ class ReflectionEngine:
             .all()
         )
         return [r for r in records if not self._is_reflection(r)]
+
+    @staticmethod
+    def _filter_visible_records(
+        db: Session,
+        records: List[MemoryRecord],
+        actor: Agent,
+    ) -> List[MemoryRecord]:
+        """Apply the read-side namespace policy without writing audit events."""
+        actor_tenant = getattr(actor, "tenant_id", "default")
+        grants = (
+            db.query(AccessGrant)
+            .filter(
+                AccessGrant.tenant_id == actor_tenant,
+                AccessGrant.agent_id == actor.id,
+            )
+            .all()
+        )
+        grant_by_namespace = {}
+        for grant in grants:
+            grant_by_namespace.setdefault(grant.namespace_id, grant)
+
+        namespace_access: Dict[str, bool] = {}
+        visible: List[MemoryRecord] = []
+        scope = (actor.bounded_scope or "").rstrip("/")
+
+        for record in records:
+            if record.tenant_id != actor_tenant or record.namespace is None:
+                continue
+            namespace = record.namespace
+            cached = namespace_access.get(namespace.id)
+            if cached is None:
+                within_scope = not scope or (
+                    namespace.path == scope or namespace.path.startswith(f"{scope}/")
+                )
+                if actor.bounded_scope and (
+                    namespace.type == NamespaceType.AGENT_PRIVATE or not within_scope
+                ):
+                    allowed = False
+                elif namespace.type in {NamespaceType.UNIVERSE_GLOBAL, NamespaceType.PUBLIC}:
+                    allowed = True
+                elif namespace.agent_id == actor.id:
+                    allowed = True
+                else:
+                    grant = grant_by_namespace.get(namespace.id)
+                    allowed = bool(
+                        grant
+                        and not grant.is_expired()
+                        and "read" in grant.actions
+                    )
+                namespace_access[namespace.id] = allowed
+            else:
+                allowed = cached
+
+            if allowed:
+                visible.append(record)
+        return visible
 
     @staticmethod
     def _is_reflection(record: MemoryRecord) -> bool:
@@ -390,6 +471,7 @@ class ReflectionEngine:
         records: Iterable[MemoryRecord],
         owners: Dict[str, str],
         tenant_id: str,
+        actor_name: Optional[str] = None,
     ) -> List[Insight]:
         """Subjects that were asked about but the corpus cannot answer.
 
@@ -402,16 +484,13 @@ class ReflectionEngine:
 
         asked: Counter = Counter()
         try:
-            events = (
-                db.query(EventLog)
-                .filter(
-                    EventLog.tenant_id == tenant_id,
-                    EventLog.event_type.in_(["memory.query", "query", "context.build"]),
-                )
-                .order_by(EventLog.id.desc())
-                .limit(500)
-                .all()
+            event_query = db.query(EventLog).filter(
+                EventLog.tenant_id == tenant_id,
+                EventLog.event_type.in_(["memory.query", "query", "context.build"]),
             )
+            if actor_name:
+                event_query = event_query.filter(EventLog.target_agent == actor_name)
+            events = event_query.order_by(EventLog.id.desc()).limit(500).all()
         except Exception:
             events = []
 

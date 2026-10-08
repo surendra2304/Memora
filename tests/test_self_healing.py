@@ -268,7 +268,7 @@ def test_a_recent_memory_is_not_backlog(test_db):
 # ---------------------------------------------------------------------------
 
 def test_a_failing_check_is_reported_without_aborting_the_run(test_db, monkeypatch):
-    def explode(db, dry_run):
+    def explode(db, dry_run, tenant_id):
         raise RuntimeError("check blew up")
 
     monkeypatch.setattr(

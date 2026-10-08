@@ -253,7 +253,7 @@ def test_time_based_decay_and_auto_archival(client: TestClient, test_db):
     decay_resp = client.post(
         "/v1/memories/decay",
         json={"decay_rate_per_day": 0.05, "unverified_threshold_days": 7, "archive_threshold": 0.15},
-        headers={"X-Agent-Name": "friday"}
+        headers={"X-Agent-Name": "memora"}
     )
     assert decay_resp.status_code == 200
     decay_data = decay_resp.json()

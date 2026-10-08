@@ -13,20 +13,18 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data /app/logs \
+    && groupadd --system memora \
+    && useradd --system --gid memora --create-home --home-dir /home/memora --shell /usr/sbin/nologin memora \
+    && chown -R memora:memora /app/data /app/logs /home/memora
 
 EXPOSE 8000
 
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 \
+    HOME=/home/memora
 
-# Run migrations before serving. Previously the container relied purely on
-# Base.metadata.create_all() at import time, which never ALTERs an existing
-# table. That is why a database carrying an older schema crashed on startup
-# with "no such column: event_log.target_agent" and could never be repaired:
-# the migration that owned that column did a bare CREATE TABLE against a table
-# create_all had already built. The migrations are now convergent, so running
-# them here is safe and makes the schema deterministic on every deploy.
-#
-# `|| true` is deliberate: a failure must still let the process start and report
-# its own health truthfully rather than crash-looping with an opaque exit code.
-CMD ["sh", "-c", "alembic upgrade head || echo '[migrate] continuing; app will report its own health'; exec uvicorn apps.api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+USER memora
+
+# Do not serve against an out-of-date schema. A failed migration is a deploy
+# failure and must stop startup rather than silently leaving the API degraded.
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn apps.api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

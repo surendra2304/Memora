@@ -12,7 +12,9 @@ from storage.relational.models import (
     Namespace,
     NamespaceType,
     AccessGrant,
-    AuditLog
+    AuditLog,
+    LifecycleState,
+    MemoryRecord,
 )
 from core.metrics.collector import metrics_collector
 from core.events.emitter import event_emitter
@@ -51,7 +53,8 @@ class PolicyEngine:
         action: str = "read",
         purpose: Optional[str] = None,
         memory_id: Optional[str] = None,
-        log_audit: bool = True
+        log_audit: bool = True,
+        allow_expired: bool = False,
     ) -> PolicyDecision:
         dims = {
             "who": {"id": actor.id, "name": actor.name, "role": actor.role, "bounded_scope": actor.bounded_scope},
@@ -76,6 +79,61 @@ class PolicyEngine:
             cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
             return decision
 
+        # The service administrator may administer every namespace inside its
+        # own tenant. This check deliberately follows strict tenant isolation so
+        # the memora credential never becomes a cross-tenant superuser.
+        if actor.name == "memora":
+            decision = PolicyDecision(
+                allowed=True,
+                reason=f"The memora service identity may administer namespace '{namespace.path}' within tenant '{actor_tenant}'.",
+                rule_matched="MEMORA_TENANT_ADMIN",
+                dimensions=dims,
+            )
+            cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
+            return decision
+
+        # A soft-deleted or out-of-window record is not readable merely because
+        # its containing namespace is readable. Search already excludes these
+        # states; enforce the same rule on direct GET and graph traversal paths.
+        if action.lower() in {"read", "query"} and memory_id:
+            record = db.query(MemoryRecord).filter(
+                MemoryRecord.id == memory_id,
+                MemoryRecord.tenant_id == actor_tenant,
+                MemoryRecord.namespace_id == namespace.id,
+            ).first()
+            if record is not None:
+                now = datetime.now(timezone.utc)
+
+                def _as_utc(value):
+                    if value is None:
+                        return None
+                    if value.tzinfo is None:
+                        return value.replace(tzinfo=timezone.utc)
+                    return value.astimezone(timezone.utc)
+
+                expires_at = _as_utc(record.expires_at)
+                valid_from = _as_utc(record.valid_from)
+                valid_until = _as_utc(record.valid_until)
+                unreadable = (
+                    record.lifecycle_state == LifecycleState.DELETED
+                    or (
+                        expires_at is not None
+                        and now > expires_at
+                        and not allow_expired
+                    )
+                    or (valid_from is not None and now < valid_from)
+                    or (valid_until is not None and now > valid_until)
+                )
+                if unreadable:
+                    decision = PolicyDecision(
+                        allowed=False,
+                        reason="The memory is deleted or outside its active temporal validity window.",
+                        rule_matched="MEMORY_NOT_CURRENTLY_READABLE",
+                        dimensions=dims,
+                    )
+                    cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
+                    return decision
+
         # -------------------------------------------------------------
         # DIMENSION 1: SUB-AGENT BOUNDED CONTEXT ISOLATION
         # -------------------------------------------------------------
@@ -90,7 +148,12 @@ class PolicyEngine:
                 cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
                 return decision
 
-            if not namespace.path.startswith(actor.bounded_scope):
+            bounded_scope = actor.bounded_scope.rstrip("/")
+            in_bounded_scope = (
+                namespace.path == bounded_scope
+                or namespace.path.startswith(f"{bounded_scope}/")
+            )
+            if not in_bounded_scope:
                 decision = PolicyDecision(
                     allowed=False,
                     reason=f"Sub-agent '{actor.name}' is restricted to scope '{actor.bounded_scope}'. Target '{namespace.path}' is outside boundary.",
@@ -133,7 +196,7 @@ class PolicyEngine:
                     return decision
 
 
-                if action not in grant.actions and "*" not in grant.actions:
+                if action not in grant.actions:
                     decision = PolicyDecision(
                         allowed=False,
                         reason=f"Access grant does not permit action '{action}'. Permitted: {grant.actions}",
@@ -166,12 +229,62 @@ class PolicyEngine:
         # DIMENSION 3: UNIVERSE GLOBAL & PUBLIC NAMESPACES
         # -------------------------------------------------------------
         if namespace.type in [NamespaceType.UNIVERSE_GLOBAL, NamespaceType.PUBLIC]:
-            decision = PolicyDecision(
-                allowed=True,
-                reason=f"Namespace '{namespace.path}' is {namespace.type.value} and openly readable within tenant '{actor_tenant}'.",
-                rule_matched="PUBLIC_OR_GLOBAL_ACCESS",
-                dimensions=dims
-            )
+            normalized_action = action.lower()
+            record = None
+            if memory_id:
+                record = db.query(MemoryRecord).filter(
+                    MemoryRecord.id == memory_id,
+                    MemoryRecord.tenant_id == actor_tenant,
+                    MemoryRecord.namespace_id == namespace.id,
+                ).first()
+
+            if normalized_action in {"read", "query"}:
+                decision = PolicyDecision(
+                    allowed=True,
+                    reason=f"Namespace '{namespace.path}' is {namespace.type.value} and openly readable within tenant '{actor_tenant}'.",
+                    rule_matched="PUBLIC_GLOBAL_READ",
+                    dimensions=dims,
+                )
+            elif normalized_action == "write" and memory_id is None:
+                # Global namespaces are append-only collaboration surfaces. Keep
+                # the documented Universe adapter publish flow, but do not let a
+                # write permission silently imply authority over existing rows.
+                decision = PolicyDecision(
+                    allowed=True,
+                    reason=f"Agent '{actor.name}' may append to '{namespace.path}'.",
+                    rule_matched="PUBLIC_GLOBAL_APPEND",
+                    dimensions=dims,
+                )
+            elif normalized_action in {"write", "delete", "verify", "supersede", "share", "update", "promote", "transition"}:
+                owns_record = bool(record and record.owner_id == actor.id)
+                is_service_admin = actor.name == "memora"
+                allowed = owns_record or is_service_admin
+                decision = PolicyDecision(
+                    allowed=allowed,
+                    reason=(
+                        f"Agent '{actor.name}' may mutate its own record in '{namespace.path}'."
+                        if owns_record
+                        else (
+                            "The memora service identity may administer public/global records."
+                            if is_service_admin
+                            else f"Mutating an existing {namespace.type.value} record requires its owner or the memora service identity."
+                        )
+                    ),
+                    rule_matched=(
+                        "PUBLIC_GLOBAL_OWNER_MUTATION"
+                        if owns_record
+                        else ("PUBLIC_GLOBAL_ADMIN_MUTATION" if is_service_admin else "PUBLIC_GLOBAL_MUTATION_REQUIRES_OWNER")
+                    ),
+                    dimensions=dims,
+                )
+            else:
+                decision = PolicyDecision(
+                    allowed=False,
+                    reason=f"Action '{action}' is not permitted in public/global namespace '{namespace.path}'.",
+                    rule_matched="PUBLIC_GLOBAL_ACTION_DENIED",
+                    dimensions=dims,
+                )
+
             cls._handle_decision(db, decision, actor.id, memory_id, log_audit)
             return decision
 
@@ -206,7 +319,7 @@ class PolicyEngine:
                 return decision
 
 
-            if action not in grant.actions and "*" not in grant.actions:
+            if action not in grant.actions:
                 decision = PolicyDecision(
                     allowed=False,
                     reason=f"Access grant does not permit action '{action}'. Permitted: {grant.actions}",

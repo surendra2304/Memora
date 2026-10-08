@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from apps.api.dependencies import authenticate_agent
+from apps.api.middleware import RequestBodyLimitMiddleware
 from core.config import settings
 from storage.relational.session import init_db, storage_ready
 from storage.relational.models import Agent, Namespace, MemoryRecord
@@ -183,6 +184,9 @@ app = FastAPI(
 # which allows no cross-origin browser access: correct for an agent-to-agent
 # API, where callers are servers and are unaffected by CORS. Credentials are
 # only enabled when the operator lists explicit origins, never with "*".
+# Apply the body limiter before CORS is added so oversized responses still pass
+# through the CORS layer and chunked requests receive the same cap as fixed ones.
+app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=1_048_576)
 _cors_origins = settings.get_cors_origins()
 app.add_middleware(
     CORSMiddleware,

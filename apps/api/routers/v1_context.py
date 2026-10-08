@@ -9,19 +9,26 @@ from sqlalchemy.orm import Session
 
 from storage.relational.session import get_db
 from core.memory.context.builder import ContextBuilderService
-from apps.api.dependencies import get_actor_header, get_purpose_header
+from apps.api.dependencies import (
+    get_actor_header,
+    get_purpose_header,
+    resolve_agent_selector,
+)
+import logging
+
+logger = logging.getLogger("memora.api.context")
 
 router = APIRouter(prefix="/v1/context", tags=["v1 Context Pipeline"])
 
 class ContextBuildRequest(BaseModel):
-    user_id: Optional[str] = Field(default="default_user", description="Identity scope: User ID")
-    agent_id: Optional[str] = Field(default=None, description="Agent ID or name (falls back to X-Agent-Name header)")
-    workspace_id: Optional[str] = Field(default="default_workspace", description="Identity scope: Workspace boundary")
-    task_id: Optional[str] = Field(default=None, description="Identity scope: Task context ID")
-    task_query: str = Field(..., min_length=1, description="Task query or context requirement for the agent")
+    user_id: Optional[str] = Field(default="default_user", max_length=128, description="Identity scope: User ID")
+    agent_id: Optional[str] = Field(default=None, max_length=128, description="Agent ID or name (falls back to X-Agent-Name header)")
+    workspace_id: Optional[str] = Field(default="default_workspace", max_length=128, description="Identity scope: Workspace boundary")
+    task_id: Optional[str] = Field(default=None, max_length=128, description="Identity scope: Task context ID")
+    task_query: str = Field(..., min_length=1, max_length=4096, description="Task query or context requirement for the agent")
     token_budget: int = Field(default=4000, ge=100, le=32000, description="Max token budget for the returned context bundle")
-    namespace_path: Optional[str] = Field(default=None, description="Optional namespace constraint")
-    purpose: Optional[str] = Field(default=None, description="Access intent justification")
+    namespace_path: Optional[str] = Field(default=None, max_length=1024, description="Optional namespace constraint")
+    purpose: Optional[str] = Field(default=None, max_length=512, description="Access intent justification")
     max_candidates: int = Field(default=30, ge=1, le=100)
 
 class ContextBundleResponse(BaseModel):
@@ -45,7 +52,12 @@ def build_context_bundle_endpoint(
     purpose: Optional[str] = Depends(get_purpose_header),
     db: Session = Depends(get_db)
 ):
-    target_agent = req.agent_id or actor_name
+    target_agent = resolve_agent_selector(
+        db,
+        authenticated_name=actor_name,
+        requested_name=req.agent_id,
+        allow_direct_subagent=True,
+    )
     resolved_purpose = req.purpose or purpose
 
     try:
@@ -59,9 +71,18 @@ def build_context_bundle_endpoint(
             token_budget=req.token_budget,
             namespace_path=req.namespace_path,
             purpose=resolved_purpose,
-            max_candidates=req.max_candidates
+            max_candidates=req.max_candidates,
+            tenant_id="default",
         )
         db.commit()
         return bundle.to_dict()
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception:
+        logger.exception("Context bundle generation failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal error while generating context. The detail has been logged server-side.",
+        )

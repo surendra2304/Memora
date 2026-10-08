@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from apps.api.dependencies import get_actor_header
+from core.identity.service import IdentityService
 from core.reflection.engine import reflection_engine
 from storage.relational.models import MemoryRecord, MemoryType
 from storage.relational.session import get_db
@@ -34,6 +35,27 @@ def _require_admin(actor_name: str) -> str:
     return actor_name
 
 
+def _resolve_reflection_actor(db: Session, actor_name: str):
+    """Resolve authenticated service identity in the API's default tenant.
+
+    Agent credentials currently identify a service name, not a tenant. Until
+    credentials carry a tenant claim, selecting an arbitrary same-named agent
+    from another tenant would be unsafe; this endpoint therefore binds to the
+    default tenant and fails closed when that principal is not provisioned.
+    """
+    actor = IdentityService.get_agent_by_name(db, actor_name, tenant_id="default")
+    if actor is None and actor_name == "memora":
+        actor = IdentityService.register_agent(
+            db, "memora", role="supervisor", tenant_id="default"
+        )
+    if actor is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The authenticated agent is not provisioned in the default tenant.",
+        )
+    return actor
+
+
 class ReflectRequest(BaseModel):
     dry_run: bool = Field(
         default=True,
@@ -47,10 +69,18 @@ def run_reflection(
     actor_name: str = Depends(get_actor_header),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    """Analyse the corpus and report what the system concluded about itself."""
+    """Analyse visible memory and report grounded conclusions."""
+    actor = _resolve_reflection_actor(db, actor_name)
+    is_admin = actor.name in _ADMIN_AGENTS
     if not req.dry_run:
-        _require_admin(actor_name)
-    report = reflection_engine.reflect(db, store_insights=not req.dry_run)
+        _require_admin(actor.name)
+
+    report = reflection_engine.reflect(
+        db,
+        tenant_id=actor.tenant_id,
+        store_insights=not req.dry_run,
+        actor=None if is_admin else actor,
+    )
     return report.to_dict()
 
 
@@ -61,10 +91,34 @@ def list_insights(
     kind: Optional[str] = Query(default=None, description="Filter by insight kind."),
     limit: int = Query(default=50, ge=1, le=200),
 ) -> Dict[str, Any]:
-    """Insights recorded by previous reflection runs."""
+    """Return stored admin insights or a policy-filtered live view for an agent."""
+    actor = _resolve_reflection_actor(db, actor_name)
+
+    if actor.name not in _ADMIN_AGENTS:
+        report = reflection_engine.reflect(
+            db,
+            tenant_id=actor.tenant_id,
+            store_insights=False,
+            actor=actor,
+        )
+        insights = [
+            insight.to_dict()
+            for insight in report.insights
+            if not kind or insight.kind == kind
+        ][:limit]
+        return {
+            "count": len(insights),
+            "tenant_id": actor.tenant_id,
+            "source": "live_policy_filtered",
+            "insights": insights,
+        }
+
     query = (
         db.query(MemoryRecord)
-        .filter(MemoryRecord.memory_type == MemoryType.EXPERIENCE)
+        .filter(
+            MemoryRecord.tenant_id == actor.tenant_id,
+            MemoryRecord.memory_type == MemoryType.EXPERIENCE,
+        )
         .order_by(MemoryRecord.created_at.desc())
     )
     rows = query.limit(limit * 3).all()
@@ -94,4 +148,9 @@ def list_insights(
         if len(insights) >= limit:
             break
 
-    return {"count": len(insights), "insights": insights}
+    return {
+        "count": len(insights),
+        "tenant_id": actor.tenant_id,
+        "source": "stored",
+        "insights": insights,
+    }

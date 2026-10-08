@@ -14,10 +14,12 @@ INTELX_KEY = "intelx-graph-key"
 
 
 @pytest.fixture
-def mesh(client: TestClient, monkeypatch):
+def mesh(client: TestClient, test_db, monkeypatch):
     monkeypatch.delenv("MEMORA_ALLOW_ANONYMOUS_DEV", raising=False)
     monkeypatch.setenv("FRIDAY_API_KEY", FRIDAY_KEY)
     monkeypatch.setenv("INTELX_API_KEY", INTELX_KEY)
+    IdentityService.register_agent(test_db, "friday")
+    IdentityService.register_agent(test_db, "intelx")
     return {
         "friday": {"X-Agent-Name": "friday", "X-API-Key": FRIDAY_KEY},
         "intelx": {"X-Agent-Name": "intelx", "X-API-Key": INTELX_KEY},
