@@ -6,13 +6,13 @@
 
 ## Current state and evidence
 
-- The fixed branch is correct. `205d143`, `3fa5431`, `b3817d1`, `db0e45d`, and `7eaa491` are committed and pushed to `origin/arena/9112d5a3-memora`; the working tree is clean after the latest push.
+- The fixed branch is correct. `205d143`, `3fa5431`, `b3817d1`, `db0e45d`, `7eaa491`, `78c8a03`, and `7d89987` are committed and pushed to `origin/arena/9112d5a3-memora`; the working tree was clean after the latest push.
 - Earlier hardening had 496 passing tests. The latest source/test state, including `learn-outcome` namespace parity across both SDKs and named-agent-only credential selection in the cloud fallback, passed `.venv/bin/pytest -q`: **515 tests in 28.97s**. The updated 31-test concurrency/idempotency/circuit-breaker/metrics battery passed three rounds (31 each, 3.01s / 3.18s / 3.53s).
 - The focused resilience/self-healing/event/SDK/metrics/write-pipeline batch passed **114 tests in 6.28s**; post-review deduplication-metric tests passed **11 tests in 1.75s**; the updated SDK round-trip and cloud-fallback credential/namespace checks passed **4 tests in 1.25s**. `.venv/bin/ruff check .`, `git diff --check`, and `.venv/bin/alembic heads` pass; head is `f35ecb0a7c12`.
 - The installed wheel includes a package-local Alembic config. From a temporary wheel install and working directory, `init_db()` created/stamped a clean SQLite schema at `f35ecb0a7c12`, then packaged `alembic upgrade head`/`current` succeeded; the source regression also compares fresh ORM tables/columns/unique keys to migration-only head.
 - `docker-compose.yml` and `render.yaml` parse as YAML. Docker/Compose CLI is unavailable, so Compose semantic validation and image execution were not performed.
 - New local hardening covers HALF_OPEN probe reservation/generation, tenant-safe local and Turso event-ID collisions, refusal of agent-authored system events, server-owned event tenant metadata, a positive SDK-to-API `learn-outcome` path, retrieval/deduplication metrics and concurrent metric snapshots, paged tenant-filtered Qdrant reconciliation, and safe Alembic stamping of brand-new ORM schemas. Qdrant/Turso tests use local SQL or fakes only; existing unversioned schemas are not auto-stamped.
-- The changed-file credential-pattern scan found two long-inline-key matches, both synthetic test fixture keys in `tests/test_phase16_hardening.py`; the scanner emitted paths/categories only and no values. No changed production configuration matched. A separate previously committed database credential remains in repository history and is not resolved by this work.
+- Credential-pattern review of changed code/configuration emits only paths/categories, never values; matches in tests are synthetic fixture placeholders, and no changed production configuration matched. A separate previously committed database credential remains in repository history and is not resolved by this work.
 
 ## Checklist
 
@@ -24,7 +24,7 @@
 - [x] Close the `learn-outcome` SDK contract gap: both SDK clients accept and forward `namespace_path`; the positive synthetic API/SQLite round trip persists the selected namespace; the cloud-only client's wire payload and refusal to use a constructor-wide credential for arbitrary named agents have focused tests. Full suite (515), Ruff, and diff check pass. Hosted credentials/endpoints remain unverified.
 - [x] Finish packaging/deployment verification possible locally: the installed wheel's `init_db()` created and stamped a clean SQLite schema at `f35ecb0a7c12`; packaged `alembic upgrade head`/`current` then succeeded, and Compose/Render YAML parsed. Docker/Compose CLI and image execution remain unavailable.
 - [x] Run final local verification and update the hardening note/risk ledger with exact results: 515 full-suite passes, three 31-test pressure rounds, Ruff, Alembic head, diff check, installed-wheel migration CLI, and YAML parsing. Hosted services and Docker remain unverified.
-- [x] Review the final patch and generated artifacts, run the credential-pattern scan without printing values, commit the verified event/resilience hardening as `b3817d1`, metric semantics as `db0e45d`, and fresh-schema bootstrap as `7eaa491`; all were pushed only to `origin/arena/9112d5a3-memora`.
+- [x] Review the final patch and generated artifacts, run the credential-pattern scan without printing values, and commit verified work only to `arena/9112d5a3-memora`: event/resilience hardening `b3817d1`, metric semantics `db0e45d`, fresh-schema bootstrap `7eaa491`, and SDK contract parity `7d89987`. These commits were pushed only to `origin/arena/9112d5a3-memora`.
 
 ## External limitation
 
