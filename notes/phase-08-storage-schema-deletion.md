@@ -1,6 +1,6 @@
 # Phase 8 — Relational/vector/event storage, migrations and deletion
 
-**Status:** Complete. Static review plus a scratch SQLite migration-order check. No production database, PostgreSQL, Qdrant, Redis or Turso was contacted; no source changed.
+**Status:** Baseline review for the 2026-10-07 checkout. Later local fixes and verification are recorded in the post-baseline delta below and in `notes/phase-16-17-iterative-hardening.md`. No production database, PostgreSQL, Qdrant, Redis or Turso was contacted.
 
 ## Storage topology and durability
 
@@ -38,3 +38,9 @@
 
 - [FACT] The active durable source of truth is the configured ORM backend; vector points and optional Turso/event replicas are separate stores. The event bus has a bounded local memory view and optional Redis/Turso integrations; Redis is not an application cache here.
 - [FACT] Migration-only round-trip verification and app-create-all-then-migrate verification produce different outcomes; the latter fails on a fresh schema. Phase 8 is complete; next is SDKs/adapters and cross-agent contracts.
+
+## Post-baseline delta — 2026-10-08
+
+- A fresh database created through `init_db()` now gets an Alembic `head` stamp only when the pre-create database had no Memora tables and no `alembic_version`. Existing unversioned databases are not auto-stamped, because doing so could skip required data transformations. `tests/test_schema_init_migrations.py` compares the fresh ORM schema's tables, columns, and uniqueness invariants with a migration-only SQLite upgrade, and confirms a subsequent `alembic upgrade head` succeeds.
+- A temporary installed-wheel run verified the packaged `init_db()` path creates/stamps SQLite at `f35ecb0a7c12`, then the packaged Alembic CLI reports the same head from outside the source checkout. Docker CLI/image and hosted DB migration behavior remain unverified.
+- Subsequent hardening added `DeletionTombstone.turso_deleted` and remote anti-resurrection fencing/retry, direct-read lifecycle enforcement, Qdrant tenant-filtered paged orphan reconciliation, and event-ID tenant/publisher collision checks. These fixes are locally tested; no remote Turso/Qdrant/Redis/PostgreSQL service was contacted. Event-feed APIs still bind to the shared `default` tenant until credentials carry tenant claims.

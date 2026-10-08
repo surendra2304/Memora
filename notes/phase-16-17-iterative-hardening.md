@@ -71,6 +71,7 @@ The added/extended tests exercise complete API and service paths, not just uncha
 15. Retrieval score/age/latency instrumentation, write-pipeline dedup/idempotency hit metrics, and concurrent `MetricsCollector` recording/snapshot tests; the contradiction metric is explicitly left unresolved because there is no actual contradiction detector.
 16. Positive `learn-outcome` SDK/API/SQLite round trip with a synthetic authenticated Friday identity; package-local Alembic configuration was exercised from an installed wheel outside the source checkout.
 17. Remote Qdrant self-healing behavior was tested with a fake scroll/delete client and a tenant filter; local pagination and capped repair behavior were exercised against the in-memory adapter.
+18. Fresh ORM schema creation/stamping against isolated SQLite, schema comparison against migration-only head, subsequent `alembic upgrade head`, and the same packaged-wheel bootstrap/CLI sequence from outside the source tree.
 
 ## Regressions found and resolutions
 
@@ -84,6 +85,7 @@ The added/extended tests exercise complete API and service paths, not just uncha
 - The baseline event risk included raw context queries in persisted `context.generated` payloads. That event no longer stores the query; a regression confirms the response remains compatible and the database event does not contain the synthetic query marker.
 - The registered AI Universe adapter's `ai_universe` identity was missing from the production credential allowlist, making that caller impossible to authenticate. Added its dedicated credential mapping and deployment/example configuration, with a fail-closed authentication regression.
 - Turso write-through had no remote hard-delete or durable retry, and a late async upsert could resurrect a deleted row. Added a tenant-scoped remote deletion fence, a local outbox state column/migration, retry through self-healing, and a guard against redundant writes when Turso is already the primary store.
+- A fresh app startup used `Base.metadata.create_all()` without recording an Alembic revision, so a later migration CLI replayed historical `CREATE TABLE` operations and failed at `access_grants`. `init_db()` now stamps `head` only when no Memora tables/version existed before creation; existing unversioned schemas are not auto-stamped because that could skip data migrations. A synthetic SQLite regression compares tables, columns, and uniqueness invariants to migration-only head and proves a later `upgrade head` succeeds.
 - HALF_OPEN lacked an atomic single-probe reservation: a second recovery caller was not rejected while the first probe was blocked. Added a generation-tagged reservation under the breaker lock, release on unexpected exceptions, and stale-completion protection. The concurrency regression reproduced the defect before the fix.
 - Mesh ingestion looked up `EventLog.event_id` globally and could return a foreign row's cursor. Local and Turso append paths now reject cross-tenant or cross-publisher ID collisions with a non-disclosing conflict. Agent-supplied memory/context/access system events are rejected, and envelope payloads cannot claim a tenant other than the server-bound default.
 - `SearchService.hybrid_search` never called `record_retrieval`, and the singleton metrics collector updated counters/deques without synchronization. Retrieval now records returned scores, ages and latency; collector writes/snapshots use a lock; write-pipeline idempotency/duplicate hits feed a separate deduplication metric. The `DeduplicationResult` field was renamed from the misleading `contradiction_warning` to `duplicate_warning`; there is still no sound way to increment the contradiction counter because duplicate/overlap warnings are not genuine contradiction detection.
@@ -97,7 +99,7 @@ Latest complete local run, after the 2026-10-08 continuation changes:
 
 ```text
 .venv/bin/pytest -q
-512 passed in 30.50s
+513 passed in 30.34s
 
 .venv/bin/ruff check .
 All checks passed!
@@ -109,11 +111,11 @@ passed (no output)
 f35ecb0a7c12 (head)
 ```
 
-The focused resilience/self-healing/event/SDK/metrics/write-pipeline batch passed **114 tests in 6.28s**; a post-review deduplication-name/metrics batch passed **11 tests in 1.75s**. The updated concurrency/idempotency/circuit-breaker/metrics pressure battery ran three consecutive times, with **31 passed each** (3.01s, 3.18s, 3.53s). The single-probe race regression was also run before the circuit-breaker fix and failed as expected; all three circuit-breaker tests pass after the fix.
+The focused resilience/self-healing/event/SDK/metrics/write-pipeline batch passed **114 tests in 6.28s**; a post-review deduplication-name/metrics batch passed **11 tests in 1.75s**; the fresh-schema/stamping regression passed **1 test in 0.47s**. The updated concurrency/idempotency/circuit-breaker/metrics pressure battery ran three consecutive times, with **31 passed each** (3.01s, 3.18s, 3.53s). The single-probe race regression was also run before the circuit-breaker fix and failed as expected; all three circuit-breaker tests pass after the fix.
 
 Packaging/deployment checks that were possible locally:
 
-- Built a wheel, installed it to a temporary target, and ran Alembic from outside the source checkout using the packaged `migrations/alembic.ini`; `upgrade head` applied revisions through `f35ecb0a7c12` and `current` reported that head.
+- Built a wheel, installed it to a temporary target, and ran `init_db()` from the installed package; the clean SQLite schema was stamped at `f35ecb0a7c12`. The packaged `migrations/alembic.ini` then ran `upgrade head` and `current` from outside the source checkout; the current revision remained the head. A parallel source test compares table/column/unique-key shape between ORM-created and migration-only schemas.
 - PyYAML parsed `docker-compose.yml` and `render.yaml` as top-level mappings. Docker/Compose CLI is unavailable, so semantic Compose validation and image build/start were not done.
 - No hosted PostgreSQL, Turso, Redis, Qdrant, Render, or Docker service was contacted or verified. Fake Turso/Qdrant clients and local SQLite validate only the exercised adapter logic, not external service behavior.
 
@@ -141,4 +143,4 @@ This is a status delta, not a replacement for the complete Phase 14 ledger:
 
 ## Current handoff
 
-The current local verification pass is green: **512 tests**, Ruff, `git diff --check`, the installed-wheel Alembic upgrade/current smoke, and YAML parsing pass; the 31-test concurrency/idempotency/circuit-breaker/metrics battery passed three rounds. Verified work was committed as `b3817d1` and pushed to `origin/arena/9112d5a3-memora`. The broader maintenance task remains open because credential-history remediation and external deployment-service verification have not been performed.
+The current local verification pass is green: **513 tests**, Ruff, `git diff --check`, the installed-wheel Alembic upgrade/current smoke, and YAML parsing pass; the 31-test concurrency/idempotency/circuit-breaker/metrics battery passed three rounds. Verified work was committed as `b3817d1` and pushed to `origin/arena/9112d5a3-memora`. The broader maintenance task remains open because credential-history remediation and external deployment-service verification have not been performed.

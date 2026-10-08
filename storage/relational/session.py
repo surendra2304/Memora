@@ -4,9 +4,10 @@ Supports PostgreSQL as primary with automatic fallback/test SQLite support.
 """
 import os
 import logging
+from pathlib import Path
 from typing import Generator
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker, Session
 from fastapi import HTTPException
 from core.config import settings
@@ -175,11 +176,39 @@ engine = create_db_engine()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_db():
-    """Initializes tables in database."""
+    """Initialize a fresh ORM schema without leaving it untracked by Alembic."""
     if not storage_ready():
         logger.error("Skipping local schema initialization: production storage is not durable and authoritative.")
         return
+
+    # Ensure all mapped classes are registered before comparing the database to
+    # metadata; importing this module alone does not register them.
+    __import__("storage.relational.models")
+    existing_tables = set(inspect(engine).get_table_names())
+    has_memora_tables = bool(existing_tables & set(Base.metadata.tables))
+    has_alembic_version = "alembic_version" in existing_tables
     Base.metadata.create_all(bind=engine)
+
+    if not has_memora_tables and not has_alembic_version:
+        # A brand-new database has no data migrations to replay. `create_all`
+        # built its schema from the current ORM metadata, so record that exact
+        # starting point. Otherwise a later `alembic upgrade head` would replay
+        # historical CREATE TABLE operations over tables that already exist.
+        from alembic import command
+        from alembic.config import Config
+
+        config_path = Path(__file__).resolve().parents[2] / "migrations" / "alembic.ini"
+        if not config_path.is_file():
+            raise RuntimeError("Packaged Alembic configuration is missing")
+        config = Config(str(config_path))
+        config.attributes["connection"] = engine
+        command.stamp(config, "head")
+    elif has_memora_tables and not has_alembic_version:
+        # Existing unversioned schemas may need historical data transforms;
+        # never auto-stamp them based on table names alone.
+        logger.warning(
+            "Existing Memora tables have no Alembic version; refusing to auto-stamp an unverified schema."
+        )
 
 def get_db() -> Generator[Session, None, None]:
     """Dependency for obtaining a database session."""
