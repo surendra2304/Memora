@@ -6,7 +6,7 @@
 
 ## Current state and evidence
 
-- The fixed branch is correct. `205d143`, `3fa5431`, and the verified continuation commit `b3817d1` are committed and pushed to `origin/arena/9112d5a3-memora`; the working tree is clean after the push.
+- The fixed branch is correct. `205d143`, `3fa5431`, `b3817d1`, `db0e45d`, and `7eaa491` are committed and pushed to `origin/arena/9112d5a3-memora`; the working tree is clean after the latest push.
 - Earlier hardening had 496 passing tests. After the current source/test changes, `.venv/bin/pytest -q` passed **513 tests in 30.34s**. The updated 31-test concurrency/idempotency/circuit-breaker/metrics battery passed three rounds (31 each, 3.01s / 3.18s / 3.53s).
 - The focused resilience/self-healing/event/SDK/metrics/write-pipeline batch passed **114 tests in 6.28s**; post-review deduplication-metric tests passed **11 tests in 1.75s**. `.venv/bin/ruff check .`, `git diff --check`, and `.venv/bin/alembic heads` pass; head is `f35ecb0a7c12`.
 - The installed wheel includes a package-local Alembic config. From a temporary wheel install and working directory, `init_db()` created/stamped a clean SQLite schema at `f35ecb0a7c12`, then packaged `alembic upgrade head`/`current` succeeded; the source regression also compares fresh ORM tables/columns/unique keys to migration-only head.
@@ -23,7 +23,7 @@
 - [x] Complete the remaining source trace for fresh schema migration bootstrap, event IDs/tenant claims, `learn-outcome`, HALF_OPEN concurrency, metrics, and vector-repair reconciliation. Fixed confirmed local defects and updated R10/R15/R18–R20 evidence; the shared-default tenant model and absent genuine contradiction detector remain documented limitations.
 - [x] Finish packaging/deployment verification possible locally: the installed wheel's `init_db()` created and stamped a clean SQLite schema at `f35ecb0a7c12`; packaged `alembic upgrade head`/`current` then succeeded, and Compose/Render YAML parsed. Docker/Compose CLI and image execution remain unavailable.
 - [x] Run final local verification and update the hardening note/risk ledger with exact results: 513 full-suite passes, three 31-test pressure rounds, Ruff, Alembic head, diff check, installed-wheel migration CLI, and YAML parsing. Hosted services and Docker remain unverified.
-- [x] Review the final patch and generated artifacts, run the credential-pattern scan without printing values, commit verified work as `b3817d1`, and push only to `origin/arena/9112d5a3-memora`. The push succeeded.
+- [x] Review the final patch and generated artifacts, run the credential-pattern scan without printing values, commit the verified event/resilience hardening as `b3817d1`, metric semantics as `db0e45d`, and fresh-schema bootstrap as `7eaa491`; all were pushed only to `origin/arena/9112d5a3-memora`.
 
 ## External limitation
 
