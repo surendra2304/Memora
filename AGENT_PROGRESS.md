@@ -2,7 +2,7 @@
 
 **Branch:** `arena/9112d5a3-memora` (fixed for this Arena session)  
 **Resume date:** 2026-10-08  
-**Current step:** [~] 4 — Reconcile multi-store hard-delete/write-through behavior, especially stale Turso replicas and deletion retry semantics.
+**Current step:** [~] 5 — Complete the remaining source trace for tenant-claim and event paths plus the open Phase 14 high-severity findings.
 
 ## Resume point
 
@@ -15,8 +15,8 @@
 - [x] Locate the prior stopping point: read handoff notes; establish that the progress file was missing; inspect branch, commit history, working-tree status, and diff summary without printing credential values.
 - [x] Preserve and review existing local remediation; do not discard or duplicate it. Prior regression coverage includes tenant binding, collaboration, input limits, lifecycle reads, vector rollback compensation, hybrid/prefetch scopes, and context-event privacy.
 - [x] Previous verification recorded: 491 pytest passes, Ruff, whitespace check, three 25-test pressure rounds, and installed-wheel import/config smoke. Re-run final checks after remaining edits.
-- [~] Reconcile multi-store hard-delete/write-through behavior, especially stale Turso replicas and deletion retry semantics; add targeted synthetic regression(s) and fix confirmed defects without claiming distributed atomicity. Implemented a tenant-scoped remote deletion fence, async-upsert anti-resurrection guard, authoritative-Turso duplicate-write skip, durable `turso_deleted` outbox state/migration, and self-healing retry. Focused migration/sync tests and the 496-test full suite pass; mark complete after checkpoint commit.
-- [ ] Complete a source trace for remaining tenant-claim/event paths and other high-severity risk-ledger items; fix confirmed local defects and record evidence/limitations.
+- [x] Reconcile multi-store hard-delete/write-through behavior, especially stale Turso replicas and deletion retry semantics; add targeted synthetic regression(s) and fix confirmed defects without claiming distributed atomicity. Implemented a tenant-scoped remote deletion fence, async-upsert anti-resurrection guard, authoritative-Turso duplicate-write skip, durable `turso_deleted` outbox state/migration, and self-healing retry. Focused migration/sync tests, the 496-test full suite, Ruff, packaging smoke, and the pressure battery pass. Committed as `205d143` and pushed to the fixed branch.
+- [~] Complete a source trace for remaining tenant-claim/event paths and other high-severity risk-ledger items; fix confirmed local defects and record evidence/limitations.
 - [ ] Finish packaging/deployment verification that is possible locally, including the installed-wheel migration-CLI gap; test YAML/config and migration behavior without connecting to live services.
 - [ ] Run the complete test suite, Ruff, packaging smoke, and `git diff --check`; fix failures and update this log plus the hardening note with exact results.
 - [ ] Review the final patch for accidental credentials/generated artifacts, commit completed work on `arena/9112d5a3-memora`, and push only to that branch if the configured remote permits it.
