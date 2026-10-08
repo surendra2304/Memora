@@ -84,6 +84,7 @@ def test_deduplication_engine(test_db):
     assert dup_res.is_duplicate is True
     assert dup_res.duplicate_of_id == mem.id
     assert dup_res.similarity_score == 1.0
+    assert dup_res.duplicate_warning == "Exact content duplicate detected in target namespace."
 
     # Non-duplicate check
     non_dup = DeduplicationEngine.check_duplicates_and_contradictions(

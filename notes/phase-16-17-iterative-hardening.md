@@ -86,7 +86,7 @@ The added/extended tests exercise complete API and service paths, not just uncha
 - Turso write-through had no remote hard-delete or durable retry, and a late async upsert could resurrect a deleted row. Added a tenant-scoped remote deletion fence, a local outbox state column/migration, retry through self-healing, and a guard against redundant writes when Turso is already the primary store.
 - HALF_OPEN lacked an atomic single-probe reservation: a second recovery caller was not rejected while the first probe was blocked. Added a generation-tagged reservation under the breaker lock, release on unexpected exceptions, and stale-completion protection. The concurrency regression reproduced the defect before the fix.
 - Mesh ingestion looked up `EventLog.event_id` globally and could return a foreign row's cursor. Local and Turso append paths now reject cross-tenant or cross-publisher ID collisions with a non-disclosing conflict. Agent-supplied memory/context/access system events are rejected, and envelope payloads cannot claim a tenant other than the server-bound default.
-- `SearchService.hybrid_search` never called `record_retrieval`, and the singleton metrics collector updated counters/deques without synchronization. Retrieval now records returned scores, ages and latency; collector writes/snapshots use a lock; write-pipeline idempotency/duplicate hits feed a separate deduplication metric. There is still no sound way to increment the contradiction counter: duplicate/overlap warnings are not genuine contradiction detection and are deliberately not conflated.
+- `SearchService.hybrid_search` never called `record_retrieval`, and the singleton metrics collector updated counters/deques without synchronization. Retrieval now records returned scores, ages and latency; collector writes/snapshots use a lock; write-pipeline idempotency/duplicate hits feed a separate deduplication metric. The `DeduplicationResult` field was renamed from the misleading `contradiction_warning` to `duplicate_warning`; there is still no sound way to increment the contradiction counter because duplicate/overlap warnings are not genuine contradiction detection.
 - The Phase 14 `learn-outcome` route-missing claim was stale. Added a real SDK invocation bridged through the local TestClient route; the authenticated synthetic principal's EXPERIENCE record persisted in isolated SQLite.
 - Self-healing inspected only the process-local vector mirror, empty after a process restart. Reconciliation now calls tenant-filtered Qdrant `scroll` in bounded pages and evicts only IDs without a non-deleted relational row for that same tenant. A fake Qdrant test validates filter construction and deletion; live Qdrant remains unverified.
 - The first installed-wheel smoke verified the migration file but not the CLI. Added a package-local Alembic config to the wheel and successfully ran `upgrade head`/`current` from a temporary install and working directory.
@@ -97,7 +97,7 @@ Latest complete local run, after the 2026-10-08 continuation changes:
 
 ```text
 .venv/bin/pytest -q
-512 passed in 29.48s
+512 passed in 30.50s
 
 .venv/bin/ruff check .
 All checks passed!
@@ -109,7 +109,7 @@ passed (no output)
 f35ecb0a7c12 (head)
 ```
 
-The latest focused resilience/self-healing/event/SDK/metrics/write-pipeline batch passed **114 tests in 6.28s**. The updated concurrency/idempotency/circuit-breaker/metrics pressure battery ran three consecutive times, with **31 passed each** (3.01s, 3.18s, 3.53s). The single-probe race regression was also run before the circuit-breaker fix and failed as expected; all three circuit-breaker tests pass after the fix.
+The focused resilience/self-healing/event/SDK/metrics/write-pipeline batch passed **114 tests in 6.28s**; a post-review deduplication-name/metrics batch passed **11 tests in 1.75s**. The updated concurrency/idempotency/circuit-breaker/metrics pressure battery ran three consecutive times, with **31 passed each** (3.01s, 3.18s, 3.53s). The single-probe race regression was also run before the circuit-breaker fix and failed as expected; all three circuit-breaker tests pass after the fix.
 
 Packaging/deployment checks that were possible locally:
 

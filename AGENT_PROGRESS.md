@@ -7,8 +7,8 @@
 ## Current state and evidence
 
 - The fixed branch is correct. `205d143`, `3fa5431`, and the verified continuation commit `b3817d1` are committed and pushed to `origin/arena/9112d5a3-memora`; the working tree is clean after the push.
-- Earlier hardening had 496 passing tests. After the current source/test changes, `.venv/bin/pytest -q` passed **512 tests in 29.48s**. The updated 31-test concurrency/idempotency/circuit-breaker/metrics battery passed three rounds (31 each, 3.01s / 3.18s / 3.53s).
-- The latest focused resilience/self-healing/event/SDK/metrics/write-pipeline batch passed **114 tests in 6.28s**. `.venv/bin/ruff check .`, `git diff --check`, and `.venv/bin/alembic heads` pass; head is `f35ecb0a7c12`.
+- Earlier hardening had 496 passing tests. After the current source/test changes, `.venv/bin/pytest -q` passed **512 tests in 30.50s**. The updated 31-test concurrency/idempotency/circuit-breaker/metrics battery passed three rounds (31 each, 3.01s / 3.18s / 3.53s).
+- The focused resilience/self-healing/event/SDK/metrics/write-pipeline batch passed **114 tests in 6.28s**; post-review deduplication-metric tests passed **11 tests in 1.75s**. `.venv/bin/ruff check .`, `git diff --check`, and `.venv/bin/alembic heads` pass; head is `f35ecb0a7c12`.
 - The installed wheel now includes a package-local Alembic config. A wheel was built and installed under `/tmp`, then `alembic upgrade head` and `alembic current` ran from outside the source checkout against an isolated SQLite file; current revision was `f35ecb0a7c12`.
 - `docker-compose.yml` and `render.yaml` parse as YAML. Docker/Compose CLI is unavailable, so Compose semantic validation and image execution were not performed.
 - New local hardening covers HALF_OPEN probe reservation/generation, tenant-safe local and Turso event-ID collisions, refusal of agent-authored system events, server-owned event tenant metadata, a positive SDK-to-API `learn-outcome` path, retrieval/deduplication metrics and concurrent metric snapshots, and paged tenant-filtered Qdrant reconciliation. Qdrant/Turso tests use local SQL or fakes only.

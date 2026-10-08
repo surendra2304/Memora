@@ -1,5 +1,8 @@
 """
-Deduplication and Contradiction Detection for Memora Write Pipeline
+Duplicate and similarity detection for the Memora write pipeline.
+
+The current implementation does not infer logical contradictions; it only
+identifies exact duplicates and high lexical overlap.
 """
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -11,12 +14,12 @@ class DeduplicationResult:
         is_duplicate: bool,
         duplicate_of_id: Optional[str] = None,
         similarity_score: float = 0.0,
-        contradiction_warning: Optional[str] = None
+        duplicate_warning: Optional[str] = None
     ):
         self.is_duplicate = is_duplicate
         self.duplicate_of_id = duplicate_of_id
         self.similarity_score = similarity_score
-        self.contradiction_warning = contradiction_warning
+        self.duplicate_warning = duplicate_warning
 
 class DeduplicationEngine:
     @staticmethod
@@ -53,7 +56,7 @@ class DeduplicationEngine:
                     is_duplicate=True,
                     duplicate_of_id=r.id,
                     similarity_score=1.0,
-                    contradiction_warning="Exact content duplicate detected in target namespace."
+                    duplicate_warning="Exact content duplicate detected in target namespace."
                 )
 
             # Jaccard lexical similarity
@@ -63,7 +66,7 @@ class DeduplicationEngine:
                     is_duplicate=True,
                     duplicate_of_id=r.id,
                     similarity_score=sim,
-                    contradiction_warning="High semantic/lexical overlap with existing record."
+                    duplicate_warning="High semantic/lexical overlap with existing record."
                 )
 
         return DeduplicationResult(is_duplicate=False, similarity_score=0.0)
