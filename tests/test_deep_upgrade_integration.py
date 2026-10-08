@@ -31,9 +31,20 @@ def test_deep_upgrade_strict_tenant_isolation(test_db):
     agent_t1 = IdentityService.register_agent(test_db, "agent_t1", tenant_id="tenant_alpha")
     agent_t2 = IdentityService.register_agent(test_db, "agent_t2", tenant_id="tenant_beta")
 
-    # Namespaces with tenant-scoped paths
-    ns_t1 = IdentityService.resolve_namespace(test_db, "memora://tenant_alpha/global", tenant_id="tenant_alpha")
-    ns_t2 = IdentityService.resolve_namespace(test_db, "memora://tenant_beta/global", tenant_id="tenant_beta")
+    # Distinct private project namespaces: a tenant-specific ``/global`` suffix
+    # must not turn these records into openly readable global namespaces.
+    ns_t1 = IdentityService.resolve_namespace(
+        test_db,
+        "memora://agent_t1/projects/global",
+        owner_agent_id=agent_t1.id,
+        tenant_id="tenant_alpha",
+    )
+    ns_t2 = IdentityService.resolve_namespace(
+        test_db,
+        "memora://agent_t2/projects/global",
+        owner_agent_id=agent_t2.id,
+        tenant_id="tenant_beta",
+    )
 
     # Memories in Tenant Alpha
     mem_t1 = MemoryService.create_memory(

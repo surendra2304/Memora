@@ -329,16 +329,23 @@ class IdentityService:
         if ns:
             return ns
 
+        segments = path[len(_NAMESPACE_PREFIX):].split("/")
+        root = segments[0]
         ns_type = default_type
-        if "/private" in path:
-            ns_type = NamespaceType.AGENT_PRIVATE
-        elif "/global" in path or path == "memora://universe/global":
-            ns_type = NamespaceType.UNIVERSE_GLOBAL
-        elif "/shared" in path or "/team" in path:
-            ns_type = NamespaceType.TEAM_SHARED
-        elif "/public" in path:
+        # Open types are determined by canonical namespace roots, never by a
+        # substring in an agent-owned project name. For example,
+        # ``memora://friday/projects/publicity`` must remain private; the old
+        # ``'/public' in path`` test silently made it openly readable. Likewise,
+        # a personal path containing ``global`` must not acquire global access.
+        if root == "public":
             ns_type = NamespaceType.PUBLIC
-        elif "/projects/" in path:
+        elif root == "universe" and len(segments) >= 2 and segments[1] == "global":
+            ns_type = NamespaceType.UNIVERSE_GLOBAL
+        elif root in {"team", "shared"} or "team" in segments or "shared" in segments:
+            ns_type = NamespaceType.TEAM_SHARED
+        elif "private" in segments:
+            ns_type = NamespaceType.AGENT_PRIVATE
+        elif len(segments) >= 2 and segments[1] == "projects":
             ns_type = NamespaceType.PROJECT_PRIVATE
 
         return IdentityService.create_namespace(

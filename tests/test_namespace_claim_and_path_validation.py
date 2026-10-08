@@ -142,9 +142,50 @@ def test_unregistered_root_cannot_be_used_to_squat_a_registered_agents_name(clie
     assert resp.status_code == 403
 
 
+@pytest.mark.parametrize("special_segment", ["public", "publicity", "global", "globalized"])
+def test_personal_project_names_cannot_become_open_namespaces(
+    client: TestClient, mesh, test_db, special_segment
+):
+    """Open namespace types must be selected by canonical roots, not path substrings."""
+    friday = IdentityService.register_agent(test_db, name="friday", role="worker")
+    IdentityService.register_agent(test_db, name="forge", role="worker")
+    path = f"memora://friday/projects/{special_segment}"
+
+    written = _store(client, mesh["friday"], "synthetic private project note", namespace=path)
+    assert written.status_code == 201, written.text
+
+    namespace = IdentityService.get_namespace_by_path(test_db, path)
+    assert namespace is not None
+    assert namespace.agent_id == friday.id
+    assert namespace.type == NamespaceType.PROJECT_PRIVATE
+
+    read = client.get(f"/v1/memories/{written.json()['id']}", headers=mesh["forge"])
+    assert read.status_code == 403, "another agent must not read a private project by naming it public/global"
+
+
 # ---------------------------------------------------------------------------
 # Path validation
 # ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    ("path", "expected_type"),
+    [
+        ("memora://friday/private", NamespaceType.AGENT_PRIVATE),
+        ("memora://universe/global", NamespaceType.UNIVERSE_GLOBAL),
+        ("memora://public/announcements", NamespaceType.PUBLIC),
+        ("memora://team/shared", NamespaceType.TEAM_SHARED),
+        ("memora://shared/projects/app", NamespaceType.TEAM_SHARED),
+    ],
+)
+def test_canonical_namespace_roots_keep_their_security_types(test_db, path, expected_type):
+    friday = IdentityService.register_agent(test_db, name="friday", role="worker")
+    namespace = IdentityService.resolve_namespace(
+        test_db,
+        path,
+        owner_agent_id=friday.id if path.startswith("memora://friday/") else None,
+    )
+    assert namespace.type == expected_type
+
 
 @pytest.mark.parametrize("bad_path", [
     "memora://../../etc/passwd",

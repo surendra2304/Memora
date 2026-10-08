@@ -90,16 +90,17 @@ The added/extended tests exercise complete API and service paths, not just uncha
 - Mesh ingestion looked up `EventLog.event_id` globally and could return a foreign row's cursor. Local and Turso append paths now reject cross-tenant or cross-publisher ID collisions with a non-disclosing conflict. Agent-supplied memory/context/access system events are rejected, and envelope payloads cannot claim a tenant other than the server-bound default.
 - `SearchService.hybrid_search` never called `record_retrieval`, and the singleton metrics collector updated counters/deques without synchronization. Retrieval now records returned scores, ages and latency; collector writes/snapshots use a lock; write-pipeline idempotency/duplicate hits feed a separate deduplication metric. The `DeduplicationResult` field was renamed from the misleading `contradiction_warning` to `duplicate_warning`; there is still no sound way to increment the contradiction counter because duplicate/overlap warnings are not genuine contradiction detection.
 - The Phase 14 `learn-outcome` route-missing claim was stale. Added a real SDK invocation bridged through the local TestClient route; the authenticated synthetic principal's EXPERIENCE record persisted in isolated SQLite. Both SDK variants now forward `namespace_path`, covered by the API round trip and a CloudFallback wire-payload test.
+- Namespace handling had two root-boundary defects: substring-based type inference promoted an agent-owned project such as `memora://friday/projects/publicity` to openly readable `PUBLIC`, while `/namespaces` trusted the caller-supplied type and allowed an ordinary agent to squat canonical open roots by declaring `project-private`. The four wrong-type root cases were reproduced returning 201 before the guard. Classification now uses canonical roots, and creation checks the path root regardless of requested type. Synthetic API regressions show `public`, `publicity`, `global`, and `globalized` project names remain private and unreadable to Forge; a writer also cannot squat `universe`, `public`, `team`, or `shared` roots under a private type.
 - Self-healing inspected only the process-local vector mirror, empty after a process restart. Reconciliation now calls tenant-filtered Qdrant `scroll` in bounded pages and evicts only IDs without a non-deleted relational row for that same tenant. A fake Qdrant test validates filter construction and deletion; live Qdrant remains unverified.
 - The first installed-wheel smoke verified the migration file but not the CLI. Added a package-local Alembic config to the wheel and successfully ran `upgrade head`/`current` from a temporary install and working directory.
 
 ## Verification
 
-Latest complete local run, after the 2026-10-08 continuation changes:
+Latest complete local run, after the namespace type-classification regression fix:
 
 ```text
 .venv/bin/pytest -q
-515 passed in 28.97s
+528 passed in 31.42s
 
 .venv/bin/ruff check .
 All checks passed!
@@ -143,4 +144,4 @@ This is a status delta, not a replacement for the complete Phase 14 ledger:
 
 ## Current handoff
 
-The current local verification pass is green: **515 tests** (latest run 28.97s), Ruff, `git diff --check`, the installed-wheel Alembic upgrade/current smoke, and YAML parsing pass; the 31-test concurrency/idempotency/circuit-breaker/metrics battery passed three rounds. Verified work was committed as `b3817d1`, with follow-up commits `db0e45d` (deduplication semantics) and `7eaa491` (fresh-schema Alembic stamping); all were pushed to `origin/arena/9112d5a3-memora`. The SDK contract follow-up is locally verified and committed/pushed as `7d89987` on `arena/9112d5a3-memora`. The broader maintenance task remains open because credential-history remediation and external deployment-service verification have not been performed.
+The current local verification pass is green: **528 tests** (latest run 31.42s), Ruff, `git diff --check`, the installed-wheel Alembic upgrade/current smoke, and YAML parsing pass; the 31-test concurrency/idempotency/circuit-breaker/metrics battery passed three rounds. Verified work was committed as `b3817d1`, with follow-up commits `db0e45d` (deduplication semantics), `7eaa491` (fresh-schema Alembic stamping), and `7d89987` (SDK contract parity); all were pushed to `origin/arena/9112d5a3-memora`. A new open-namespace classification fix is locally verified and ready to commit. The broader maintenance task remains open because credential-history remediation and external deployment-service verification have not been performed.

@@ -110,15 +110,19 @@ def create_namespace(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     root = IdentityService.namespace_root(path)
-    if actor.name not in _ADMIN_AGENTS and ns_in.type in {
-        NamespaceType.UNIVERSE_GLOBAL,
-        NamespaceType.PUBLIC,
-    }:
+    path_root = path[len("memora://"):].split("/", 1)[0]
+    if actor.name not in _ADMIN_AGENTS and (
+        ns_in.type in {NamespaceType.UNIVERSE_GLOBAL, NamespaceType.PUBLIC}
+        or path_root in {"universe", "public"}
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the Memora service identity may create public or universe-global namespaces.",
+            detail="Only the Memora service identity may create public/universe namespaces or use those roots.",
         )
-    if actor.name not in _ADMIN_AGENTS and ns_in.type == NamespaceType.TEAM_SHARED and root is None:
+    if actor.name not in _ADMIN_AGENTS and (
+        path_root in {"team", "shared"}
+        or (ns_in.type == NamespaceType.TEAM_SHARED and root is None)
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="The Memora service identity must provision namespaces at an open shared root.",

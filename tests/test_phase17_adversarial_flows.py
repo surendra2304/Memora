@@ -443,6 +443,12 @@ def test_repair_preview_and_run_do_not_touch_foreign_tenant_state(
         ("universe-global", "memora://universe/phase17-global"),
         ("public", "memora://public/phase17-public"),
         ("team-shared", "memora://team/phase17-open-team"),
+        # The path root is authoritative too: a caller cannot squat an open
+        # namespace by lying about it being a private project.
+        ("project-private", "memora://universe/global"),
+        ("project-private", "memora://public/phase17-private-public-root"),
+        ("project-private", "memora://team/phase17-private-team-root"),
+        ("project-private", "memora://shared/projects/phase17-private-shared-root"),
     ],
 )
 def test_regular_agents_cannot_claim_open_namespace_roots(
