@@ -6,7 +6,7 @@
 
 ## Current state and evidence
 
-- The fixed branch is correct. `205d143`, `3fa5431`, `b3817d1`, `db0e45d`, `7eaa491`, `78c8a03`, `7d89987`, `7fb08af`, and `4a2bb4c` are committed and pushed to `origin/arena/9112d5a3-memora`; the working tree was clean after the latest push.
+- The fixed branch is correct. `205d143`, `3fa5431`, `b3817d1`, `db0e45d`, `7eaa491`, `78c8a03`, `7d89987`, `7fb08af`, `4a2bb4c`, and `3728f3d` are committed and pushed to `origin/arena/9112d5a3-memora`; the working tree was clean after the latest push.
 - Earlier hardening had 496 passing tests. The latest source/test state, including `learn-outcome` SDK parity and canonical namespace type classification, passed `.venv/bin/pytest -q`: **528 tests in 31.42s**. The updated 31-test concurrency/idempotency/circuit-breaker/metrics battery passed three rounds (31 each, 3.01s / 3.18s / 3.53s).
 - The focused resilience/self-healing/event/SDK/metrics/write-pipeline batch passed **114 tests in 6.28s**; post-review deduplication-metric tests passed **11 tests in 1.75s**; SDK/credential checks passed **4 tests in 1.25s**; the namespace claim/type/root suite passed **42 tests in 3.08s**. `.venv/bin/ruff check .`, `git diff --check`, and Alembic head `f35ecb0a7c12` pass; the latest full suite includes all changes.
 - The installed wheel includes a package-local Alembic config. From a temporary wheel install and working directory, `init_db()` created/stamped a clean SQLite schema at `f35ecb0a7c12`, then packaged `alembic upgrade head`/`current` succeeded; the source regression also compares fresh ORM tables/columns/unique keys to migration-only head.
@@ -25,7 +25,7 @@
 - [x] Fix new R21 namespace boundary defects: substring-based `/public` and `/global` checks could promote personal projects to open types, and `/namespaces` trusted a caller-supplied private type when deciding whether open roots were restricted. Open types now require canonical roots, and creation checks path roots independently; four root-squatting cases reproduced HTTP 201 before the route fix and now return 403, while private-project reads remain denied.
 - [x] Finish packaging/deployment verification possible locally: the installed wheel's `init_db()` created and stamped a clean SQLite schema at `f35ecb0a7c12`; packaged `alembic upgrade head`/`current` then succeeded, and Compose/Render YAML parsed. Docker/Compose CLI and image execution remain unavailable.
 - [x] Run local verification after R21 namespace-classification hardening: 528 full-suite passes in 31.42s, namespace claim/type/root suite (42), Ruff, diff check, and previously verified Alembic/packaging/YAML checks. Hosted services and Docker remain unverified.
-- [x] Review the final patch and generated artifacts, run the credential-pattern scan without printing values, and commit verified work only to `arena/9112d5a3-memora`: event/resilience hardening `b3817d1`, metric semantics `db0e45d`, fresh-schema bootstrap `7eaa491`, and SDK contract parity `7d89987`. These commits were pushed only to `origin/arena/9112d5a3-memora`.
+- [x] Review the final patch and generated artifacts, run the credential-pattern scan without printing values, and commit verified work only to `arena/9112d5a3-memora`: event/resilience hardening `b3817d1`, metric semantics `db0e45d`, fresh-schema bootstrap `7eaa491`, SDK contract parity `7d89987`, and namespace root enforcement `3728f3d`. These commits were pushed only to `origin/arena/9112d5a3-memora`.
 
 ## External limitation
 
