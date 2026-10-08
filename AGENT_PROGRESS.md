@@ -6,7 +6,7 @@
 
 ## Current state and evidence
 
-- The fixed branch is correct. `205d143`, `3fa5431`, `b3817d1`, `db0e45d`, `7eaa491`, `78c8a03`, and `7d89987` are committed and pushed to `origin/arena/9112d5a3-memora`; the working tree was clean after the latest push.
+- The fixed branch is correct. `205d143`, `3fa5431`, `b3817d1`, `db0e45d`, `7eaa491`, `78c8a03`, `7d89987`, and `7fb08af` are committed and pushed to `origin/arena/9112d5a3-memora`; the working tree was clean after the latest push.
 - Earlier hardening had 496 passing tests. The latest source/test state, including `learn-outcome` namespace parity across both SDKs and named-agent-only credential selection in the cloud fallback, passed `.venv/bin/pytest -q`: **515 tests in 28.97s**. The updated 31-test concurrency/idempotency/circuit-breaker/metrics battery passed three rounds (31 each, 3.01s / 3.18s / 3.53s).
 - The focused resilience/self-healing/event/SDK/metrics/write-pipeline batch passed **114 tests in 6.28s**; post-review deduplication-metric tests passed **11 tests in 1.75s**; the updated SDK round-trip and cloud-fallback credential/namespace checks passed **4 tests in 1.25s**. `.venv/bin/ruff check .`, `git diff --check`, and `.venv/bin/alembic heads` pass; head is `f35ecb0a7c12`.
 - The installed wheel includes a package-local Alembic config. From a temporary wheel install and working directory, `init_db()` created/stamped a clean SQLite schema at `f35ecb0a7c12`, then packaged `alembic upgrade head`/`current` succeeded; the source regression also compares fresh ORM tables/columns/unique keys to migration-only head.
@@ -28,4 +28,4 @@
 
 ## External limitation
 
-The tracked baseline contains a previously committed database credential. The working configuration removes the literal, but local code changes cannot rotate or revoke a credential in an external service or erase it from existing Git history. Do not print its value. No live storage/deployment system has been contacted; rotation/revocation must be verified by the credential owner before declaring that exposure closed.
+The tracked baseline contains a previously committed database credential. The working configuration removes the literal, but local code changes cannot rotate or revoke a credential in an external service or erase it from existing Git history. Do not print its value. A read-only GitHub Secret Scanning alerts query was denied with HTTP 403 (`Resource not accessible by integration`), so the alert status could not be verified; GitHub connection permissions need attention for that check. No live storage/deployment system has been contacted; rotation/revocation must be verified by the credential owner before declaring that exposure closed.
