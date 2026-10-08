@@ -302,6 +302,56 @@ def test_cloud_fallback_client_uses_named_agent_key_without_sqlite(monkeypatch):
     assert "local_db_path" not in client.__dict__
 
 
+def test_cloud_fallback_does_not_use_constructor_key_for_agent_identity(monkeypatch):
+    monkeypatch.delenv("FRIDAY_API_KEY", raising=False)
+    called = False
+
+    def fake_urlopen(request, timeout):
+        nonlocal called
+        called = True
+        raise AssertionError("request must not use a constructor key as agent credentials")
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    client = CloudFallbackClient(base_url="https://memora.invalid", api_key="service-wide-key")
+    result = client.record_fact("friday", "synthetic memory", category="note")
+
+    assert result["status"] == "error"
+    assert "FRIDAY_API_KEY" in result["error"]
+    assert not called
+
+
+def test_cloud_fallback_learn_outcome_forwards_namespace_path(monkeypatch):
+    captured = {}
+
+    class Response:
+        status = 201
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            return False
+        def read(self):
+            return b'{"status":"learned","id":"synthetic-experience"}'
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return Response()
+
+    monkeypatch.setenv("CORTEX_API_KEY", "cortex-test-key")
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    client = CloudFallbackClient(base_url="https://memora.invalid")
+    result = client.learn_from_outcome(
+        "cortex",
+        "synthetic namespace-scoped outcome",
+        "success",
+        namespace_path="memora://cortex/private",
+    )
+
+    assert result["status"] == "learned"
+    assert captured["url"] == "https://memora.invalid/v1/memories/learn-outcome"
+    assert captured["payload"]["namespace_path"] == "memora://cortex/private"
+
+
 def test_sdk_ordinary_memory_routes_are_agent_authenticated():
     from apps.api.routers.v1_memories import router as memories_router
 

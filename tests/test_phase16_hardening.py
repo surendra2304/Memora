@@ -198,6 +198,7 @@ def test_sdk_learn_outcome_round_trips_through_authenticated_api(
         actions_taken="validated the dry-run plan",
         context="isolated test fixture",
         domain="synthetic-testing",
+        namespace_path="memora://friday/private",
     )
 
     assert result["status"] == "learned"
@@ -206,11 +207,13 @@ def test_sdk_learn_outcome_round_trips_through_authenticated_api(
     assert calls[0]["path"] == "/v1/memories/learn-outcome"
     assert calls[0]["body"]["agent_name"] == "friday"
     assert calls[0]["body"]["domain"] == "synthetic-testing"
+    assert calls[0]["body"]["namespace_path"] == "memora://friday/private"
 
     record = test_db.query(MemoryRecord).filter_by(id=result["id"]).one()
     assert record.tenant_id == "default"
     assert record.owner_id == mesh["agents"]["friday"].id
     assert record.memory_type == MemoryType.EXPERIENCE
+    assert record.namespace.path == "memora://friday/private"
     assert "synthetic-testing" in result["synthesized_rule"]
 
 

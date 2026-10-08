@@ -69,7 +69,7 @@ The added/extended tests exercise complete API and service paths, not just uncha
 13. Concurrent HALF_OPEN circuit callers: exactly one recovery probe is admitted; unexpected probe exceptions release the reservation; late completions cannot close a newer generation. The single-probe test failed before the fix and passes after it.
 14. Mesh event tenant boundaries: local and mocked-Turso duplicate event-ID collisions across tenants or publishers return generic 409 without another owner's cursor; system-managed events cannot be forged through agent envelopes; a payload-supplied tenant claim is overwritten with the server-bound default tenant.
 15. Retrieval score/age/latency instrumentation, write-pipeline dedup/idempotency hit metrics, and concurrent `MetricsCollector` recording/snapshot tests; the contradiction metric is explicitly left unresolved because there is no actual contradiction detector.
-16. Positive `learn-outcome` SDK/API/SQLite round trip with a synthetic authenticated Friday identity; package-local Alembic configuration was exercised from an installed wheel outside the source checkout.
+16. Positive `learn-outcome` SDK/API/SQLite round trip with a synthetic authenticated Friday identity; both SDK clients forward the optional namespace path; package-local Alembic configuration was exercised from an installed wheel outside the source checkout.
 17. Remote Qdrant self-healing behavior was tested with a fake scroll/delete client and a tenant filter; local pagination and capped repair behavior were exercised against the in-memory adapter.
 18. Fresh ORM schema creation/stamping against isolated SQLite, schema comparison against migration-only head, subsequent `alembic upgrade head`, and the same packaged-wheel bootstrap/CLI sequence from outside the source tree.
 
@@ -89,7 +89,7 @@ The added/extended tests exercise complete API and service paths, not just uncha
 - HALF_OPEN lacked an atomic single-probe reservation: a second recovery caller was not rejected while the first probe was blocked. Added a generation-tagged reservation under the breaker lock, release on unexpected exceptions, and stale-completion protection. The concurrency regression reproduced the defect before the fix.
 - Mesh ingestion looked up `EventLog.event_id` globally and could return a foreign row's cursor. Local and Turso append paths now reject cross-tenant or cross-publisher ID collisions with a non-disclosing conflict. Agent-supplied memory/context/access system events are rejected, and envelope payloads cannot claim a tenant other than the server-bound default.
 - `SearchService.hybrid_search` never called `record_retrieval`, and the singleton metrics collector updated counters/deques without synchronization. Retrieval now records returned scores, ages and latency; collector writes/snapshots use a lock; write-pipeline idempotency/duplicate hits feed a separate deduplication metric. The `DeduplicationResult` field was renamed from the misleading `contradiction_warning` to `duplicate_warning`; there is still no sound way to increment the contradiction counter because duplicate/overlap warnings are not genuine contradiction detection.
-- The Phase 14 `learn-outcome` route-missing claim was stale. Added a real SDK invocation bridged through the local TestClient route; the authenticated synthetic principal's EXPERIENCE record persisted in isolated SQLite.
+- The Phase 14 `learn-outcome` route-missing claim was stale. Added a real SDK invocation bridged through the local TestClient route; the authenticated synthetic principal's EXPERIENCE record persisted in isolated SQLite. Both SDK variants now forward `namespace_path`, covered by the API round trip and a CloudFallback wire-payload test.
 - Self-healing inspected only the process-local vector mirror, empty after a process restart. Reconciliation now calls tenant-filtered Qdrant `scroll` in bounded pages and evicts only IDs without a non-deleted relational row for that same tenant. A fake Qdrant test validates filter construction and deletion; live Qdrant remains unverified.
 - The first installed-wheel smoke verified the migration file but not the CLI. Added a package-local Alembic config to the wheel and successfully ran `upgrade head`/`current` from a temporary install and working directory.
 
@@ -99,7 +99,7 @@ Latest complete local run, after the 2026-10-08 continuation changes:
 
 ```text
 .venv/bin/pytest -q
-513 passed in 30.34s
+515 passed in 28.97s
 
 .venv/bin/ruff check .
 All checks passed!
@@ -130,7 +130,7 @@ This is a status delta, not a replacement for the complete Phase 14 ledger:
 - Named service credentials, including the AI Universe principal key, are represented in local deployment configuration. Docker image build, production database/Qdrant readiness, actual secret injection, and hosted Render behavior remain unverified (R8, R10).
 - Explicit wheel discovery and the installed-wheel import/config smoke pass; package-local Alembic `upgrade head` and `current` now also pass from a temporary wheel install (R11). Turso deletion retries and anti-resurrection fencing pass only with local SQL/mocked HTTP (R15); old remote orphan backfill and hosted behavior remain unverified.
 - Event feed/cursor routes remain tied to the shared `default` tenant because the credential model has no tenant claims. Mesh envelope ID collisions are checked against both local rows and the Turso append response; system-managed event types and caller-supplied tenant claims are rejected/overwritten (R18). This is not general multi-tenant API support.
-- `learn-outcome` exists and its SDK payload now has a positive local API round-trip test; hosted request/credential behavior is unverified (R19). HALF_OPEN concurrency, retrieval metrics, thread-safe collector snapshots, and Qdrant-backed repair paging have local regressions. Genuine contradiction detection and its metric remain unimplemented, and Qdrant/Turso external behavior is still unverified (R20).
+- `learn-outcome` exists; both SDK variants now forward optional `namespace_path`, with the main SDK round-tripped through local TestClient/SQLite and the cloud fallback wire payload checked directly. The cloud fallback now requires a per-agent environment key rather than using its constructor-wide key for arbitrary agent names. Hosted request/credential behavior is unverified (R19). HALF_OPEN concurrency, retrieval metrics, thread-safe collector snapshots, and Qdrant-backed repair paging have local regressions. Genuine contradiction detection and its metric remain unimplemented, and Qdrant/Turso external behavior is still unverified (R20).
 
 ## Remaining limitations and next steps
 
@@ -143,4 +143,4 @@ This is a status delta, not a replacement for the complete Phase 14 ledger:
 
 ## Current handoff
 
-The current local verification pass is green: **513 tests**, Ruff, `git diff --check`, the installed-wheel Alembic upgrade/current smoke, and YAML parsing pass; the 31-test concurrency/idempotency/circuit-breaker/metrics battery passed three rounds. Verified work was committed as `b3817d1`, with follow-up commits `db0e45d` (deduplication semantics) and `7eaa491` (fresh-schema Alembic stamping); all were pushed to `origin/arena/9112d5a3-memora`. The broader maintenance task remains open because credential-history remediation and external deployment-service verification have not been performed.
+The current local verification pass is green: **515 tests** (latest run 28.97s), Ruff, `git diff --check`, the installed-wheel Alembic upgrade/current smoke, and YAML parsing pass; the 31-test concurrency/idempotency/circuit-breaker/metrics battery passed three rounds. Verified work was committed as `b3817d1`, with follow-up commits `db0e45d` (deduplication semantics) and `7eaa491` (fresh-schema Alembic stamping); all were pushed to `origin/arena/9112d5a3-memora`. The SDK contract follow-up is now locally verified and ready to commit/push. The broader maintenance task remains open because credential-history remediation and external deployment-service verification have not been performed.

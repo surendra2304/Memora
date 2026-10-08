@@ -10,7 +10,13 @@ from typing import Any
 
 
 class MemoraClient:
-    """HTTP adapter for agent containers; it never writes to an agent-local DB."""
+    """HTTP adapter for agent containers; it never writes to an agent-local DB.
+
+    Agent credentials are resolved by the named principal from its
+    ``<AGENT>_API_KEY`` environment variable. ``api_key`` is retained in the
+    constructor for compatibility, but is not allowed to authenticate arbitrary
+    agent names.
+    """
 
     def __init__(self, base_url: str | None = None, api_key: str | None = None, timeout: float = 5.0):
         self.base_url = (base_url or os.getenv("MEMORA_URL", "https://memora-cavc.onrender.com")).rstrip("/")
@@ -20,7 +26,7 @@ class MemoraClient:
 
     def _request(self, agent_name: str, path: str, *, method: str = "GET", payload: dict[str, Any] | None = None) -> Any:
         agent = agent_name.strip().lower()
-        key = self.api_key or os.getenv(f"{agent.upper()}_API_KEY")
+        key = os.getenv(f"{agent.upper()}_API_KEY")
         if not key:
             self.last_error = f"{agent.upper()}_API_KEY is not configured"
             return {"status": "error", "cloud": False, "error": self.last_error}
@@ -66,10 +72,12 @@ class MemoraClient:
         })
 
     def learn_from_outcome(self, agent_name: str, task_name: str, status: str, error_log: str | None = None,
-                           actions_taken: str | None = None, context: str | None = None, domain: str | None = None):
+                           actions_taken: str | None = None, context: str | None = None, domain: str | None = None,
+                           namespace_path: str | None = None):
         return self._request(agent_name, "/v1/memories/learn-outcome", method="POST", payload={
             "agent_name": agent_name.lower(), "task_name": task_name, "status": status,
             "error_log": error_log, "actions_taken": actions_taken, "context": context, "domain": domain,
+            "namespace_path": namespace_path,
         })
 
     def recall_memories(self, agent_name: str, query: str, limit: int = 5):

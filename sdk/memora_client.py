@@ -311,7 +311,8 @@ class MemoraClient:
         error_log: Optional[str] = None,
         actions_taken: Optional[str] = None,
         context: Optional[str] = None,
-        domain: Optional[str] = None
+        domain: Optional[str] = None,
+        namespace_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Record a task outcome (success or failure) and synthesize operational guidelines
@@ -324,7 +325,8 @@ class MemoraClient:
             "error_log": error_log,
             "actions_taken": actions_taken,
             "context": context,
-            "domain": domain or "operational"
+            "domain": domain or "operational",
+            "namespace_path": namespace_path,
         }
 
         url = f"{self.base_url}/v1/memories/learn-outcome"
