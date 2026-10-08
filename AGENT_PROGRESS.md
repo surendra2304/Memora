@@ -2,11 +2,11 @@
 
 **Branch:** `arena/9112d5a3-memora` (fixed for this Arena session)  
 **Resume date:** 2026-10-08  
-**Current step:** [~] Final review and branch-only commit/push; keep external verification and credential-history risks open.
+**Current step:** [~] Track unresolved external verification and credential-history risks; do not declare the overall hardening complete until they are addressed.
 
 ## Current state and evidence
 
-- The fixed branch is correct. `205d143` and `3fa5431` are committed and pushed to `origin/arena/9112d5a3-memora`; the current continuation edits are still uncommitted.
+- The fixed branch is correct. `205d143`, `3fa5431`, and the verified continuation commit `b3817d1` are committed and pushed to `origin/arena/9112d5a3-memora`; the working tree is clean after the push.
 - Earlier hardening had 496 passing tests. After the current source/test changes, `.venv/bin/pytest -q` passed **512 tests in 29.48s**. The updated 31-test concurrency/idempotency/circuit-breaker/metrics battery passed three rounds (31 each, 3.01s / 3.18s / 3.53s).
 - The latest focused resilience/self-healing/event/SDK/metrics/write-pipeline batch passed **114 tests in 6.28s**. `.venv/bin/ruff check .`, `git diff --check`, and `.venv/bin/alembic heads` pass; head is `f35ecb0a7c12`.
 - The installed wheel now includes a package-local Alembic config. A wheel was built and installed under `/tmp`, then `alembic upgrade head` and `alembic current` ran from outside the source checkout against an isolated SQLite file; current revision was `f35ecb0a7c12`.
@@ -23,7 +23,7 @@
 - [x] Complete the remaining source trace for event IDs/tenant claims, `learn-outcome`, HALF_OPEN concurrency, metrics, and vector-repair reconciliation. Fixed confirmed local defects and updated R15/R18–R20 evidence; the shared-default tenant model and absent genuine contradiction detector remain documented limitations.
 - [x] Finish packaging/deployment verification possible locally: the installed-wheel Alembic CLI upgraded a clean SQLite database to `f35ecb0a7c12`; `docker-compose.yml` and `render.yaml` parsed as YAML. Docker/Compose CLI and image execution remain unavailable.
 - [x] Run final local verification and update the hardening note/risk ledger with exact results: 512 full-suite passes, three 31-test pressure rounds, Ruff, Alembic head, diff check, installed-wheel migration CLI, and YAML parsing. Hosted services and Docker remain unverified.
-- [ ] Review the final patch for accidental credentials/generated artifacts, commit verified work on `arena/9112d5a3-memora`, and push only to that branch if the configured remote permits it.
+- [x] Review the final patch and generated artifacts, run the credential-pattern scan without printing values, commit verified work as `b3817d1`, and push only to `origin/arena/9112d5a3-memora`. The push succeeded.
 
 ## External limitation
 
