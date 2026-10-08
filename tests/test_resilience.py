@@ -132,6 +132,132 @@ def test_a_failed_probe_reopens_the_circuit():
         breaker.call(_ok)
 
 
+def test_only_one_half_open_probe_is_admitted_at_a_time():
+    """Concurrent recovery traffic must not stampede a still-down dependency."""
+    clock = FakeClock()
+    breaker = CircuitBreaker("dep", failure_threshold=1, recovery_timeout=5, clock=clock)
+    with pytest.raises(ConnectionError):
+        breaker.call(_boom)
+    clock.advance(6)
+
+    entered = threading.Event()
+    release = threading.Event()
+    second_calls = []
+    probe_results = []
+
+    def blocked_probe():
+        entered.set()
+        assert release.wait(2), "test did not release the probe"
+        return "recovered"
+
+    def run_probe():
+        probe_results.append(breaker.call(blocked_probe))
+
+    thread = threading.Thread(target=run_probe, daemon=True)
+    thread.start()
+    assert entered.wait(2), "first half-open probe did not start"
+
+    try:
+        with pytest.raises(CircuitOpenError) as exc_info:
+            breaker.call(lambda: second_calls.append("called"))
+        assert exc_info.value.reason == "probe_in_flight"
+    finally:
+        release.set()
+        thread.join(2)
+
+    assert not thread.is_alive()
+    assert second_calls == []
+    assert probe_results == ["recovered"]
+    assert breaker.state is CircuitState.CLOSED
+    assert breaker.snapshot()["rejections"] == 1
+
+
+def test_unexpected_probe_exception_releases_the_single_probe_slot():
+    clock = FakeClock()
+    breaker = CircuitBreaker(
+        "dep", failure_threshold=1, recovery_timeout=5,
+        expected_exceptions=(ConnectionError,), clock=clock,
+    )
+    with pytest.raises(ConnectionError):
+        breaker.call(_boom)
+    clock.advance(6)
+
+    def caller_bug():
+        raise ValueError("synthetic caller error")
+
+    with pytest.raises(ValueError):
+        breaker.call(caller_bug)
+    assert breaker.call(_ok) == "ok"
+    assert breaker.state is CircuitState.CLOSED
+
+
+def test_base_exception_during_probe_does_not_strand_the_reservation():
+    clock = FakeClock()
+    breaker = CircuitBreaker("dep", failure_threshold=1, recovery_timeout=5, clock=clock)
+    with pytest.raises(ConnectionError):
+        breaker.call(_boom)
+    clock.advance(6)
+
+    def cancelled_probe():
+        raise KeyboardInterrupt()
+
+    with pytest.raises(KeyboardInterrupt):
+        breaker.call(cancelled_probe)
+    assert breaker.call(_ok) == "ok"
+    assert breaker.state is CircuitState.CLOSED
+
+
+def test_late_closed_call_cannot_close_a_new_half_open_probe():
+    """An older in-flight request must not override a newer breaker transition."""
+    clock = FakeClock()
+    breaker = CircuitBreaker("dep", failure_threshold=1, recovery_timeout=5, clock=clock)
+    old_started = threading.Event()
+    finish_old = threading.Event()
+    probe_started = threading.Event()
+    finish_probe = threading.Event()
+
+    def old_success():
+        old_started.set()
+        assert finish_old.wait(2)
+        return "old success"
+
+    old_result = []
+    old_thread = threading.Thread(target=lambda: old_result.append(breaker.call(old_success)), daemon=True)
+    old_thread.start()
+    assert old_started.wait(2)
+
+    with pytest.raises(ConnectionError):
+        breaker.call(_boom)
+    clock.advance(6)
+
+    def recovery_probe():
+        probe_started.set()
+        assert finish_probe.wait(2)
+        return "probe success"
+
+    probe_result = []
+    probe_thread = threading.Thread(
+        target=lambda: probe_result.append(breaker.call(recovery_probe)), daemon=True
+    )
+    probe_thread.start()
+    assert probe_started.wait(2)
+
+    finish_old.set()
+    old_thread.join(2)
+    assert not old_thread.is_alive()
+    assert old_result == ["old success"]
+    assert breaker.state is CircuitState.HALF_OPEN
+    with pytest.raises(CircuitOpenError) as exc_info:
+        breaker.call(_ok)
+    assert exc_info.value.reason == "probe_in_flight"
+
+    finish_probe.set()
+    probe_thread.join(2)
+    assert not probe_thread.is_alive()
+    assert probe_result == ["probe success"]
+    assert breaker.state is CircuitState.CLOSED
+
+
 def test_success_resets_the_consecutive_failure_count():
     clock = FakeClock()
     breaker = CircuitBreaker("dep", failure_threshold=3, clock=clock)

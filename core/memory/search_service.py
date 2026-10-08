@@ -4,6 +4,7 @@ Combines Dense Semantic Vector Search, Keyword Full-Text Search, Graph Traversal
 """
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
+import time
 from sqlalchemy.orm import Session
 
 from storage.relational.models import MemoryRecord, Namespace, LifecycleState, MemoryType
@@ -13,6 +14,7 @@ from core.identity.service import IdentityService
 from core.policy.engine import PolicyEngine
 from core.memory.graph_service import GraphService
 from core.memory.retrieval_config import get_retrieval_config
+from core.metrics.collector import metrics_collector
 
 class SearchResultItem:
     def __init__(
@@ -88,6 +90,7 @@ class SearchService:
         purpose: Optional[str] = None,
         rrf_k: Optional[int] = None
     ) -> List[SearchResultItem]:
+        started_at = time.perf_counter()
         retrieval_cfg = get_retrieval_config()
         vector_weight = retrieval_cfg["vector_weight"] if vector_weight is None else vector_weight
         keyword_weight = retrieval_cfg["keyword_weight"] if keyword_weight is None else keyword_weight
@@ -177,6 +180,11 @@ class SearchService:
         # -------------------------------------------------------------
         all_candidate_ids = set(vector_ranks.keys()) | set(keyword_ranks.keys()) | set(graph_boosts.keys())
         if not all_candidate_ids:
+            metrics_collector.record_retrieval(
+                relevance_scores=[],
+                ages_days=[],
+                latency_ms=(time.perf_counter() - started_at) * 1000,
+            )
             return []
 
         # Reapply every caller scope to the union of lexical, vector, and graph
@@ -298,4 +306,15 @@ class SearchService:
                 x.record.id
             )
         )
-        return scored_results[:limit]
+        results = scored_results[:limit]
+        result_ages_days = []
+        for result in results:
+            created_at = _to_utc(result.record.created_at)
+            if created_at is not None:
+                result_ages_days.append(max(0.0, (now_utc - created_at).total_seconds() / 86400.0))
+        metrics_collector.record_retrieval(
+            relevance_scores=[result.final_score for result in results],
+            ages_days=result_ages_days,
+            latency_ms=(time.perf_counter() - started_at) * 1000,
+        )
+        return results

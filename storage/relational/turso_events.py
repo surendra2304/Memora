@@ -14,6 +14,10 @@ _schema_lock = threading.Lock()
 _schema_ready_for: set[str] = set()
 
 
+class EventIdTenantConflictError(RuntimeError):
+    """Raised when a globally unique event ID belongs to another tenant or publisher."""
+
+
 def production_mode() -> bool:
     return (os.getenv("ENVIRONMENT", "") or settings.MEMORA_ENV).lower() == "production"
 
@@ -114,11 +118,30 @@ def append(event: dict[str, Any]) -> int:
             ],
         )
     ])
-    result = _request([_statement("SELECT id FROM event_log WHERE event_id = ? LIMIT 1", [_text(event["event_id"])])])[0]
+    result = _request([_statement(
+        "SELECT id,tenant_id,payload FROM event_log WHERE event_id = ? LIMIT 1",
+        [_text(event["event_id"])],
+    )])[0]
     rows = _result_rows(result)
     if not rows:
         raise RuntimeError("Turso did not confirm the event cursor")
-    return int(_row_values(rows[0])[0])
+    values = _row_values(rows[0])
+    expected_tenant = str(event.get("tenant_id", "default"))
+    expected_source = (event.get("payload") or {}).get("source_agent")
+    stored_payload = values[2]
+    if isinstance(stored_payload, str):
+        try:
+            stored_payload = json.loads(stored_payload)
+        except json.JSONDecodeError:
+            stored_payload = {}
+    if not isinstance(stored_payload, dict):
+        stored_payload = {}
+    stored_source = stored_payload.get("source_agent")
+    if str(values[1]) != expected_tenant or (
+        expected_source is not None and stored_source != expected_source
+    ):
+        raise EventIdTenantConflictError("Event ID is already in use")
+    return int(values[0])
 
 
 def read(*, after_id: int, limit: int, tenant_id: str, agent: str, event_type: str | None = None) -> list[dict[str, Any]]:

@@ -2,6 +2,7 @@
 Vector Store Adapter for Memora
 Interfaces with Qdrant for dense semantic embeddings and similarity search.
 """
+import bisect
 import math
 import logging
 import os
@@ -209,6 +210,58 @@ class QdrantVectorAdapter:
             if self.is_production():
                 return False
             return True
+
+    def list_memory_ids(
+        self,
+        tenant_id: str = "default",
+        limit: int = 500,
+        offset: Any = None,
+    ) -> tuple[List[str], Any]:
+        """Return one bounded, tenant-filtered page of vector IDs.
+
+        Production reconciliation must inspect Qdrant itself rather than the
+        process-local mirror, which is empty after a restart. The in-memory
+        adapter uses the same last-point-ID cursor pattern for deterministic tests.
+        """
+        if not 1 <= limit <= 1000:
+            raise ValueError("Vector reconciliation page size must be between 1 and 1000")
+
+        if not self._initialized:
+            if self.is_production():
+                raise VectorUnavailableError("Qdrant is unavailable for vector reconciliation")
+            ids = sorted(
+                memory_id
+                for memory_id, entry in self._mock_store.items()
+                if self._entry_tenant_id(entry) == tenant_id
+            )
+            # Use the last point ID as the cursor, like Qdrant, so removing a
+            # reconciled page does not shift an integer index past later rows.
+            start = bisect.bisect_right(ids, str(offset)) if offset is not None else 0
+            page = ids[start:start + limit]
+            next_offset = page[-1] if start + len(page) < len(ids) and page else None
+            return page, next_offset
+
+        def _do_scroll():
+            from qdrant_client.http.models import Filter, FieldCondition, MatchValue
+
+            tenant_filter = Filter(
+                must=[FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id))]
+            )
+            return self._client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=tenant_filter,
+                limit=limit,
+                offset=offset,
+                with_payload=False,
+                with_vectors=False,
+            )
+
+        try:
+            points, next_offset = self._breaker.call(_do_scroll)
+            return [str(point.id) for point in points], next_offset
+        except Exception as exc:
+            logger.warning("Qdrant vector reconciliation scan failed (%s)", type(exc).__name__)
+            raise VectorUnavailableError("Qdrant vector listing is temporarily unavailable") from exc
 
     @staticmethod
     def _cosine_similarity(v1: List[float], v2: List[float]) -> float:

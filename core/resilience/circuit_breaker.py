@@ -41,12 +41,15 @@ class CircuitState(str, Enum):
 class CircuitOpenError(RuntimeError):
     """Raised when a call is refused because the circuit is open."""
 
-    def __init__(self, name: str, retry_after: float):
+    def __init__(self, name: str, retry_after: float, reason: str = "open"):
         self.name = name
         self.retry_after = retry_after
-        super().__init__(
-            f"circuit '{name}' is open; retry in {retry_after:.1f}s"
-        )
+        self.reason = reason
+        if reason == "probe_in_flight":
+            message = f"circuit '{name}' is half-open; a recovery probe is already in flight"
+        else:
+            message = f"circuit '{name}' is open; retry in {retry_after:.1f}s"
+        super().__init__(message)
 
 
 @dataclass
@@ -113,6 +116,8 @@ class CircuitBreaker:
         self._last_failure_at: Optional[float] = None
         self._last_success_at: Optional[float] = None
         self._opened_at: Optional[float] = None
+        self._half_open_probe_in_flight = False
+        self._probe_generation = 0
 
     # ------------------------------------------------------------------ state
     @property
@@ -174,44 +179,82 @@ class CircuitBreaker:
                         0.0, self.recovery_timeout - (self._clock() - self._opened_at)
                     )
                 raise CircuitOpenError(self.name, retry_after)
-            # Only one probe at a time in HALF_OPEN; extra callers are refused
-            # rather than stampeding a dependency that may still be down.
-            probing = state is CircuitState.HALF_OPEN
+            probe_token: int | None = None
+            if state is CircuitState.HALF_OPEN:
+                # Admit one recovery request only. A token ensures an obsolete
+                # probe cannot clear or close state after reset/reopen.
+                if self._half_open_probe_in_flight:
+                    self._rejections += 1
+                    raise CircuitOpenError(self.name, 0.0, reason="probe_in_flight")
+                self._probe_generation += 1
+                probe_token = self._probe_generation
+                self._half_open_probe_in_flight = True
 
         try:
             result = func(*args, **kwargs)
         except self.expected_exceptions:
-            self._record_failure(probing)
+            self._record_failure(probe_token)
             raise
         except Exception:
-            # Not a dependency failure (e.g. a programming error). Record nothing
-            # so a caller bug cannot trip the breaker and mask a healthy backend.
+            # Caller/programming errors are not dependency failures, but a
+            # failed probe must release its slot so a later request can retry.
+            if probe_token is not None:
+                self._release_probe(probe_token)
+            raise
+        except BaseException:
+            # Cancellation/termination exceptions still must not strand the
+            # single-probe reservation; do not count them as dependency failures.
+            if probe_token is not None:
+                self._release_probe(probe_token)
             raise
         else:
-            self._record_success()
+            self._record_success(probe_token)
             return result
 
-    def _record_success(self) -> None:
+    def _release_probe(self, probe_token: int) -> None:
+        with self._lock:
+            if self._probe_generation == probe_token:
+                self._half_open_probe_in_flight = False
+
+    def _record_success(self, probe_token: int | None) -> None:
         with self._lock:
             self._successes += 1
-            self._consecutive_failures = 0
             self._last_success_at = self._clock()
-            if self._state is not CircuitState.CLOSED:
-                logger.info("circuit '%s' closed after a successful probe", self.name)
-            self._state = CircuitState.CLOSED
-            self._opened_at = None
+            if probe_token is not None:
+                if (
+                    self._probe_generation == probe_token
+                    and self._half_open_probe_in_flight
+                    and self._state is CircuitState.HALF_OPEN
+                ):
+                    self._half_open_probe_in_flight = False
+                    self._consecutive_failures = 0
+                    logger.info("circuit '%s' closed after a successful probe", self.name)
+                    self._state = CircuitState.CLOSED
+                    self._opened_at = None
+            elif self._state is CircuitState.CLOSED:
+                # Only calls admitted while CLOSED may reset the failure streak;
+                # a late success must not overrule a newer OPEN/HALF_OPEN state.
+                self._consecutive_failures = 0
 
-    def _record_failure(self, probing: bool) -> None:
+    def _record_failure(self, probe_token: int | None) -> None:
         with self._lock:
             self._failures += 1
-            self._consecutive_failures += 1
             self._last_failure_at = self._clock()
+            if probe_token is not None:
+                if self._probe_generation == probe_token and self._half_open_probe_in_flight:
+                    self._half_open_probe_in_flight = False
+                    if self._state is CircuitState.HALF_OPEN:
+                        # A failed probe sends us straight back to OPEN.
+                        self._open_locked()
+                return
 
-            if probing:
-                # A failed probe sends us straight back to OPEN.
-                self._open_locked()
-            elif self._consecutive_failures >= self.failure_threshold:
-                self._open_locked()
+            # A request admitted while CLOSED may finish after another thread
+            # opens the circuit. Its late failure affects counts but must not
+            # rewrite the newer state or its recovery deadline.
+            if self._state is CircuitState.CLOSED:
+                self._consecutive_failures += 1
+                if self._consecutive_failures >= self.failure_threshold:
+                    self._open_locked()
 
     def _open_locked(self) -> None:
         if self._state is not CircuitState.OPEN:
@@ -222,6 +265,8 @@ class CircuitBreaker:
             )
         self._state = CircuitState.OPEN
         self._opened_at = self._clock()
+        self._probe_generation += 1
+        self._half_open_probe_in_flight = False
 
     # ----------------------------------------------------------------- manual
     def reset(self) -> None:
@@ -230,6 +275,8 @@ class CircuitBreaker:
             self._state = CircuitState.CLOSED
             self._consecutive_failures = 0
             self._opened_at = None
+            self._probe_generation += 1
+            self._half_open_probe_in_flight = False
 
 
 class CircuitRegistry:

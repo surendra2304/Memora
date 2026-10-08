@@ -23,6 +23,7 @@ can assert on a uniform contract.
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
@@ -88,6 +89,13 @@ class SelfHealingSupervisor:
     #: Cap on rows any single repair will touch in one run, so a badly corrupted
     #: store cannot turn a health check into an unbounded write storm.
     MAX_REPAIRS_PER_CHECK = 500
+
+    def __init__(self) -> None:
+        # Qdrant reconciliation is paged. Keep a process-local cursor per tenant
+        # so repeated repair runs eventually inspect the full collection without
+        # loading an unbounded number of points into memory.
+        self._vector_offsets: Dict[str, Any] = {}
+        self._vector_offsets_lock = threading.Lock()
 
     # ------------------------------------------------------------------ run
     def run(
@@ -209,34 +217,49 @@ class SelfHealingSupervisor:
         from storage.vector.qdrant_adapter import vector_adapter
 
         name = "orphaned_vectors"
-        store = getattr(vector_adapter, "_mock_store", None)
-        if store is None:
-            return CheckResult(name=name, healthy=True, details=["no vector store to inspect"])
+        with self._vector_offsets_lock:
+            offset = self._vector_offsets.get(tenant_id)
+        try:
+            vector_ids, next_offset = vector_adapter.list_memory_ids(
+                tenant_id=tenant_id,
+                limit=self.MAX_REPAIRS_PER_CHECK,
+                offset=offset,
+            )
+        except Exception as exc:
+            logger.warning("orphaned vector scan failed for tenant %s (%s)", tenant_id, type(exc).__name__)
+            return CheckResult(
+                name=name,
+                healthy=False,
+                error=f"Vector scan unavailable: {type(exc).__name__}",
+            )
 
-        vector_ids = {
-            memory_id
-            for memory_id, entry in store.items()
-            if vector_adapter._entry_tenant_id(entry) == tenant_id
-        }
         if not vector_ids:
-            return CheckResult(name=name, healthy=True)
+            if not dry_run:
+                with self._vector_offsets_lock:
+                    if next_offset is None:
+                        self._vector_offsets.pop(tenant_id, None)
+                    else:
+                        self._vector_offsets[tenant_id] = next_offset
+            return CheckResult(
+                name=name,
+                healthy=True,
+                details=["no vectors on the current tenant-scoped page"],
+            )
 
         live_ids = {
             row[0]
             for row in db.query(MemoryRecord.id)
             .filter(
-                MemoryRecord.id.in_(list(vector_ids)),
+                MemoryRecord.id.in_(vector_ids),
                 MemoryRecord.tenant_id == tenant_id,
                 MemoryRecord.lifecycle_state != LifecycleState.DELETED,
             )
             .all()
         }
-        orphans = sorted(vector_ids - live_ids)
-        if not orphans:
-            return CheckResult(name=name, healthy=True)
+        orphans = sorted(set(vector_ids) - live_ids)
 
         repaired = 0
-        if not dry_run:
+        if not dry_run and orphans:
             for memory_id in orphans[: self.MAX_REPAIRS_PER_CHECK]:
                 try:
                     if vector_adapter.delete_embedding(memory_id, tenant_id=tenant_id):
@@ -245,9 +268,19 @@ class SelfHealingSupervisor:
                     logger.warning("orphan eviction failed for %s: %s", memory_id, exc)
             db.commit()
 
+        # Advance only after a dry-run-free page was completely reconciled. A
+        # failed deletion leaves the cursor in place so the next run retries it.
+        page_reconciled = not orphans or repaired == len(orphans)
+        if not dry_run and page_reconciled:
+            with self._vector_offsets_lock:
+                if next_offset is None:
+                    self._vector_offsets.pop(tenant_id, None)
+                else:
+                    self._vector_offsets[tenant_id] = next_offset
+
         return CheckResult(
             name=name,
-            healthy=False,
+            healthy=not orphans,
             findings=len(orphans),
             repaired=repaired,
             details=[f"vector present for deleted/absent memory {m}" for m in orphans],

@@ -5,7 +5,9 @@ memories. They deliberately avoid live user data, third-party model APIs, and
 production services.
 """
 from datetime import datetime, timedelta, timezone
+import json
 import threading
+from urllib.parse import urlsplit
 
 import pytest
 from sqlalchemy import create_engine
@@ -153,6 +155,63 @@ def test_v1_write_uses_authenticated_agent_not_body_claim(client, mesh, test_db)
 def test_memory_workflows_reject_body_selected_agents(client, mesh, path, payload):
     response = client.post(path, headers=mesh["friday"], json=payload)
     assert response.status_code == 403
+
+
+def test_sdk_learn_outcome_round_trips_through_authenticated_api(
+    client, mesh, test_db, monkeypatch
+):
+    """Exercise the SDK wire payload against the real API and local SQL test DB."""
+    from sdk.memora_client import MemoraClient
+
+    class BridgeResponse:
+        def __init__(self, response):
+            self.status = response.status_code
+            self._body = response.content
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def read(self):
+            return self._body
+
+    calls = []
+
+    def api_urlopen(request, timeout):
+        path = urlsplit(request.full_url).path
+        calls.append({"path": path, "timeout": timeout, "body": json.loads(request.data)})
+        response = client.post(
+            path,
+            headers=dict(request.header_items()),
+            content=request.data,
+        )
+        return BridgeResponse(response)
+
+    monkeypatch.setattr("urllib.request.urlopen", api_urlopen)
+    sdk = MemoraClient(base_url="https://memora.synthetic.invalid")
+    result = sdk.learn_from_outcome(
+        "friday",
+        task_name="synthetic local migration rehearsal",
+        status="success",
+        actions_taken="validated the dry-run plan",
+        context="isolated test fixture",
+        domain="synthetic-testing",
+    )
+
+    assert result["status"] == "learned"
+    assert result["agent"] == "friday"
+    assert result["memory_type"] == "experience"
+    assert calls[0]["path"] == "/v1/memories/learn-outcome"
+    assert calls[0]["body"]["agent_name"] == "friday"
+    assert calls[0]["body"]["domain"] == "synthetic-testing"
+
+    record = test_db.query(MemoryRecord).filter_by(id=result["id"]).one()
+    assert record.tenant_id == "default"
+    assert record.owner_id == mesh["agents"]["friday"].id
+    assert record.memory_type == MemoryType.EXPERIENCE
+    assert "synthetic-testing" in result["synthesized_rule"]
 
 
 def test_agent_endpoints_do_not_select_or_list_foreign_tenant_identities(

@@ -102,7 +102,7 @@ include = [
 adapters = ["adapter_config.yaml"]
 config = ["*.json"]
 "apps.api" = ["static/*.html"]
-migrations = ["script.py.mako"]
+migrations = ["alembic.ini", "script.py.mako"]
 "migrations.versions" = ["*.py"]
 
 [tool.pytest.ini_options]

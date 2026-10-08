@@ -32,9 +32,13 @@ def _isolate_vector_store_and_circuits():
 
     vector_adapter._mock_store.clear()
     circuit_registry.reset_all()
+    with self_healing_supervisor._vector_offsets_lock:
+        self_healing_supervisor._vector_offsets.clear()
     yield
     vector_adapter._mock_store.clear()
     circuit_registry.reset_all()
+    with self_healing_supervisor._vector_offsets_lock:
+        self_healing_supervisor._vector_offsets.clear()
 
 
 def _make_memory(db, agent_name="friday", state=LifecycleState.ACTIVE, importance=0.8,
@@ -128,6 +132,47 @@ def test_a_live_memory_vector_is_not_an_orphan(test_db):
     assert record.id in vector_adapter._mock_store, "a live memory must keep its embedding"
 
     vector_adapter._mock_store.clear()
+
+
+def test_remote_qdrant_scan_finds_and_repairs_vectors_missing_from_local_mirror(test_db, monkeypatch):
+    """Production reconciliation must page Qdrant, not the process-local mirror."""
+    from storage.vector.qdrant_adapter import vector_adapter
+
+    live_record = _make_memory(test_db)
+
+    class Point:
+        def __init__(self, point_id):
+            self.id = point_id
+
+    class FakeQdrantClient:
+        def __init__(self):
+            self.delete_calls = []
+            self.scroll_calls = []
+
+        def scroll(self, **kwargs):
+            self.scroll_calls.append(kwargs)
+            return [Point(live_record.id), Point("remote-ghost")], None
+
+        def delete(self, **kwargs):
+            self.delete_calls.append(kwargs)
+
+    fake_client = FakeQdrantClient()
+    monkeypatch.setattr(vector_adapter, "_initialized", True)
+    monkeypatch.setattr(vector_adapter, "_client", fake_client)
+    vector_adapter._mock_store.clear()
+
+    dry = self_healing_supervisor.check_orphaned_vectors(test_db, dry_run=True)
+    assert dry.findings == 1
+    assert dry.repaired == 0
+    assert not fake_client.delete_calls
+    tenant_filter = fake_client.scroll_calls[0]["scroll_filter"]
+    assert tenant_filter.must[0].key == "tenant_id"
+    assert tenant_filter.must[0].match.value == "default"
+
+    repaired = self_healing_supervisor.check_orphaned_vectors(test_db, dry_run=False)
+    assert repaired.findings == 1
+    assert repaired.repaired == 1
+    assert len(fake_client.delete_calls) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -301,7 +346,14 @@ def test_repairs_are_capped_per_run(test_db):
         vector_adapter._mock_store[f"ghost-{i}"] = {"vector": [0.1], "payload": {}, "tenant_id": "default"}
 
     result = self_healing_supervisor.check_orphaned_vectors(test_db, dry_run=False)
-    assert result.findings == cap + 5
-    assert result.repaired <= cap
+    assert result.findings == cap
+    assert result.repaired == cap
+    assert len(vector_adapter._mock_store) == 5
 
-    vector_adapter._mock_store.clear()
+    # The cursor advances after a fully reconciled page, including when those
+    # points were deleted. The next run reaches the remaining IDs rather than
+    # restarting at the collection's first page or skipping rows by index.
+    remainder = self_healing_supervisor.check_orphaned_vectors(test_db, dry_run=False)
+    assert remainder.findings == 5
+    assert remainder.repaired == 5
+    assert vector_adapter._mock_store == {}

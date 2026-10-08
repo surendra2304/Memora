@@ -386,7 +386,12 @@ class MemoryWriteService:
                     step_trace["duplicate_read_policy"] = read_decision.to_dict()
                     db.commit()
                     db.refresh(existing_idemp)
-                    metrics_collector.record_write(success=True, is_contradiction=False, latency_ms=(time.time() - start_time) * 1000)
+                    metrics_collector.record_write(
+                        success=True,
+                        is_contradiction=False,
+                        latency_ms=(time.time() - start_time) * 1000,
+                        is_duplicate=True,
+                    )
                     return MemoryWriteResult(
                         record=existing_idemp,
                         step_outputs=step_trace,
@@ -422,7 +427,12 @@ class MemoryWriteService:
                     step_trace["duplicate_read_policy"] = read_decision.to_dict()
                     db.commit()
                     db.refresh(existing)
-                    metrics_collector.record_write(success=True, is_contradiction=False, latency_ms=(time.time() - start_time) * 1000)
+                    metrics_collector.record_write(
+                        success=True,
+                        is_contradiction=False,
+                        latency_ms=(time.time() - start_time) * 1000,
+                        is_duplicate=True,
+                    )
                     return MemoryWriteResult(
                         record=existing,
                         step_outputs=step_trace,
@@ -549,6 +559,7 @@ class MemoryWriteService:
                     success=True,
                     is_contradiction=False,
                     latency_ms=(time.time() - start_time) * 1000,
+                    is_duplicate=True,
                 )
                 return MemoryWriteResult(
                     record=winner,
@@ -653,7 +664,12 @@ class MemoryWriteService:
             }
             step_trace["step_10_emit_and_audit"] = step_trace["step_10_emit_event_and_audit"]
 
-            metrics_collector.record_write(success=True, is_contradiction=False, latency_ms=(time.time() - start_time) * 1000)
+            metrics_collector.record_write(
+                success=True,
+                is_contradiction=False,
+                latency_ms=(time.time() - start_time) * 1000,
+                is_duplicate=dedup_result.is_duplicate,
+            )
 
             return MemoryWriteResult(
                 record=record,
