@@ -9,7 +9,7 @@ as long as the grant lasts.
 The caller acts as itself: the actor identity comes from the authenticated
 header, never from the request body, so an agent cannot ask on another's behalf.
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -54,6 +54,7 @@ def request_assistance(
             query=req.query,
             purpose=req.purpose or header_purpose or "collaboration",
             limit=req.limit,
+            tenant_id="default",
         )
     except CollaborationError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
@@ -61,10 +62,13 @@ def request_assistance(
 
 
 class ContributeRequest(BaseModel):
-    memory_id: str = Field(..., description="The memory being offered.")
-    recipient: str = Field(..., min_length=1, description="Agent name to grant access to.")
-    purpose: Optional[str] = Field(default=None)
-    actions: List[str] = Field(default=["read"], description="Actions to grant.")
+    memory_id: str = Field(..., min_length=1, max_length=64, description="The memory being offered.")
+    recipient: str = Field(..., min_length=2, max_length=128, description="Agent name to grant access to.")
+    purpose: Optional[str] = Field(default=None, max_length=512)
+    actions: List[Literal["read", "query"]] = Field(
+        default_factory=lambda: ["read"], min_length=1, max_length=2,
+        description="Contribution is read-only; only read/query actions may be granted.",
+    )
     ttl_hours: Optional[int] = Field(default=None, ge=1, le=24 * 30,
                                      description="Grant lifetime; defaults to 24h.")
 
@@ -86,6 +90,7 @@ def contribute_memory(
             purpose=req.purpose or header_purpose or "collaboration",
             actions=req.actions,
             ttl_hours=req.ttl_hours,
+            tenant_id="default",
         )
     except CollaborationPermissionError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
@@ -94,11 +99,12 @@ def contribute_memory(
 
 
 class DelegateRequest(BaseModel):
-    subagent_name: str = Field(..., min_length=1, max_length=64,
+    subagent_name: str = Field(..., min_length=2, max_length=64,
                                description="Name for the sub-agent to create.")
     task_description: str = Field(..., min_length=1, max_length=2000)
     bounded_scope: Optional[str] = Field(
         default=None,
+        max_length=1024,
         description="Namespace-path prefix the sub-agent may act within. "
                     "PolicyEngine enforces this, so it must be a real namespace path.",
     )
@@ -118,6 +124,9 @@ def delegate_task(
             subagent_name=req.subagent_name,
             task_description=req.task_description,
             bounded_scope=req.bounded_scope,
+            tenant_id="default",
         )
+    except CollaborationPermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except CollaborationError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

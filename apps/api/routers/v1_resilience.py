@@ -104,7 +104,9 @@ def run_repair(
 ) -> Dict[str, Any]:
     """Run the self-healing supervisor over the corpus."""
     _require_admin(actor_name)
-    report = self_healing_supervisor.run(db, dry_run=req.dry_run)
+    report = self_healing_supervisor.run(
+        db, dry_run=req.dry_run, tenant_id="default"
+    )
     return report.to_dict()
 
 
@@ -114,5 +116,7 @@ def preview_repair(
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Dry-run repair, safe for any authenticated caller to inspect."""
-    report = self_healing_supervisor.run(db, dry_run=True)
+    report = self_healing_supervisor.run(
+        db, dry_run=True, tenant_id="default"
+    )
     return report.to_dict()

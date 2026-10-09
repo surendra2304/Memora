@@ -74,4 +74,5 @@ def test_ecosystem_adapters(test_db):
     )
     skill_rec = MemoryService.create_memory(test_db, procedural_in, actor_name="friday")
     assert skill_rec.memory_type == MemoryType.PROCEDURAL
-    assert skill_rec.lifecycle_state == LifecycleState.VERIFIED
+    assert skill_rec.lifecycle_state == LifecycleState.CANDIDATE
+    assert skill_rec.provenance["trust_level"] == "candidate"

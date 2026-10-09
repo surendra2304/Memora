@@ -1,0 +1,44 @@
+# Phase 6 — Ingestion, safety gates and idempotency
+
+**Status:** Complete (static review). No source files changed. Runtime confirmations are cross-referenced to Phase 0; remaining targeted probes belong in Phase 12.
+
+## Write entry points and pipeline
+
+| Entry point | Implementation | Observed path |
+|---|---|---|
+| `POST /v1/memories` | `apps/api/routers/v1_memories.py:202-234` | Canonical `MemoryWriteService.execute_pipeline`; request body `agent_id` replaces the header principal as `calling_agent` (`:209-218`). |
+| `POST /memories` | `apps/api/routers/memories.py:53-66` | Legacy direct `MemoryService.create_memory`, not the 10-step pipeline. |
+| `POST /v1/memories/record-interaction` | `apps/api/routers/v1_memories.py:669-759` | Rule-based preference/fact extraction, then semantic write(s), then an episodic turn write; every resulting text is submitted to the canonical pipeline. Caller may body-select `agent_name` (`:676`). |
+| `POST /v1/memories/learn-experience` | `apps/api/routers/v1_memories.py:326-352`; `core/memory/experience_service.py:88-124` | Synthesizes task-outcome lessons and writes an `EXPERIENCE` record through the pipeline; request `agent_id` becomes the actor (`:332-338`). |
+| Task memory operation | `apps/api/routers/v1_task.py:122-154` | Converts payload fields to content/type/namespace and calls the pipeline. |
+
+- [FACT] The canonical pipeline has 10 named steps: receive; resolve actor/namespace; classify and scan; normalize/hash; extract entities; idempotency/deduplication; assign metadata; policy; persist; emit event/audit (`core/memory/pipeline/write_service.py:109-125,128-245,249-324,326-478`). It collapses whitespace and SHA-256 hashes normalized text; there is no semantic-model call in that transformation (`:235-240`).
+- [FACT] Entity extraction is local, rule-based matching over a finite gazetteer, regexes and a fixed predicate list; it detects dates, module/URI strings, known people/orgs/agents/technologies/concepts and heuristic SPO triples (`core/memory/pipeline/entity_extractor.py:18-87,96-177,179-228`). Its module docstring mentions optional LLM fallback, but this implementation contains no LLM fallback call.
+- [FACT] Fact extraction is a set of eight English regex templates for preference/favorite/dislike/allergy/location/profession/identity-like phrases (`core/memory/pipeline/preference_extractor.py:42-91`). It sets fixed confidence/importance defaults and emits normalized text; raw text and extracted metadata are also put into record provenance by the interaction handler (`:9-34,96-153`; `apps/api/routers/v1_memories.py:707-755`).
+
+## Safety and metadata checks
+
+- [FACT] `SecretScanner` has 10 pattern families: major vendor/API tokens, private-key markers, JWTs, password/credential assignments, bearer tokens and AWS access keys (`core/memory/pipeline/secret_scanner.py:16-56`). It returns type labels, not captured values (`:58-70`). The canonical pipeline scans `content_text` before normalization, extraction, dedup and persistence (`core/memory/pipeline/write_service.py:193-201`).
+- [FACT] The poison detector has eight pattern families covering instruction overrides, policy bypass, secret exfiltration, script tags and selected destructive SQL/shell forms (`core/memory/pipeline/poison_detector.py:19-57,68-84`). Both the v1 write and task handlers map detected unsafe content to explicit rejection outcomes (`apps/api/routers/v1_memories.py:290-317`; `apps/api/routers/v1_task.py:144-165`).
+- [FACT] The legacy `/memories` write calls `MemoryService.create_memory`; that service calls `PoisonDetector` but not `SecretScanner` (`apps/api/routers/memories.py:53-66`; `core/memory/service.py:131-134`). The same synthetic secret-shaped payload was accepted there (201) and rejected by v1 (422) in a Phase 0 isolated probe; the fixture value is omitted. This is a confirmed safety-control discrepancy, not merely a code-path inference.
+- [FACT] Scanning is limited to `content_text` in the canonical pipeline. Caller-supplied `provenance`, `evidence_refs`, task outcome fields and interaction metadata are stored or interpolated separately (`core/memory/pipeline/write_service.py:197-201,330-359`; `apps/api/routers/v1_memories.py:117-135,719-724,747-750`; `core/memory/experience_service.py:19-30,64-85`). [INFERENCE] Secret-like data embedded only in metadata fields does not pass the same scanner. Phase 12 should confirm persistence with synthetic markers, not real secrets.
+- [FACT] Direct legacy creation accepts a caller-supplied lifecycle state (`core/memory/schemas.py:85-107`) and assigns it to the row after a write-policy check (`core/memory/service.py:106-109,148-170`); no promotion/evidence check appears in this method. [INFERENCE] An authorized legacy caller can self-label an initial record `VERIFIED` and supply its provenance, bypassing the explicit promotion path's evidence requirement (`core/memory/service.py:546-579`). Runtime confirmation is deferred to Phase 12.
+- [FACT] The v1 schema accepts caller-supplied `trust_level`, provenance, confidence and importance (`apps/api/routers/v1_memories.py:117-135`). The semantic-tier guard blocks a fixed set of untrusted source/trust strings, but does not require evidence for a non-blocked trust label (`core/memory/pipeline/write_service.py:203-223`). [INFERENCE] Trust metadata can be caller-asserted and should not be treated as independently verified; the record is nevertheless initially `ACTIVE`, not `VERIFIED` (`:361-383`).
+
+## Idempotency, deduplication and authorization order
+
+- [FACT] The database uniqueness key is `(tenant_id, agent_id, idempotency_key)` (`storage/relational/models.py:209-228`). The pipeline looks up that key first, then compares normalized text in the target namespace against candidate/active/verified records. The latter uses exact text equality or token-set Jaccard similarity at threshold 0.85, not vector-semantic similarity (`core/memory/pipeline/write_service.py:252-296`; `core/memory/pipeline/deduplication.py:21-69`).
+- [FACT] Both idempotency replay and content-duplicate lookup/return happen at step 6, before access policy evaluation at step 8 (`core/memory/pipeline/write_service.py:256-296,311-324`). The duplicate response includes the existing record; `MemoryWriteResponse` returns its content and ID (`apps/api/routers/v1_memories.py:264-288`). Phase 0's isolated probe confirmed disclosure of a victim record ID and text before policy denial could occur. **High-priority authorization-order defect.**
+- [FACT] The v1 route sets `calling_agent = req.agent_id or actor_name` and passes it as both `caller_name` and `agent_id` (`apps/api/routers/v1_memories.py:203-234`). This means the credential principal is not the actor for this flow unless the body omits `agent_id`; detailed impact and runtime probes are in Phase 4/12.
+- [FACT] On a concurrent idempotency-key uniqueness collision, the route opens a fresh session and replays the operation only when a key was supplied (`apps/api/routers/v1_memories.py:236-263`). This addresses a documented race; retry behavior and status mapping have not been independently load-tested in this phase.
+
+## Persistence, extraction and operational caveats
+
+- [FACT] Relational record creation and graph linking occur before vector upsert; vector failure is caught and represented as `vector_indexed=False`, while the relational write proceeds toward event/audit and commit (`core/memory/pipeline/write_service.py:361-430,434-464`). Graph linking exceptions are also suppressed (`:387-397`). [INFERENCE] A relationally successful write can therefore be returned without a vector index; an external vector point may also outlive a later failed relational commit because no compensation is visible in this function. Phase 8 covers reconciliation and Phase 12 should test failure injection.
+- [FACT] The pipeline commits the record, database event and audit together (`core/memory/pipeline/write_service.py:434-464`), then attempts a non-blocking Turso sync after commit (`:466-471`). This does not make vector/Qdrant, graph, Redis, or Turso side effects one distributed transaction.
+- [FACT] The scanner's checks are finite regexes, and the poison detector's selected patterns are heuristic, not a comprehensive parser or secret classifier (`core/memory/pipeline/secret_scanner.py:16-56`; `core/memory/pipeline/poison_detector.py:19-57`). No claim of complete secret/injection detection is warranted.
+
+## Exit check
+
+- [FACT] The v1 and legacy write routes have different safety gates, lifecycle behavior and persistence orchestration. The user-facing term “10-step pipeline” accurately describes v1/task/experience paths, not every memory-ingestion endpoint.
+- [FACT] No tests were run in this phase. Phase 6 is complete; next is search, context assembly and token budgeting.

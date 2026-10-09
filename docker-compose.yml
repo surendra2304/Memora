@@ -1,31 +1,45 @@
-version: '3.8'
-
 services:
   memora-api:
     build: .
     container_name: memora-api
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
-      - DATABASE_URL=postgresql+psycopg2://memora_user:memora_password@postgres:5432/memora_db
-      - REDIS_URL=redis://redis:6379/0
-      - QDRANT_URL=http://qdrant:6333
-      - MEMORA_ENV=production
+      DATABASE_URL: "postgresql+psycopg2://memora_user:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/memora_db"
+      USE_SQLITE_FALLBACK: "false"
+      REDIS_URL: "redis://redis:6379/0"
+      QDRANT_URL: "http://qdrant:6333"
+      QDRANT_COLLECTION: "memora_embeddings"
+      MEMORA_ENV: "production"
+      MEMORA_ALLOW_ANONYMOUS_DEV: "false"
+      MEMORA_API_KEY: "${MEMORA_API_KEY:?Set MEMORA_API_KEY in .env}"
+      FRIDAY_API_KEY: "${FRIDAY_API_KEY:-}"
+      INFERENCE_API_KEY: "${INFERENCE_API_KEY:-}"
+      STRATEX_API_KEY: "${STRATEX_API_KEY:-}"
+      INTELX_API_KEY: "${INTELX_API_KEY:-}"
+      FUTURIS_API_KEY: "${FUTURIS_API_KEY:-}"
+      CORTEX_API_KEY: "${CORTEX_API_KEY:-}"
+      FORGE_API_KEY: "${FORGE_API_KEY:-}"
+      SENTINEL_API_KEY: "${SENTINEL_API_KEY:-}"
+      AI_UNIVERSE_API_KEY: "${AI_UNIVERSE_API_KEY:-}"
     depends_on:
-      - postgres
-      - redis
-      - qdrant
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
     restart: unless-stopped
 
   postgres:
     image: postgres:16-alpine
     container_name: memora-postgres
     environment:
-      POSTGRES_USER: memora_user
-      POSTGRES_PASSWORD: memora_password
-      POSTGRES_DB: memora_db
+      POSTGRES_USER: "memora_user"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
+      POSTGRES_DB: "memora_db"
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -39,7 +53,7 @@ services:
     image: redis:7-alpine
     container_name: memora-redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -53,8 +67,8 @@ services:
     image: qdrant/qdrant:v1.9.0
     container_name: memora-qdrant
     ports:
-      - "6333:6333"
-      - "6334:6334"
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped

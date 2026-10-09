@@ -18,6 +18,10 @@ _MAX_SEGMENT_LEN = 128
 _MAX_PATH_LEN = 1024
 
 
+class AgentDelegationError(ValueError):
+    """Raised when a parent tries to delegate outside its own authority."""
+
+
 class IdentityService:
     # ------------------------------------------------------------------
     # Namespace path validation
@@ -136,33 +140,101 @@ class IdentityService:
         description: Optional[str] = None,
         tenant_id: str = "default"
     ) -> Agent:
-        parent = IdentityService.get_agent_by_name(db, parent_agent_name)
-        resolved_tenant = getattr(parent, "tenant_id", tenant_id) if parent else tenant_id
-        if not parent:
-            parent = IdentityService.register_agent(db, parent_agent_name, tenant_id=resolved_tenant)
+        parent = IdentityService.get_agent_by_name(
+            db, parent_agent_name, tenant_id=tenant_id
+        )
+        if parent is None:
+            raise AgentDelegationError("The delegating agent is not registered in the requested tenant.")
+        resolved_tenant = parent.tenant_id
 
-        if not bounded_scope.startswith("memora://"):
-            bounded_scope = f"memora://{bounded_scope.lstrip('/')}"
+        try:
+            normalized_scope = IdentityService.validate_namespace_path(bounded_scope)
+        except ValueError as exc:
+            raise AgentDelegationError(str(exc)) from exc
 
-        formatted_subname = f"{parent.name}:{subagent_name.lower()}"
-        subagent = IdentityService.register_agent(
+        target_ns = IdentityService.get_namespace_by_path(
+            db, normalized_scope, tenant_id=resolved_tenant
+        )
+        if target_ns is None:
+            # Creating a scope implicitly grants its child access to it. Only the
+            # parent (or the Memora service administrator) may mint a new scope;
+            # otherwise a caller could name another agent's project and have this
+            # trusted service create a grant that the caller could not grant itself.
+            root = IdentityService.namespace_root(normalized_scope)
+            if parent.name != "memora" and root != parent.name:
+                raise AgentDelegationError(
+                    "A delegator may create a bounded namespace only under its own namespace root."
+                )
+            target_ns = IdentityService.resolve_namespace(
+                db,
+                normalized_scope,
+                default_type=NamespaceType.PROJECT_PRIVATE,
+                owner_agent_id=parent.id,
+                tenant_id=resolved_tenant,
+            )
+
+        if target_ns.type == NamespaceType.AGENT_PRIVATE:
+            raise AgentDelegationError(
+                "Sub-agents cannot be delegated into an agent-private namespace; use a project scope."
+            )
+
+        # Delegation cannot widen the parent's effective capabilities. Evaluate
+        # the exact read/query/write actions against the scope, then grant only
+        # the subset the parent already holds.
+        from core.policy.engine import PolicyEngine
+
+        delegated_actions = [
+            action
+            for action in ("read", "query", "write")
+            if PolicyEngine.evaluate_access(
+                db,
+                actor=parent,
+                namespace=target_ns,
+                action=action,
+                log_audit=False,
+            ).allowed
+        ]
+        if not delegated_actions:
+            raise AgentDelegationError(
+                "The delegator has no read, query, or write authority over the requested scope."
+            )
+
+        formatted_subname = f"{parent.name}:{subagent_name.strip().lower()}"
+        existing_child = IdentityService.get_agent_by_name(
+            db, formatted_subname, tenant_id=resolved_tenant
+        )
+        if existing_child and (
+            existing_child.parent_agent_id != parent.id
+            or existing_child.bounded_scope != normalized_scope
+        ):
+            raise AgentDelegationError(
+                "The sub-agent name is already registered with a different parent or bounded scope."
+            )
+
+        subagent = existing_child or IdentityService.register_agent(
             db,
             name=formatted_subname,
-            description=description or f"Sub-agent of {parent.name} bounded to {bounded_scope}",
+            description=description or f"Sub-agent of {parent.name} bounded to {normalized_scope}",
             role="subagent",
             parent_agent_id=parent.id,
-            bounded_scope=bounded_scope,
-            tenant_id=resolved_tenant
+            bounded_scope=normalized_scope,
+            tenant_id=resolved_tenant,
         )
+        if (
+            subagent.parent_agent_id != parent.id
+            or subagent.bounded_scope != normalized_scope
+        ):
+            raise AgentDelegationError(
+                "The sub-agent name was concurrently registered with different delegation bounds."
+            )
 
-        target_ns = IdentityService.resolve_namespace(db, bounded_scope, default_type=NamespaceType.PROJECT_PRIVATE, tenant_id=resolved_tenant)
         IdentityService.grant_access(
             db,
             agent_id=subagent.id,
             namespace_id=target_ns.id,
-            actions=["read", "write", "query"],
-            purpose=f"Bounded sub-agent access for {bounded_scope}",
-            tenant_id=resolved_tenant
+            actions=delegated_actions,
+            purpose=f"Bounded sub-agent access for {normalized_scope}",
+            tenant_id=resolved_tenant,
         )
         return subagent
 
@@ -186,12 +258,21 @@ class IdentityService:
         return query.first()
 
     @staticmethod
-    def get_agent_by_id(db: Session, agent_id: str) -> Optional[Agent]:
-        return db.query(Agent).filter(Agent.id == agent_id).first()
+    def get_agent_by_id(
+        db: Session,
+        agent_id: str,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[Agent]:
+        query = db.query(Agent).filter(Agent.id == agent_id)
+        if tenant_id is not None:
+            query = query.filter(Agent.tenant_id == tenant_id)
+        return query.first()
 
     @staticmethod
-    def list_agents(db: Session) -> List[Agent]:
-        return db.query(Agent).order_by(Agent.name).all()
+    def list_agents(db: Session, tenant_id: str = "default") -> List[Agent]:
+        return db.query(Agent).filter(
+            Agent.tenant_id == tenant_id
+        ).order_by(Agent.name).all()
 
     @staticmethod
     def create_namespace(
@@ -202,6 +283,11 @@ class IdentityService:
         tenant_id: str = "default"
     ) -> Namespace:
         path = IdentityService.validate_namespace_path(path)
+
+        if agent_id is not None and IdentityService.get_agent_by_id(
+            db, agent_id, tenant_id=tenant_id
+        ) is None:
+            raise ValueError("Namespace owner must be registered in the same tenant.")
 
         existing = db.query(Namespace).filter(Namespace.path == path, Namespace.tenant_id == tenant_id).first()
         if existing:
@@ -243,16 +329,23 @@ class IdentityService:
         if ns:
             return ns
 
+        segments = path[len(_NAMESPACE_PREFIX):].split("/")
+        root = segments[0]
         ns_type = default_type
-        if "/private" in path:
-            ns_type = NamespaceType.AGENT_PRIVATE
-        elif "/global" in path or path == "memora://universe/global":
-            ns_type = NamespaceType.UNIVERSE_GLOBAL
-        elif "/shared" in path or "/team" in path:
-            ns_type = NamespaceType.TEAM_SHARED
-        elif "/public" in path:
+        # Open types are determined by canonical namespace roots, never by a
+        # substring in an agent-owned project name. For example,
+        # ``memora://friday/projects/publicity`` must remain private; the old
+        # ``'/public' in path`` test silently made it openly readable. Likewise,
+        # a personal path containing ``global`` must not acquire global access.
+        if root == "public":
             ns_type = NamespaceType.PUBLIC
-        elif "/projects/" in path:
+        elif root == "universe" and len(segments) >= 2 and segments[1] == "global":
+            ns_type = NamespaceType.UNIVERSE_GLOBAL
+        elif root in {"team", "shared"} or "team" in segments or "shared" in segments:
+            ns_type = NamespaceType.TEAM_SHARED
+        elif "private" in segments:
+            ns_type = NamespaceType.AGENT_PRIVATE
+        elif len(segments) >= 2 and segments[1] == "projects":
             ns_type = NamespaceType.PROJECT_PRIVATE
 
         return IdentityService.create_namespace(
@@ -286,23 +379,47 @@ class IdentityService:
         purpose: Optional[str] = None,
         expires_at: Optional[datetime] = None,
         ttl_hours: Optional[int] = None,
-        tenant_id: str = "default"
+        tenant_id: str = "default",
+        commit: bool = True,
     ) -> AccessGrant:
+        namespace = db.query(Namespace).filter(
+            Namespace.id == namespace_id,
+            Namespace.tenant_id == tenant_id,
+        ).first()
+        if namespace is None:
+            raise ValueError("Namespace does not exist in the requested tenant.")
+
+        requested_actions = ["read", "query"] if actions is None else actions
+        action_list = list(dict.fromkeys(
+            str(action).strip().lower() for action in requested_actions
+        ))
+        allowed_actions = {"read", "query", "write"}
+        if not action_list or any(action not in allowed_actions for action in action_list):
+            raise ValueError(
+                "Access grants may contain only read, query, and write actions; "
+                "wildcard and lifecycle actions are forbidden."
+            )
+        if ttl_hours is not None and not 1 <= ttl_hours <= 24 * 365:
+            raise ValueError("Grant TTL must be between 1 and 8760 hours.")
+
         if not agent_id and agent_name:
             # Scope to the caller's tenant. Agent names are unique per tenant, so
             # an unscoped lookup could attach this grant to an identically named
             # agent belonging to a different tenant.
             agent = IdentityService.get_agent_by_name(db, agent_name, tenant_id=tenant_id)
             if not agent:
-                agent = IdentityService.register_agent(db, agent_name, tenant_id=tenant_id)
+                raise ValueError("Target agent is not registered in the requested tenant.")
             resolved_agent_id = agent.id
         elif agent_id:
-            # Check if agent_id is actually an agent name
+            # Resolve only within the grant's tenant; an ID/name lookup must not
+            # attach a namespace grant to an identically named foreign actor.
             agent = IdentityService.get_agent_by_id(db, agent_id)
+            if agent and agent.tenant_id != tenant_id:
+                raise ValueError("Target agent belongs to a different tenant.")
             if not agent:
-                agent = IdentityService.get_agent_by_name(db, agent_id)
+                agent = IdentityService.get_agent_by_name(db, agent_id, tenant_id=tenant_id)
             if not agent:
-                agent = IdentityService.register_agent(db, agent_id, tenant_id=tenant_id)
+                raise ValueError("Target agent is not registered in the requested tenant.")
             resolved_agent_id = agent.id
         else:
             raise ValueError("Either agent_id or agent_name must be provided.")
@@ -316,7 +433,6 @@ class IdentityService:
             AccessGrant.namespace_id == namespace_id
         ).first()
 
-        action_list = actions or ["read", "query"]
         if grant:
             grant.actions = action_list
             grant.purpose = purpose
@@ -336,7 +452,10 @@ class IdentityService:
                 expires_at=expires_at
             )
             db.add(grant)
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(grant)
         return grant
 
@@ -346,6 +465,7 @@ class IdentityService:
         agent_id: str,
         namespace_id: str,
         tenant_id: Optional[str] = None,
+        commit: bool = True,
     ) -> bool:
         """Revoke a grant.
 
@@ -362,6 +482,9 @@ class IdentityService:
         grant = query.first()
         if grant:
             db.delete(grant)
-            db.commit()
+            if commit:
+                db.commit()
+            else:
+                db.flush()
             return True
         return False

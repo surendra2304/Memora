@@ -7,21 +7,22 @@ import os
 import re
 import time
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from apps.api.dependencies import authenticate_agent
+from apps.api.dependencies import AGENT_API_KEY_ENV_VARS, authenticate_agent
 from storage.relational.models import EventConsumerCursor, EventLog
 from storage.relational.session import get_db
-from storage.relational.turso_events import acknowledge as acknowledge_turso_event, append as append_turso_event, configured as turso_events_configured, production_mode as turso_required, read as read_turso_events, read_cursor as read_turso_cursor
+from storage.relational.turso_events import EventIdTenantConflictError, acknowledge as acknowledge_turso_event, append as append_turso_event, configured as turso_events_configured, production_mode as turso_required, read as read_turso_events, read_cursor as read_turso_cursor
 
 router = APIRouter(prefix="/v1/events", tags=["Agent Event Feed"])
 mesh_router = APIRouter(tags=["Agent Event Ingest"])
 
-_AGENTS = {"friday", "memora", "inference", "stratex", "intelx", "futuris", "cortex", "forge", "sentinel"}
+_AGENTS = frozenset(AGENT_API_KEY_ENV_VARS)
 
 
 class IncomingEnvelope(BaseModel):
@@ -42,6 +43,16 @@ class EventAcknowledgement(BaseModel):
     event_id: int = Field(gt=0)
     consumer_id: str = Field(default="default", min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._:-]+$")
 
+_SYSTEM_MANAGED_EVENT_TYPES = frozenset({
+    "memory.created",
+    "memory.updated",
+    "memory.shared",
+    "memory.superseded",
+    "memory.promoted",
+    "context.generated",
+    "access.denied",
+})
+
 _VISIBLE_FIELDS = {
     "memory.created": ("memory_id", "tenant_id", "owner", "namespace", "type"),
     "memory.updated": ("memory_id", "action", "hard", "actor"),
@@ -61,6 +72,63 @@ _VISIBLE_FIELDS = {
         "paper_only", "policy_reason", "gates_summary", "headline", "summary", "decided_at",
     ),
 }
+
+
+def _validate_intelx_news(payload: dict[str, Any]) -> None:
+    """Bound externally authored news metadata before it enters the durable feed."""
+    headline = payload.get("headline")
+    if not isinstance(headline, str) or not headline.strip() or len(headline) > 500:
+        raise HTTPException(status_code=422, detail="News event requires a bounded headline")
+    source_url = payload.get("source_url")
+    if source_url is not None:
+        if not isinstance(source_url, str) or len(source_url) > 2048:
+            raise HTTPException(status_code=422, detail="News event has an invalid source_url")
+        try:
+            parsed_url = urlsplit(source_url)
+            valid_url = parsed_url.scheme in {"http", "https"} and bool(parsed_url.hostname)
+        except ValueError:
+            valid_url = False
+        if not valid_url:
+            raise HTTPException(status_code=422, detail="News source_url must be an HTTP(S) URL")
+    for field, max_length in (("signal_id", 128), ("summary", 3000), ("published_at", 64)):
+        value = payload.get(field)
+        if value is not None and (not isinstance(value, str) or len(value) > max_length):
+            raise HTTPException(status_code=422, detail=f"News event has invalid {field}")
+    sources = payload.get("sources")
+    if sources is not None and (
+        not isinstance(sources, list)
+        or len(sources) > 12
+        or not all(isinstance(item, str) and len(item) <= 512 for item in sources)
+    ):
+        raise HTTPException(status_code=422, detail="News sources must be at most 12 short strings")
+    topics = payload.get("topics")
+    if topics is not None and (
+        not isinstance(topics, list)
+        or len(topics) > 32
+        or not all(isinstance(item, str) and len(item) <= 64 for item in topics)
+    ):
+        raise HTTPException(status_code=422, detail="News topics must be at most 32 short strings")
+    relevance = payload.get("relevance")
+    if relevance is not None:
+        values = relevance.values() if isinstance(relevance, dict) else [relevance]
+        if isinstance(relevance, dict) and (
+            len(relevance) > 16
+            or not all(isinstance(key, str) and len(key) <= 64 for key in relevance)
+        ):
+            raise HTTPException(status_code=422, detail="News relevance object has invalid keys or size")
+        if not isinstance(relevance, (int, float, dict)) or isinstance(relevance, bool):
+            raise HTTPException(status_code=422, detail="News relevance must be numeric or a bounded object")
+        for value in values:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                if isinstance(relevance, dict) and isinstance(value, str) and len(value) <= 128:
+                    continue
+                raise HTTPException(status_code=422, detail="News relevance values must be short strings or numbers")
+            try:
+                numeric_value = float(value)
+            except (OverflowError, ValueError):
+                raise HTTPException(status_code=422, detail="News relevance number is invalid") from None
+            if not math.isfinite(numeric_value) or not 0.0 <= numeric_value <= 1.0:
+                raise HTTPException(status_code=422, detail="News relevance values must be between 0 and 1")
 
 
 def _validate_futuris_forecast(payload: dict[str, Any]) -> None:
@@ -262,7 +330,13 @@ def ingest_envelope(
         if not key or not supplied or not hmac.compare_digest(key, supplied):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid sender credentials")
     if sender not in _AGENTS or recipient not in _AGENTS | {"all"}:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown sender or recipient")
+        raise HTTPException(status_code=422, detail="Unknown sender or recipient")
+    if envelope.intent in _SYSTEM_MANAGED_EVENT_TYPES:
+        raise HTTPException(status_code=403, detail="System-managed events cannot be submitted as agent envelopes")
+    if envelope.intent == "intelx.news":
+        if sender != "intelx":
+            raise HTTPException(status_code=403, detail="Only authenticated Intelx may publish news signals")
+        _validate_intelx_news(envelope.payload)
     if envelope.intent == "futuris.forecast":
         if sender != "futuris":
             raise HTTPException(status_code=403, detail="Only authenticated Futuris may publish forecast advisories")
@@ -301,6 +375,13 @@ def ingest_envelope(
 
     existing = db.query(EventLog).filter(EventLog.event_id == envelope.message_id).first()
     if existing:
+        existing_payload = existing.payload if isinstance(existing.payload, dict) else {}
+        existing_source = existing_payload.get("source_agent")
+        if existing.tenant_id != "default" or existing_source != sender:
+            # Event IDs are globally unique in the stores. A cross-tenant or
+            # cross-publisher collision is not this caller's idempotent retry;
+            # never disclose the other owner's cursor.
+            raise HTTPException(status_code=409, detail="Event ID is already in use")
         return {"status": "duplicate", "event_id": existing.event_id, "cursor": existing.id}
 
     event_data = {
@@ -308,13 +389,20 @@ def ingest_envelope(
         "event_type": envelope.intent,
         "tenant_id": "default",
         "target_agent": None if recipient == "all" else recipient,
-        "payload": {**envelope.payload, "source_agent": sender, "correlation_id": envelope.correlation_id},
+        "payload": {
+            **envelope.payload,
+            "tenant_id": "default",
+            "source_agent": sender,
+            "correlation_id": envelope.correlation_id,
+        },
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     remote_cursor = None
     if turso_events_configured():
         try:
             remote_cursor = append_turso_event(event_data)
+        except EventIdTenantConflictError as exc:
+            raise HTTPException(status_code=409, detail="Event ID is already in use") from exc
         except Exception as exc:
             raise HTTPException(status_code=503, detail="Durable event store is temporarily unavailable") from exc
     elif turso_required():

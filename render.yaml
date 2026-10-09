@@ -12,14 +12,27 @@ services:
         value: "0.0.0.0"
       - key: ENVIRONMENT
         value: "production"
-      # Absolute path: the container WORKDIR is /app, and a relative
-      # "./data/memora.db" resolves against whatever cwd uvicorn inherits.
+      - key: MEMORA_ENV
+        value: "production"
+      # Production must use persistent managed storage. Configure DATABASE_URL
+      # (or both TURSO variables) in Render; do not silently start on local SQLite.
       - key: DATABASE_URL
-        value: "sqlite:////app/data/memora.db"
+        sync: false
+      - key: USE_SQLITE_FALLBACK
+        value: "false"
       - key: TURSO_DATABASE_URL
-        value: "https://memora-db-surendra2304.aws-ap-south-1.turso.io"
+        sync: false
       - key: TURSO_AUTH_TOKEN
         sync: false
+      - key: REDIS_URL
+        sync: false
+      # Configure a reachable Qdrant service; localhost is not the deployed API.
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_COLLECTION
+        value: "memora_embeddings"
+      - key: MEMORA_ALLOW_ANONYMOUS_DEV
+        value: "false"
       - key: MEMORA_API_KEY
         sync: false
       # Live Mesh Interconnects
@@ -54,4 +67,6 @@ services:
       - key: SENTINEL_URL
         value: "https://sentinel-a861.onrender.com"
       - key: SENTINEL_API_KEY
+        sync: false
+      - key: AI_UNIVERSE_API_KEY
         sync: false

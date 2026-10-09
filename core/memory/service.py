@@ -4,6 +4,7 @@ Coordinates CRUD operations, policy enforcement, lifecycle transitions, superses
 """
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
+import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
@@ -22,6 +23,9 @@ from core.lifecycle.state_machine import MemoryLifecycleEngine
 from core.lifecycle.supersession import SupersessionEngine
 from core.lifecycle.decay import MemoryDecayEngine
 from core.memory.schemas import MemoryRecordCreate, MemoryQuery
+
+logger = logging.getLogger(__name__)
+
 
 class PermissionDeniedError(Exception):
     pass
@@ -67,38 +71,99 @@ def _content_matches_any_term(query_text: str):
 
 class MemoryService:
     @staticmethod
+    def _get_actor_scoped_memory(
+        db: Session, memory_id: str, actor_name: Optional[str]
+    ) -> tuple[Agent, MemoryRecord]:
+        """Resolve an authenticated default-tenant actor and a memory it may mutate.
+
+        API credentials have no tenant claim today, so every service mutation must
+        resolve the principal only in the default tenant rather than falling back
+        to an arbitrary same-named agent in another tenant.
+        """
+        if not actor_name:
+            raise PermissionDeniedError("An authenticated actor is required to mutate a memory.")
+        actor = IdentityService.get_agent_by_name(db, actor_name, tenant_id="default")
+        if actor is None:
+            raise PermissionDeniedError("The authenticated agent is not registered in Memora.")
+        record = db.query(MemoryRecord).filter(
+            MemoryRecord.id == memory_id,
+            MemoryRecord.tenant_id == actor.tenant_id,
+        ).first()
+        if record is None:
+            raise MemoryNotFoundError(f"Memory record with ID '{memory_id}' not found.")
+        return actor, record
+
+    @staticmethod
     def create_memory(
         db: Session,
         memory_in: MemoryRecordCreate,
         actor_name: Optional[str] = None,
         purpose: Optional[str] = None
     ) -> MemoryRecord:
-        tenant_id = getattr(memory_in, "tenant_id", "default")
+        from core.memory.pipeline.secret_scanner import SecretScanner
 
-        # Resolve Owner Agent
+        SecretScanner.validate_content_safety(memory_in.content_text)
+        tenant_id = str(getattr(memory_in, "tenant_id", "default") or "default")
+
+        # Resolve the caller and owner inside the requested tenant. A global
+        # same-name lookup can bind a default-tenant operation to an unrelated
+        # tenant's identity, while an unscoped owner_id can attach records across
+        # tenants even if the namespace policy check later succeeds.
+        actor = (
+            IdentityService.get_agent_by_name(db, actor_name, tenant_id=tenant_id)
+            if actor_name
+            else None
+        )
+        if actor_name and actor is None:
+            actor = IdentityService.register_agent(db, actor_name, tenant_id=tenant_id)
+
         if memory_in.owner_id:
-            owner = IdentityService.get_agent_by_id(db, memory_in.owner_id)
+            owner = IdentityService.get_agent_by_id(
+                db, memory_in.owner_id, tenant_id=tenant_id
+            )
+            if owner is None:
+                raise MemoryNotFoundError("Memory owner could not be resolved in the requested tenant.")
         elif memory_in.owner_name:
-            owner = IdentityService.get_agent_by_name(db, memory_in.owner_name)
-            if not owner:
-                owner = IdentityService.register_agent(db, memory_in.owner_name, tenant_id=tenant_id)
+            requested_owner = memory_in.owner_name.strip().lower()
+            if actor is not None and requested_owner != actor.name:
+                raise PermissionDeniedError(
+                    "The authenticated agent may not assign memory ownership to another agent."
+                )
+            owner = IdentityService.get_agent_by_name(
+                db, requested_owner, tenant_id=tenant_id
+            )
+            if owner is None:
+                owner = IdentityService.register_agent(
+                    db, requested_owner, tenant_id=tenant_id
+                )
+        elif actor is not None:
+            owner = actor
         else:
-            actor_h = actor_name or "friday"
-            owner = IdentityService.register_agent(db, actor_h, tenant_id=tenant_id)
+            owner = IdentityService.register_agent(db, "friday", tenant_id=tenant_id)
 
-        # Resolve Actor Agent
-        actor = IdentityService.get_agent_by_name(db, actor_name) if actor_name else owner
-        if not actor:
-            actor = IdentityService.register_agent(db, actor_name or "unknown", tenant_id=tenant_id)
+        if actor is None:
+            actor = owner
+        if actor.tenant_id != tenant_id or owner.tenant_id != tenant_id:
+            raise PermissionDeniedError("Actor and owner must belong to the requested tenant.")
 
-        # Resolve Namespace
+        # Resolve Namespace in the same tenant as actor, owner, and memory.
         if memory_in.namespace_id:
-            namespace = db.query(Namespace).filter(Namespace.id == memory_in.namespace_id).first()
+            namespace = db.query(Namespace).filter(
+                Namespace.id == memory_in.namespace_id,
+                Namespace.tenant_id == tenant_id,
+            ).first()
         elif memory_in.namespace_path:
-            namespace = IdentityService.resolve_namespace(db, memory_in.namespace_path, owner_agent_id=owner.id, tenant_id=tenant_id)
+            namespace = IdentityService.resolve_namespace(
+                db,
+                memory_in.namespace_path,
+                owner_agent_id=owner.id,
+                tenant_id=tenant_id,
+            )
         else:
             ns_path = f"memora://{owner.name}/private"
-            namespace = IdentityService.resolve_namespace(db, ns_path, owner_agent_id=owner.id, tenant_id=tenant_id)
+            namespace = IdentityService.resolve_namespace(
+                db, ns_path, owner_agent_id=owner.id, tenant_id=tenant_id
+            )
 
         if not namespace:
             raise MemoryNotFoundError("Target namespace could not be resolved.")
@@ -132,18 +197,46 @@ class MemoryService:
         from core.memory.pipeline.poison_detector import PoisonDetector
         PoisonDetector.validate_content_safety(memory_in.content_text)
 
-        # Untrusted Semantic Memory Guard (Requirement 5)
+        # Direct writes cannot use caller-supplied metadata to self-verify a
+        # semantic assertion or install a system rule. Semantic records must use
+        # the evidence-checked promotion path; SYSTEM records belong to Memora.
+        supplied_provenance = memory_in.provenance if isinstance(memory_in.provenance, dict) else {}
+        canonical_provenance = dict(supplied_provenance)
+        trusted_writer = actor.name == "memora"
+        if memory_in.memory_type in {MemoryType.SEMANTIC, MemoryType.SYSTEM} and not trusted_writer:
+            raise PermissionDeniedError(
+                f"Direct {memory_in.memory_type.value.upper()} writes are restricted to the authenticated "
+                "memora service identity; use the appropriate review workflow."
+            )
         if memory_in.memory_type == MemoryType.SEMANTIC:
             norm_src = str(memory_in.source).lower()
-            prov = memory_in.provenance or {}
-            norm_stype = str(prov.get("source_type", "")).lower()
-            norm_trust = str(prov.get("trust_level", "")).lower()
+            norm_stype = str(canonical_provenance.get("source_type", "")).lower()
+            norm_trust = str(canonical_provenance.get("trust_level", "candidate")).lower()
+            evidence_refs = canonical_provenance.get("evidence_refs") or []
             untrusted = {"ocr", "web_scrape", "web_text", "web", "tool_output", "tool", "model_output", "untrusted"}
-            if norm_src in untrusted or norm_stype in untrusted or norm_trust in {"untrusted", "candidate"}:
+            if (
+                norm_src in untrusted
+                or norm_stype in untrusted
+                or norm_trust not in {"verified", "operator_confirmed"}
+                or not isinstance(evidence_refs, (list, tuple))
+                or not any(str(ref).strip() for ref in evidence_refs)
+            ):
                 raise PermissionDeniedError(
-                    "Policy Violation: Untrusted knowledge cannot be written directly into SEMANTIC memory tier. "
-                    "Write to EPISODIC or WORKING tier first, then promote via verified promotion workflow."
+                    "Policy Violation: Direct SEMANTIC writes require verified or operator-confirmed trust "
+                    "and at least one evidence reference. Store unverified knowledge as EPISODIC or WORKING, "
+                    "then promote it through the evidence-checked workflow."
                 )
+
+        requested_lifecycle = memory_in.lifecycle_state or LifecycleState.CANDIDATE
+        if not trusted_writer:
+            canonical_provenance["created_by"] = actor.name
+            canonical_provenance["trust_level"] = "candidate"
+            if requested_lifecycle == LifecycleState.VERIFIED:
+                raise PermissionDeniedError(
+                    "Only the authenticated memora service identity may create a verified lifecycle record."
+                )
+            if memory_in.memory_type == MemoryType.PROCEDURAL:
+                requested_lifecycle = LifecycleState.CANDIDATE
 
         # Create record with the 6-dimension identity scope resolved above.
         record = MemoryRecord(
@@ -159,10 +252,10 @@ class MemoryService:
             memory_type=memory_in.memory_type,
             content_text=memory_in.content_text,
             source=memory_in.source,
-            provenance=memory_in.provenance or {},
+            provenance=canonical_provenance,
             confidence=memory_in.confidence,
             importance=memory_in.importance,
-            lifecycle_state=memory_in.lifecycle_state or LifecycleState.CANDIDATE,
+            lifecycle_state=requested_lifecycle,
             valid_from=memory_in.valid_from,
             valid_until=memory_in.valid_until,
             expires_at=memory_in.expires_at,
@@ -200,11 +293,15 @@ class MemoryService:
             raise MemoryNotFoundError(f"Memory record with ID '{memory_id}' not found.")
 
         if actor_name:
-            actor = IdentityService.get_agent_by_name(db, actor_name)
+            actor = IdentityService.get_agent_by_name(db, actor_name, tenant_id="default")
             if not actor:
                 raise PermissionDeniedError(
-                    f"Authenticated agent '{actor_name}' is not registered in Memora."
+                    f"Authenticated agent '{actor_name}' is not registered in the default tenant."
                 )
+            if record.tenant_id != actor.tenant_id:
+                raise MemoryNotFoundError(f"Memory record with ID '{memory_id}' not found.")
+
+        if actor_name:
             decision = PolicyEngine.evaluate_access(
                 db,
                 actor=actor,
@@ -213,7 +310,7 @@ class MemoryService:
                 purpose=purpose,
                 memory_id=record.id
             )
-            if not decision:
+            if not decision.allowed:
                 raise PermissionDeniedError(decision.reason)
 
         return record
@@ -228,7 +325,11 @@ class MemoryService:
         include_archived: Optional[bool] = None,
         include_deleted: Optional[bool] = None
     ) -> List[MemoryRecord]:
-        actor = IdentityService.get_agent_by_name(db, actor_name) if actor_name else None
+        requested_tenant = getattr(query, "tenant_id", "default") or "default"
+        actor = (
+            IdentityService.get_agent_by_name(db, actor_name, tenant_id=requested_tenant)
+            if actor_name else None
+        )
         if actor_name and not actor:
             raise PermissionDeniedError(
                 f"Authenticated agent '{actor_name}' is not registered in Memora."
@@ -236,7 +337,9 @@ class MemoryService:
         
         # If querying specific namespace, run policy check
         if query.namespace_path and actor:
-            ns = IdentityService.get_namespace_by_path(db, query.namespace_path)
+            ns = IdentityService.get_namespace_by_path(
+                db, query.namespace_path, tenant_id=actor.tenant_id
+            )
             if ns:
                 decision = PolicyEngine.evaluate_access(db, actor, ns, action="query", purpose=purpose)
                 if not decision:
@@ -321,7 +424,16 @@ class MemoryService:
         if actor:
             accessible_results = []
             for r in candidates:
-                dec = PolicyEngine.evaluate_access(db, actor, r.namespace, action="read", purpose=purpose, memory_id=r.id, log_audit=False)
+                dec = PolicyEngine.evaluate_access(
+                    db,
+                    actor,
+                    r.namespace,
+                    action="read",
+                    purpose=purpose,
+                    memory_id=r.id,
+                    log_audit=False,
+                    allow_expired=query.include_expired,
+                )
                 if dec.allowed:
                     accessible_results.append(r)
             return accessible_results[query.offset : query.offset + query.limit]
@@ -337,19 +449,38 @@ class MemoryService:
         superseded_by_id: Optional[str] = None,
         purpose: Optional[str] = None
     ) -> MemoryRecord:
-        record = MemoryService.get_memory_by_id(db, memory_id)
+        actor, record = MemoryService._get_actor_scoped_memory(db, memory_id, actor_name)
+        action_name = {
+            LifecycleState.VERIFIED: "verify",
+            LifecycleState.SUPERSEDED: "supersede",
+            LifecycleState.DELETED: "delete",
+        }.get(target_state, "transition")
+        decision = PolicyEngine.evaluate_access(
+            db,
+            actor,
+            record.namespace,
+            action=action_name,
+            purpose=purpose,
+            memory_id=record.id,
+        )
+        if not decision.allowed:
+            raise PermissionDeniedError(decision.reason)
 
-        actor = IdentityService.get_agent_by_name(db, actor_name) if actor_name else None
-        if actor:
-            action_name = "verify" if target_state == LifecycleState.VERIFIED else "supersede"
-            decision = PolicyEngine.evaluate_access(db, actor, record.namespace, action=action_name, purpose=purpose, memory_id=record.id)
-            if not decision:
-                raise PermissionDeniedError(decision.reason)
+        if superseded_by_id:
+            replacement = db.query(MemoryRecord).filter(
+                MemoryRecord.id == superseded_by_id,
+                MemoryRecord.tenant_id == actor.tenant_id,
+            ).first()
+            if replacement is None:
+                raise MemoryNotFoundError(f"Memory record with ID '{superseded_by_id}' not found.")
+            replacement_read = PolicyEngine.evaluate_access(
+                db, actor, replacement.namespace, action="read", purpose=purpose,
+                memory_id=replacement.id, log_audit=False,
+            )
+            if not replacement_read.allowed:
+                raise PermissionDeniedError(replacement_read.reason)
 
         MemoryLifecycleEngine.transition(record, target_state, superseded_by_id=superseded_by_id)
-        db.commit()
-        db.refresh(record)
-
         PolicyEngine.log_audit_decision(
             db,
             PolicyDecision(
@@ -358,9 +489,12 @@ class MemoryService:
                 rule_matched="MEMORY_TRANSITION",
                 dimensions={"target_state": target_state.value, "superseded_by_id": superseded_by_id}
             ),
-            actor_id=actor.id if actor else None,
-            memory_id=record.id
+            actor_id=actor.id,
+            memory_id=record.id,
+            tenant_id=actor.tenant_id,
         )
+        db.commit()
+        db.refresh(record)
         return record
 
     @staticmethod
@@ -368,31 +502,39 @@ class MemoryService:
         db: Session,
         memory_id: str,
         actor_name: Optional[str] = None,
-        notes: Optional[str] = None
+        notes: Optional[str] = None,
+        purpose: Optional[str] = None,
     ) -> MemoryRecord:
-        record = MemoryService.get_memory_by_id(db, memory_id)
-        actor = IdentityService.get_agent_by_name(db, actor_name) if actor_name else None
-
-        if actor:
-            decision = PolicyEngine.evaluate_access(db, actor, record.namespace, action="verify", memory_id=record.id)
-            if not decision:
-                raise PermissionDeniedError(decision.reason)
+        actor, record = MemoryService._get_actor_scoped_memory(db, memory_id, actor_name)
+        decision = PolicyEngine.evaluate_access(
+            db,
+            actor,
+            record.namespace,
+            action="verify",
+            purpose=purpose,
+            memory_id=record.id,
+        )
+        if not decision.allowed:
+            raise PermissionDeniedError(decision.reason)
 
         MemoryLifecycleEngine.transition(record, LifecycleState.VERIFIED)
-        db.commit()
-        db.refresh(record)
-
         PolicyEngine.log_audit_decision(
             db,
             PolicyDecision(
                 allowed=True,
-                reason=f"Memory verified by {actor_name or 'supervisor'}. Notes: {notes or 'none'}",
+                reason=f"Memory verified by {actor.name}. Notes: {notes or 'none'}",
                 rule_matched="MEMORY_VERIFIED",
-                dimensions={"verified_at": record.last_verified_at.isoformat() if record.last_verified_at else None}
+                dimensions={
+                    "verified_at": record.last_verified_at.isoformat() if record.last_verified_at else None,
+                    "notes": notes,
+                },
             ),
-            actor_id=actor.id if actor else None,
-            memory_id=record.id
+            actor_id=actor.id,
+            memory_id=record.id,
+            tenant_id=actor.tenant_id,
         )
+        db.commit()
+        db.refresh(record)
         return record
 
     @staticmethod
@@ -401,15 +543,42 @@ class MemoryService:
         old_memory_id: str,
         new_memory_id: str,
         actor_name: Optional[str] = None,
-        reason: Optional[str] = None
+        reason: Optional[str] = None,
+        purpose: Optional[str] = None,
     ) -> Dict[str, Any]:
-        old_record = MemoryService.get_memory_by_id(db, old_memory_id)
-        new_record = MemoryService.get_memory_by_id(db, new_memory_id)
-        actor = IdentityService.get_agent_by_name(db, actor_name) if actor_name else None
+        actor, old_record = MemoryService._get_actor_scoped_memory(
+            db, old_memory_id, actor_name
+        )
+        new_record = db.query(MemoryRecord).filter(
+            MemoryRecord.id == new_memory_id,
+            MemoryRecord.tenant_id == actor.tenant_id,
+        ).first()
+        if new_record is None:
+            raise MemoryNotFoundError(f"Memory record with ID '{new_memory_id}' not found.")
+        if old_record.id == new_record.id:
+            raise ValueError("A memory cannot supersede itself.")
 
-        if actor:
-            decision = PolicyEngine.evaluate_access(db, actor, old_record.namespace, action="supersede", memory_id=old_record.id)
-            if not decision:
+        # The resolution algorithm can mutate either record depending on their
+        # evidence scores. Authorize mutation of both records before invoking it.
+        for candidate in (old_record, new_record):
+            decision = PolicyEngine.evaluate_access(
+                db,
+                actor,
+                candidate.namespace,
+                action="supersede",
+                purpose=purpose,
+                memory_id=candidate.id,
+                log_audit=False,
+            )
+            if not decision.allowed:
+                PolicyEngine.log_audit_decision(
+                    db,
+                    decision,
+                    actor_id=actor.id,
+                    memory_id=candidate.id,
+                    tenant_id=actor.tenant_id,
+                )
+                db.commit()
                 raise PermissionDeniedError(decision.reason)
 
         resolution = SupersessionEngine.resolve_contradiction_and_supersede(
@@ -418,7 +587,7 @@ class MemoryService:
             new_record=new_record,
             existing_owner_name=old_record.owner.name if old_record.owner else None,
             new_owner_name=new_record.owner.name if new_record.owner else None,
-            reason=reason
+            reason=reason,
         )
 
         PolicyEngine.log_audit_decision(
@@ -431,12 +600,14 @@ class MemoryService:
                     "winner_id": resolution.winner_id,
                     "superseded_id": resolution.superseded_id,
                     "evidence_winner": resolution.evidence_winner,
-                    "evidence_loser": resolution.evidence_loser
-                }
+                    "evidence_loser": resolution.evidence_loser,
+                },
             ),
-            actor_id=actor.id if actor else None,
-            memory_id=old_record.id
+            actor_id=actor.id,
+            memory_id=old_record.id,
+            tenant_id=actor.tenant_id,
         )
+        db.commit()
 
         return {
             "status": "superseded",
@@ -444,7 +615,7 @@ class MemoryService:
             "superseded_id": resolution.superseded_id,
             "evidence_winner": resolution.evidence_winner,
             "evidence_loser": resolution.evidence_loser,
-            "reason": resolution.reason
+            "reason": resolution.reason,
         }
 
     @staticmethod
@@ -452,20 +623,45 @@ class MemoryService:
         db: Session,
         memory_id: str,
         actor_name: Optional[str] = None,
-        hard_delete: bool = False
+        hard_delete: bool = False,
+        tenant_id: str = "default",
     ) -> Dict[str, Any]:
-        record = db.query(MemoryRecord).filter(MemoryRecord.id == memory_id).first()
+        if not actor_name:
+            raise PermissionDeniedError("An authenticated actor is required to delete a memory.")
+        actor = IdentityService.get_agent_by_name(db, actor_name, tenant_id=tenant_id)
+        if not actor:
+            raise PermissionDeniedError("The authenticated agent is not registered in the requested tenant.")
+
+        # Scope the lookup before revealing whether a cross-tenant ID exists.
+        tenant_id = getattr(actor, "tenant_id", "default")
+        record = db.query(MemoryRecord).filter(
+            MemoryRecord.id == memory_id,
+            MemoryRecord.tenant_id == tenant_id,
+        ).first()
         if not record:
             raise MemoryNotFoundError(f"Memory with ID '{memory_id}' not found.")
 
-        actor = IdentityService.get_agent_by_name(db, actor_name) if actor_name else None
-        if actor:
-            decision = PolicyEngine.evaluate_access(db, actor, record.namespace, action="delete", memory_id=record.id)
-            if not decision.allowed:
-                raise PermissionDeniedError(decision.reason)
+        decision = PolicyEngine.evaluate_access(
+            db,
+            actor,
+            record.namespace,
+            action="delete",
+            memory_id=record.id,
+        )
+        if not decision.allowed:
+            raise PermissionDeniedError(decision.reason)
 
         tenant_id = getattr(record, "tenant_id", "default")
         if hard_delete:
+            from storage.relational.turso_sync import (
+                delete_memory_from_turso,
+                turso_replica_enabled,
+            )
+
+            # Persist the deletion outbox before calling the remote replica. If
+            # the request fails or the process exits after the local commit, the
+            # self-healing worker can safely retry the tenant-scoped operation.
+            turso_replica_required = turso_replica_enabled()
             tombstone = DeletionTombstone(
                 tenant_id=tenant_id,
                 memory_id=memory_id,
@@ -473,6 +669,7 @@ class MemoryService:
                 vector_deleted=False,
                 cache_deleted=False,
                 graph_deleted=False,
+                turso_deleted=not turso_replica_required,
                 status="DELETE_REQUESTED"
             )
             db.add(tombstone)
@@ -515,6 +712,17 @@ class MemoryService:
             )
             db.commit()
 
+            if turso_replica_required:
+                try:
+                    tombstone.turso_deleted = bool(
+                        delete_memory_from_turso(memory_id, tenant_id=tenant_id)
+                    )
+                except Exception:
+                    logger.exception("Turso replica deletion failed; tombstone will remain retryable")
+                    tombstone.turso_deleted = False
+                tombstone.status = "CONVERGED" if tombstone.is_converged() else "PENDING_RETRY"
+                db.commit()
+
             return {
                 "status": "hard_deleted",
                 "memory_id": memory_id,
@@ -538,47 +746,134 @@ class MemoryService:
     def promote_to_semantic(
         db: Session,
         memory_id: str,
-        promoted_by: str = "friday",
+        actor_name: Optional[str] = None,
         verification_evidence: Optional[List[str]] = None,
         target_confidence: float = 0.95,
-        purpose: Optional[str] = None
+        purpose: Optional[str] = None,
     ) -> MemoryRecord:
+        """Promote an authorized episodic/working record with explicit evidence.
+
+        The authenticated principal, not a request-body ``promoted_by`` claim,
+        is both the policy subject and the audit actor. Lookups are tenant-bound
+        because current API credentials do not contain a tenant claim.
         """
-        Explicit promotion workflow from episodic or working memory into semantic memory (Requirement 6).
-        Requires verification evidence and high confidence, rejecting unverified or poison vectors.
-        """
-        record = db.query(MemoryRecord).filter(MemoryRecord.id == memory_id).first()
-        if not record:
-            raise MemoryNotFoundError(f"Memory record with ID '{memory_id}' not found.")
+        actor, record = MemoryService._get_actor_scoped_memory(
+            db, memory_id, actor_name
+        )
+        decision = PolicyEngine.evaluate_access(
+            db,
+            actor,
+            record.namespace,
+            action="promote",
+            purpose=purpose,
+            memory_id=record.id,
+            log_audit=False,
+        )
+        if not decision.allowed:
+            PolicyEngine.log_audit_decision(
+                db,
+                decision,
+                actor_id=actor.id,
+                memory_id=record.id,
+                tenant_id=actor.tenant_id,
+            )
+            db.commit()
+            raise PermissionDeniedError(decision.reason)
 
-        if not verification_evidence or len(verification_evidence) == 0:
-            raise ValueError("Explicit promotion to SEMANTIC tier requires at least one verification evidence reference.")
+        if record.memory_type not in {MemoryType.EPISODIC, MemoryType.WORKING, MemoryType.EXPERIENCE}:
+            raise ValueError(
+                f"Only episodic, working, or experience memories can be promoted; "
+                f"this record is '{record.memory_type.value}'."
+            )
+        if record.lifecycle_state not in {
+            LifecycleState.CANDIDATE,
+            LifecycleState.ACTIVE,
+            LifecycleState.VERIFIED,
+        }:
+            raise ValueError(
+                f"Only candidate or active memories can be promoted; "
+                f"this record is '{record.lifecycle_state.value}'."
+            )
 
-        if target_confidence < 0.85:
-            raise ValueError(f"Target confidence {target_confidence} below required promotion threshold (>= 0.85).")
+        evidence = verification_evidence
+        if not isinstance(evidence, (list, tuple)) or not evidence:
+            raise ValueError(
+                "Explicit promotion to SEMANTIC tier requires at least one verification evidence reference."
+            )
+        normalized_evidence = []
+        for ref in evidence:
+            if not isinstance(ref, str) or not ref.strip() or len(ref.strip()) > 512:
+                raise ValueError("Each evidence reference must be 1 to 512 non-whitespace characters.")
+            value = ref.strip()
+            if value not in normalized_evidence:
+                normalized_evidence.append(value)
+        if len(normalized_evidence) > 32:
+            raise ValueError("At most 32 verification evidence references may be attached.")
 
-        # Poison and Prompt Injection Defense
+        import math
+        if not math.isfinite(target_confidence) or not 0.85 <= target_confidence <= 1.0:
+            raise ValueError("Target confidence must be finite and between 0.85 and 1.0.")
+
+        # Scan again at the trust-boundary transition: legacy/imported rows may
+        # have entered before the current write-path scanners were installed.
         from core.memory.pipeline.poison_detector import PoisonDetector
+        from core.memory.pipeline.secret_scanner import SecretScanner
         PoisonDetector.validate_content_safety(record.content_text)
+        SecretScanner.validate_content_safety(record.content_text)
 
         old_tier = record.memory_type.value
+        MemoryLifecycleEngine.transition(record, LifecycleState.VERIFIED)
         record.memory_type = MemoryType.SEMANTIC
-        record.lifecycle_state = LifecycleState.VERIFIED
         record.confidence = target_confidence
         record.last_verified_at = datetime.now(timezone.utc)
 
-        # Provenance enrichment with promotion tracking
-        prov = dict(record.provenance or {})
-        prov["promoted_from"] = old_tier
-        prov["promoted_by"] = promoted_by
-        prov["promoted_at"] = datetime.now(timezone.utc).isoformat()
-        prov["trust_level"] = "verified"
-        existing_evidence = prov.get("evidence_refs") or []
-        prov["evidence_refs"] = list(set(existing_evidence + verification_evidence))
-        prov["confidence"] = target_confidence
-        record.provenance = prov
+        provenance = record.provenance if isinstance(record.provenance, dict) else {}
+        provenance = dict(provenance)
+        provenance["promoted_from"] = old_tier
+        provenance["promoted_by"] = actor.name
+        provenance["promoted_at"] = datetime.now(timezone.utc).isoformat()
+        provenance["trust_level"] = "verified"
+        existing_evidence = provenance.get("evidence_refs")
+        if not isinstance(existing_evidence, (list, tuple)):
+            existing_evidence = []
+        merged_evidence = []
+        for ref in [*existing_evidence, *normalized_evidence]:
+            if isinstance(ref, str) and ref.strip() and ref.strip() not in merged_evidence:
+                merged_evidence.append(ref.strip())
+        provenance["evidence_refs"] = merged_evidence
+        provenance["confidence"] = target_confidence
+        record.provenance = provenance
 
-        # Sync updated vector classification
+        PolicyEngine.log_audit_decision(
+            db,
+            PolicyDecision(
+                allowed=True,
+                reason=f"Memory promoted from {old_tier} to SEMANTIC tier by authenticated agent {actor.name}.",
+                rule_matched="MEMORY_PROMOTED_TO_SEMANTIC",
+                dimensions={
+                    "promoted_by": actor.name,
+                    "old_tier": old_tier,
+                    "target_confidence": target_confidence,
+                    "evidence_refs": normalized_evidence,
+                },
+            ),
+            actor_id=actor.id,
+            memory_id=record.id,
+            tenant_id=actor.tenant_id,
+        )
+        from core.events.emitter import event_emitter
+        event_emitter.publish("memory.promoted", {
+            "memory_id": record.id,
+            "promoted_by": actor.name,
+            "new_type": "semantic",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }, db=db)
+        db.commit()
+        db.refresh(record)
+
+        # Keep the existing best-effort vector synchronization contract. The
+        # relational row and audit trail are authoritative if the optional vector
+        # store is offline; storage health remains visible via its normal status.
         try:
             from storage.vector.embedding import EmbeddingGenerator
             dense_embedding = EmbeddingGenerator.generate_embedding(record.content_text)
@@ -589,45 +884,15 @@ class MemoryService:
                 payload={
                     "namespace_path": record.namespace.path if record.namespace else "",
                     "memory_type": MemoryType.SEMANTIC.value,
-                    "owner": record.owner.name if record.owner else promoted_by,
+                    "owner": record.owner.name if record.owner else actor.name,
                     "trust_level": "verified",
                     "user_id": getattr(record, "user_id", "default_user"),
-                    "agent_id": getattr(record, "agent_id", "friday"),
-                    "task_id": getattr(record, "task_id", None)
-                }
+                    "agent_id": getattr(record, "agent_id", actor.name),
+                    "task_id": getattr(record, "task_id", None),
+                },
             )
         except Exception:
             pass
-
-        # Atomic audit and event dispatch
-        PolicyEngine.log_audit_decision(
-            db,
-            PolicyDecision(
-                allowed=True,
-                reason=f"Memory promoted from {old_tier} to SEMANTIC tier by {promoted_by}. Evidence: {verification_evidence}",
-                rule_matched="MEMORY_PROMOTED_TO_SEMANTIC",
-                dimensions={
-                    "promoted_by": promoted_by,
-                    "old_tier": old_tier,
-                    "target_confidence": target_confidence,
-                    "evidence_refs": verification_evidence
-                }
-            ),
-            actor_id=record.owner_id,
-            memory_id=record.id,
-            tenant_id=record.tenant_id
-        )
-
-        from core.events.emitter import event_emitter
-        event_emitter.publish("memory.promoted", {
-            "memory_id": record.id,
-            "promoted_by": promoted_by,
-            "new_type": "semantic",
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }, db=db)
-
-        db.commit()
-        db.refresh(record)
         return record
 
     @staticmethod
@@ -638,13 +903,29 @@ class MemoryService:
         archive_threshold: float = 0.15,
         actor_name: Optional[str] = None
     ) -> Dict[str, Any]:
-        actor = IdentityService.get_agent_by_name(db, actor_name) if actor_name else None
+        if (actor_name or "").lower() != "memora":
+            raise PermissionDeniedError("Only the memora service identity may run memory decay.")
+        if not 0.0 <= decay_rate_per_day <= 1.0:
+            raise ValueError("decay_rate_per_day must be between 0 and 1.")
+        if not 0 <= unverified_threshold_days <= 36500:
+            raise ValueError("unverified_threshold_days must be between 0 and 36500.")
+        if not 0.0 <= archive_threshold <= 1.0:
+            raise ValueError("archive_threshold must be between 0 and 1.")
+
+        actor = IdentityService.get_agent_by_name(db, "memora", tenant_id="default")
+        if not actor:
+            actor = IdentityService.register_agent(
+                db, "memora", role="supervisor", tenant_id="default"
+            )
+        tenant_id = actor.tenant_id
         results = MemoryDecayEngine.apply_time_decay(
             db=db,
             decay_rate_per_day=decay_rate_per_day,
             unverified_threshold_days=unverified_threshold_days,
-            archive_importance_threshold=archive_threshold
+            archive_importance_threshold=archive_threshold,
+            tenant_id=tenant_id,
         )
+        results["tenant_id"] = tenant_id
 
         PolicyEngine.log_audit_decision(
             db,
@@ -652,8 +933,10 @@ class MemoryService:
                 allowed=True,
                 reason=f"Decay cycle completed: {results['decayed_count']} decayed, {results['archived_count']} archived.",
                 rule_matched="MEMORY_DECAY_CYCLE",
-                dimensions=results
+                dimensions=results,
             ),
-            actor_id=actor.id if actor else None
+            actor_id=actor.id,
+            tenant_id=tenant_id,
         )
+        db.commit()
         return results

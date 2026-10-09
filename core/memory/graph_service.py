@@ -3,6 +3,7 @@ Graph and Relationship Service for Memora
 Manages semantic knowledge graph edges, dependencies, entity resolution, and neighborhood traversals.
 """
 from typing import List, Optional, Dict, Any
+import math
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 import logging
@@ -35,48 +36,62 @@ class GraphService:
         source_memory_id: str,
         target_memory_id: str,
         relationship_type: str = "relates_to",
-        weight: float = 1.0
+        weight: float = 1.0,
+        commit: bool = True,
     ) -> MemoryRelationship:
         # A self-edge carries no information and previously returned None, which
         # the API layer then dereferenced into an AttributeError.
         if source_memory_id == target_memory_id:
             raise InvalidRelationshipError("A memory cannot be linked to itself.")
+        if not isinstance(relationship_type, str) or not relationship_type.strip() or len(relationship_type) > 64:
+            raise InvalidRelationshipError("Relationship type must contain 1 to 64 characters.")
+        if not math.isfinite(weight) or not 0.0 <= weight <= 1.0:
+            raise InvalidRelationshipError("Relationship weight must be finite and between 0 and 1.")
+        relationship_type = relationship_type.strip().lower()
 
-        # Reject dangling edges. Both endpoints must exist, otherwise the graph
-        # accumulates references to records that were never written or were since
-        # purged, and traversal silently reports phantom neighbours.
+        # Reject dangling and cross-tenant edges. A graph edge itself discloses
+        # the existence of both records, so the service enforces the same tenant
+        # invariant even when invoked outside the HTTP authorization wrapper.
         endpoint_ids = {source_memory_id, target_memory_id}
-        found = {
-            row[0]
-            for row in db.query(MemoryRecord.id).filter(MemoryRecord.id.in_(endpoint_ids)).all()
-        }
+        found_rows = db.query(MemoryRecord.id, MemoryRecord.tenant_id).filter(
+            MemoryRecord.id.in_(endpoint_ids)
+        ).all()
+        found = {row[0] for row in found_rows}
         missing = endpoint_ids - found
         if missing:
             raise InvalidRelationshipError(
                 f"Cannot link to unknown memory id(s): {', '.join(sorted(missing))}."
             )
+        if len({row[1] for row in found_rows}) != 1:
+            raise InvalidRelationshipError("Memory relationships cannot cross tenant boundaries.")
 
         existing = db.query(MemoryRelationship).filter(
             MemoryRelationship.source_memory_id == source_memory_id,
             MemoryRelationship.target_memory_id == target_memory_id,
-            MemoryRelationship.relationship_type == relationship_type
+            MemoryRelationship.relationship_type == relationship_type,
         ).first()
 
         if existing:
             existing.weight = max(existing.weight, weight)
-            db.commit()
-            db.refresh(existing)
+            if commit:
+                db.commit()
+                db.refresh(existing)
+            else:
+                db.flush()
             return existing
 
         rel = MemoryRelationship(
             source_memory_id=source_memory_id,
             target_memory_id=target_memory_id,
             relationship_type=relationship_type,
-            weight=weight
+            weight=weight,
         )
         db.add(rel)
-        db.commit()
-        db.refresh(rel)
+        if commit:
+            db.commit()
+            db.refresh(rel)
+        else:
+            db.flush()
         return rel
 
     @classmethod
@@ -135,7 +150,8 @@ class GraphService:
                     source_memory_id=memory_record.id,
                     target_memory_id=other.id,
                     relationship_type=rel_type,
-                    weight=weight
+                    weight=weight,
+                    commit=False,
                 )
                 if rel:
                     created_edges.append(rel)

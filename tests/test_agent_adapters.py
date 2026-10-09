@@ -12,6 +12,7 @@ from adapters.base_adapter import (
 )
 from adapters.adapter_registry import adapter_registry
 from core.identity.service import IdentityService
+from storage.relational.models import NamespaceType
 from storage.relational.session import get_db
 
 @pytest.fixture
@@ -29,6 +30,18 @@ def mock_api_client(test_db):
 
     Routing the app at test_db makes the tests hermetic and order-independent.
     """
+    # The adapters authenticate as distinct mesh principals. Provision those
+    # principals explicitly; collaboration grants must never mint recipients.
+    for name in (
+        "friday", "forge", "futuris", "intelx", "mt5", "nexus", "sentinel", "ai_universe"
+    ):
+        IdentityService.register_agent(test_db, name)
+    IdentityService.resolve_namespace(
+        test_db,
+        "memora://universe/global",
+        default_type=NamespaceType.UNIVERSE_GLOBAL,
+    )
+
     def override_get_db():
         yield test_db
 

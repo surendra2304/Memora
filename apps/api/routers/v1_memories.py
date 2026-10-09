@@ -30,7 +30,13 @@ from core.policy.engine import PolicyEngine, PolicyDecision
 from core.events.emitter import event_emitter
 from core.memory.experience_service import ExperienceLearnerService, LearnExperienceRequest
 from core.memory.pipeline.preference_extractor import PreferenceExtractor
-from apps.api.dependencies import authenticate_agent, get_actor_header, get_purpose_header
+from apps.api.dependencies import (
+    authenticate_agent,
+    get_actor_header,
+    get_purpose_header,
+    require_admin,
+    resolve_agent_selector,
+)
 from datetime import datetime
 import logging
 
@@ -87,14 +93,17 @@ def _require_memory_read_access(db: Session, memory_id: str, actor_name: str, pu
     neither the existence nor the content of an inaccessible memory is revealed
     beyond the distinction the caller already has rights to make.
     """
-    actor = IdentityService.get_agent_by_name(db, actor_name)
+    actor = IdentityService.get_agent_by_name(db, actor_name, tenant_id="default")
     if not actor:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Authenticated agent '{actor_name}' is not registered in Memora.",
+            detail=f"Authenticated agent '{actor_name}' is not registered in the default tenant.",
         )
 
-    record = db.query(MemoryRecord).filter(MemoryRecord.id == memory_id).first()
+    record = db.query(MemoryRecord).filter(
+        MemoryRecord.id == memory_id,
+        MemoryRecord.tenant_id == actor.tenant_id,
+    ).first()
     if not record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -115,19 +124,19 @@ def _require_memory_read_access(db: Session, memory_id: str, actor_name: str, pu
     return actor
 
 class MemoryWriteRequest(BaseModel):
-    user_id: Optional[str] = Field(default="default_user", description="Identity scope: User ID")
-    agent_id: Optional[str] = Field(default=None, description="Identity scope: Calling agent ID")
-    workspace_id: Optional[str] = Field(default="default_workspace", description="Identity scope: Workspace boundary")
-    device_id: Optional[str] = Field(default="default_device", description="Identity scope: Device ID")
-    task_id: Optional[str] = Field(default=None, description="Identity scope: Task context ID")
-    idempotency_key: Optional[str] = Field(default=None, description="Idempotency key for deduplicated write")
-    content_text: str = Field(..., min_length=1, description="Raw content of the memory event")
-    target_namespace_path: Optional[str] = Field(default=None, description="Destination namespace URI")
+    user_id: Optional[str] = Field(default="default_user", max_length=128, description="Identity scope: User ID")
+    agent_id: Optional[str] = Field(default=None, max_length=128, description="Identity scope: Calling agent ID")
+    workspace_id: Optional[str] = Field(default="default_workspace", max_length=128, description="Identity scope: Workspace boundary")
+    device_id: Optional[str] = Field(default="default_device", max_length=128, description="Identity scope: Device ID")
+    task_id: Optional[str] = Field(default=None, max_length=128, description="Identity scope: Task context ID")
+    idempotency_key: Optional[str] = Field(default=None, max_length=128, description="Idempotency key for deduplicated write")
+    content_text: str = Field(..., min_length=1, max_length=100_000, description="Raw content of the memory event")
+    target_namespace_path: Optional[str] = Field(default=None, max_length=1024, description="Destination namespace URI")
     memory_type: Optional[MemoryType] = Field(default=MemoryType.EPISODIC, description="Classification type")
-    source: str = Field(default="api", description="Ingestion source")
-    source_type: Optional[str] = Field(default=None, description="Provenance source type")
-    trust_level: Optional[str] = Field(default=None, description="Provenance trust level")
-    evidence_refs: Optional[List[str]] = Field(default=None, description="Evidence reference URLs or IDs")
+    source: str = Field(default="api", max_length=128, description="Ingestion source")
+    source_type: Optional[str] = Field(default=None, max_length=64, description="Provenance source type")
+    trust_level: Optional[str] = Field(default=None, max_length=32, description="Provenance trust level (unverified caller claims are downgraded)")
+    evidence_refs: Optional[List[str]] = Field(default=None, max_length=32, description="Evidence reference URLs or IDs")
     provenance: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Provenance metadata")
     confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     importance: Optional[float] = Field(default=None, ge=0.0, le=1.0)
@@ -160,22 +169,25 @@ class MemoryWriteResponse(BaseModel):
     step_trace: Dict[str, Any]
 
 class MemoryVerifyRequest(BaseModel):
-    notes: Optional[str] = None
+    notes: Optional[str] = Field(default=None, max_length=1024)
 
 class MemoryShareRequest(BaseModel):
-    target_agent_name: str = Field(..., min_length=2, description="Handle of agent receiving access")
-    actions: List[str] = Field(default_factory=lambda: ["read"], description="Permitted action list")
-    purpose: Optional[str] = Field(default=None, description="Operational reason for sharing")
+    target_agent_name: str = Field(..., min_length=2, max_length=128, description="Handle of agent receiving access")
+    actions: List[str] = Field(
+        default_factory=lambda: ["read"], min_length=1, max_length=3,
+        description="Permitted actions (read, query, write); wildcard/admin actions are not grantable",
+    )
+    purpose: Optional[str] = Field(default=None, max_length=512, description="Operational reason for sharing")
     ttl_hours: Optional[int] = Field(default=None, ge=1, le=8760, description="Grant TTL expiration in hours")
 
 class MemorySupersedeRequest(BaseModel):
-    new_memory_id: str = Field(..., description="ID of the new canonical memory record that supersedes this record")
-    reason: Optional[str] = None
+    new_memory_id: str = Field(..., max_length=64, description="ID of the new canonical memory record that supersedes this record")
+    reason: Optional[str] = Field(default=None, max_length=1024)
 
 class MemoryDecayRequest(BaseModel):
-    decay_rate_per_day: float = 0.02
-    unverified_threshold_days: int = 14
-    archive_threshold: float = 0.15
+    decay_rate_per_day: float = Field(default=0.02, ge=0.0, le=1.0)
+    unverified_threshold_days: int = Field(default=14, ge=0, le=36500)
+    archive_threshold: float = Field(default=0.15, ge=0.0, le=1.0)
 
 class MemoryRelationshipCreate(BaseModel):
     target_memory_id: str = Field(..., description="Destination memory ID")
@@ -206,13 +218,14 @@ def write_memory_event(
     purpose: Optional[str] = Depends(get_purpose_header),
     db: Session = Depends(get_db)
 ):
-    calling_agent = req.agent_id or actor_name
+    calling_agent = resolve_agent_selector(db, actor_name, req.agent_id)
 
     def _run_write(session: Session):
         return MemoryWriteService.execute_pipeline(
             db=session,
             content_text=req.content_text,
             caller_name=calling_agent,
+            tenant_id="default",
             user_id=req.user_id,
             agent_id=calling_agent,
             workspace_id=req.workspace_id,
@@ -329,13 +342,14 @@ def learn_experience_endpoint(
     actor_name: str = Depends(get_actor_header),
     db: Session = Depends(get_db)
 ):
-    calling_agent = req.agent_id or actor_name
+    calling_agent = resolve_agent_selector(db, actor_name, req.agent_id)
     try:
         record = ExperienceLearnerService.learn_experience(
             db=db,
             actor_name=calling_agent,
             outcomes=req.outcomes,
-            namespace_path=req.namespace_path
+            namespace_path=req.namespace_path,
+            tenant_id="default",
         )
         return {
             "id": record.id,
@@ -353,8 +367,8 @@ def learn_experience_endpoint(
 
 @router.get("/search", response_model=List[HybridSearchResultResponse])
 def search_memories_get(
-    q: str = Query(..., min_length=1, description="Query string for hybrid search"),
-    namespace_path: Optional[str] = Query(None, description="Optional namespace filter"),
+    q: str = Query(..., min_length=1, max_length=4096, description="Query string for hybrid search"),
+    namespace_path: Optional[str] = Query(None, max_length=1024, description="Optional namespace filter"),
     limit: int = Query(10, ge=1, le=100),
     min_score: float = Query(0.0, ge=0.0, le=1.0),
     include_superseded: bool = Query(False),
@@ -366,6 +380,7 @@ def search_memories_get(
         db=db,
         query_text=q,
         actor_name=actor_name,
+        tenant_id="default",
         namespace_path=namespace_path,
         min_score=min_score,
         limit=limit,
@@ -381,6 +396,7 @@ def query_memories(
     purpose: Optional[str] = Depends(get_purpose_header),
     db: Session = Depends(get_db)
 ):
+    query_req.tenant_id = "default"  # API credentials currently carry no tenant claim.
     try:
         return MemoryService.query_memories(
             db,
@@ -438,6 +454,7 @@ def verify_memory_endpoint(
     memory_id: str,
     req: Optional[MemoryVerifyRequest] = None,
     actor_name: str = Depends(get_actor_header),
+    purpose: Optional[str] = Depends(get_purpose_header),
     db: Session = Depends(get_db)
 ):
     try:
@@ -445,7 +462,8 @@ def verify_memory_endpoint(
             db=db,
             memory_id=memory_id,
             actor_name=actor_name,
-            notes=req.notes if req else None
+            notes=req.notes if req else None,
+            purpose=purpose,
         )
         event_emitter.publish("memory.updated", {"memory_id": memory_id, "action": "verify", "actor": actor_name}, db=db)
         db.commit()
@@ -467,7 +485,7 @@ def promote_memory_endpoint(
         record = MemoryService.promote_to_semantic(
             db=db,
             memory_id=memory_id,
-            promoted_by=req.promoted_by or actor_name,
+            actor_name=actor_name,
             verification_evidence=req.verification_evidence,
             target_confidence=req.target_confidence,
             purpose=req.purpose or purpose
@@ -476,7 +494,7 @@ def promote_memory_endpoint(
     except MemoryNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except (ValueError, PoisonMemoryViolation) as e:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e))
     except PermissionDeniedError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
 
@@ -485,58 +503,143 @@ def share_memory_endpoint(
     memory_id: str,
     req: MemoryShareRequest,
     actor_name: str = Depends(get_actor_header),
-    db: Session = Depends(get_db)
+    purpose: Optional[str] = Depends(get_purpose_header),
+    db: Session = Depends(get_db),
 ):
-    try:
-        record = db.query(MemoryRecord).filter(MemoryRecord.id == memory_id).first()
-        if not record:
-            raise MemoryNotFoundError(f"Memory with ID '{memory_id}' not found.")
-
-        caller = IdentityService.get_agent_by_name(db, actor_name)
-        if not caller:
-            caller = IdentityService.register_agent(db, actor_name)
-
-        namespace = record.namespace or db.query(Namespace).filter(Namespace.id == record.namespace_id).first()
-
-        grant = IdentityService.grant_access(
-            db=db,
-            agent_name=req.target_agent_name,
-            namespace_id=record.namespace_id,
-            actions=req.actions,
-            purpose=req.purpose,
-            ttl_hours=req.ttl_hours
+    """Grant bounded namespace access only when the authenticated owner permits it."""
+    caller = IdentityService.get_agent_by_name(db, actor_name, tenant_id="default")
+    if caller is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The authenticated agent is not registered in the default tenant.",
         )
 
+    record = db.query(MemoryRecord).filter(
+        MemoryRecord.id == memory_id,
+        MemoryRecord.tenant_id == caller.tenant_id,
+    ).first()
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Memory not found.")
+
+    requested_actions = list(dict.fromkeys(action.strip().lower() for action in req.actions))
+    allowed_share_actions = {"read", "query", "write"}
+    if not requested_actions or any(action not in allowed_share_actions for action in requested_actions):
+        raise HTTPException(
+            status_code=422,
+            detail="Share actions may contain only read, query, and write; wildcard or lifecycle actions are forbidden.",
+        )
+
+    decision = PolicyEngine.evaluate_access(
+        db,
+        caller,
+        record.namespace,
+        action="share",
+        purpose=req.purpose or purpose,
+        memory_id=record.id,
+        log_audit=False,
+    )
+    if not decision.allowed:
+        PolicyEngine.log_audit_decision(
+            db,
+            decision,
+            actor_id=caller.id,
+            memory_id=record.id,
+            tenant_id=caller.tenant_id,
+        )
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=decision.reason)
+
+    target_name = req.target_agent_name.strip().lower()
+    if target_name == "memora" and not IdentityService.get_agent_by_name(
+        db, target_name, tenant_id=caller.tenant_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The reserved memora service identity must be provisioned by the deployment administrator.",
+        )
+    target = IdentityService.get_agent_by_name(db, target_name, tenant_id=caller.tenant_id)
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Target agent is not registered in this tenant.",
+        )
+    if target.id == caller.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A namespace grant to the calling agent is unnecessary.",
+        )
+
+    namespace = record.namespace or db.query(Namespace).filter(
+        Namespace.id == record.namespace_id,
+        Namespace.tenant_id == caller.tenant_id,
+    ).first()
+    if namespace is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Memory namespace not found.")
+
+    try:
+        grant = IdentityService.grant_access(
+            db=db,
+            agent_id=target.id,
+            agent_name=None,
+            namespace_id=namespace.id,
+            actions=requested_actions,
+            purpose=req.purpose or purpose,
+            ttl_hours=req.ttl_hours,
+            tenant_id=caller.tenant_id,
+            commit=False,
+        )
+        PolicyEngine.log_audit_decision(
+            db,
+            PolicyDecision(
+                allowed=True,
+                reason=f"{caller.name} shared namespace '{namespace.path}' with {target.name}.",
+                rule_matched="NAMESPACE_SHARED_BY_OWNER",
+                dimensions={
+                    "namespace_id": namespace.id,
+                    "namespace_path": namespace.path,
+                    "target_agent_id": target.id,
+                    "actions": requested_actions,
+                    "expires_at": grant.expires_at.isoformat() if grant.expires_at else None,
+                },
+            ),
+            actor_id=caller.id,
+            memory_id=record.id,
+            tenant_id=caller.tenant_id,
+        )
         event_emitter.publish("memory.shared", {
             "memory_id": memory_id,
-            "shared_by": actor_name,
-            "shared_with": req.target_agent_name,
-            "namespace_path": namespace.path if namespace else None,
-            "actions": req.actions
+            "shared_by": caller.name,
+            "shared_with": target.name,
+            "namespace_path": namespace.path,
+            "actions": requested_actions,
         }, db=db)
         db.commit()
+        db.refresh(grant)
+    except (ValueError, PermissionDeniedError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        db.rollback()
+        raise _unexpected_write_error(exc, "memory sharing") from exc
 
-        return {
-            "status": "shared",
-            "memory_id": memory_id,
-            "grant_id": grant.id,
-            "shared_with": req.target_agent_name,
-            "actions": req.actions,
-            "purpose": req.purpose,
-            "expires_at": grant.expires_at.isoformat() if grant.expires_at else None
-        }
-    except MemoryNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except PermissionDeniedError as e:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
-    except Exception as e:
-        raise _unexpected_write_error(e, "this request")
+    return {
+        "status": "shared",
+        "memory_id": memory_id,
+        "scope": "namespace",
+        "namespace_path": namespace.path,
+        "grant_id": grant.id,
+        "shared_with": target.name,
+        "actions": requested_actions,
+        "purpose": req.purpose or purpose,
+        "expires_at": grant.expires_at.isoformat() if grant.expires_at else None,
+    }
 
 @router.post("/{memory_id}/supersede")
 def supersede_memory_endpoint(
     memory_id: str,
     req: MemorySupersedeRequest,
     actor_name: str = Depends(get_actor_header),
+    purpose: Optional[str] = Depends(get_purpose_header),
     db: Session = Depends(get_db)
 ):
     try:
@@ -545,7 +648,8 @@ def supersede_memory_endpoint(
             old_memory_id=memory_id,
             new_memory_id=req.new_memory_id,
             actor_name=actor_name,
-            reason=req.reason
+            reason=req.reason,
+            purpose=purpose,
         )
         event_emitter.publish("memory.superseded", {
             "superseded_id": res["superseded_id"],
@@ -557,6 +661,8 @@ def supersede_memory_endpoint(
         return res
     except MemoryNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except PermissionDeniedError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
 
@@ -586,7 +692,7 @@ def create_memory_relationship(
             weight=req.weight
         )
     except InvalidRelationshipError as e:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         raise _unexpected_write_error(e, "this request")
 
@@ -644,6 +750,7 @@ def trigger_memory_decay(
     actor_name: str = Depends(get_actor_header),
     db: Session = Depends(get_db)
 ):
+    require_admin(actor_name)
     rate = req.decay_rate_per_day if req else 0.02
     threshold_days = req.unverified_threshold_days if req else 14
     archive_thresh = req.archive_threshold if req else 0.15
@@ -658,12 +765,12 @@ def trigger_memory_decay(
 
 
 class RecordInteractionRequest(BaseModel):
-    agent_name: Optional[str] = Field(default=None, description="Subsystem agent name")
-    user_text: str = Field(..., description="User input utterance or prompt")
-    agent_text: Optional[str] = Field(default="", description="Agent output response or action")
-    event_type: str = Field(default="dialogue", description="Event classification")
-    tags: Optional[List[str]] = Field(default_factory=list)
-    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    agent_name: Optional[str] = Field(default=None, max_length=128, description="Subsystem agent name")
+    user_text: str = Field(..., min_length=1, max_length=32_768, description="User input utterance or prompt")
+    agent_text: Optional[str] = Field(default="", max_length=32_768, description="Agent output response or action")
+    event_type: str = Field(default="dialogue", min_length=1, max_length=64, description="Event classification")
+    tags: Optional[List[str]] = Field(default_factory=list, max_length=32)
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, max_length=32)
 
 
 @router.post("/record-interaction", status_code=status.HTTP_201_CREATED)
@@ -673,7 +780,7 @@ def record_interaction_endpoint(
     purpose: Optional[str] = Depends(get_purpose_header),
     db: Session = Depends(get_db)
 ):
-    calling_agent = (req.agent_name or actor_name).lower()
+    calling_agent = resolve_agent_selector(db, actor_name, req.agent_name)
     created_records: List[str] = []
     extracted_facts: List[Dict[str, Any]] = []
     #: Per-item outcomes. This endpoint previously wrapped every write in a bare
@@ -713,8 +820,10 @@ def record_interaction_endpoint(
                 db=db,
                 content_text=fact.normalized_fact,
                 caller_name=calling_agent,
-                memory_type=MemoryType.SEMANTIC,
+                tenant_id="default",
+                memory_type=MemoryType.EPISODIC,
                 source=f"agent:{calling_agent}",
+                trust_level="candidate",
                 provenance={
                     "category": fact.category,
                     "entities": fact.entities,
@@ -741,6 +850,7 @@ def record_interaction_endpoint(
             db=db,
             content_text=episodic_content,
             caller_name=calling_agent,
+            tenant_id="default",
             memory_type=MemoryType.EPISODIC,
             source=f"agent:{calling_agent}",
             provenance={
@@ -775,7 +885,7 @@ def record_interaction_endpoint(
     # A security scanner that fired is a refusal, not a quiet no-op.
     if security_rejections and not created_records:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=422,
             detail={"error": "SecurityPolicyViolation", "security_rejections": security_rejections},
         )
     if security_rejections:
@@ -794,14 +904,14 @@ def record_interaction_endpoint(
 
 
 class LearnOutcomeRequest(BaseModel):
-    agent_name: Optional[str] = Field(default=None, description="Calling agent name")
-    task_name: str = Field(..., min_length=1, description="Executed task identifier")
-    status: str = Field(..., description="'failure' or 'success'")
-    error_log: Optional[str] = None
-    actions_taken: Optional[str] = None
-    context: Optional[str] = None
-    domain: Optional[str] = None
-    namespace_path: Optional[str] = None
+    agent_name: Optional[str] = Field(default=None, max_length=128, description="Calling agent name")
+    task_name: str = Field(..., min_length=1, max_length=256, description="Executed task identifier")
+    status: str = Field(..., min_length=1, max_length=64, description="'failure' or 'success'")
+    error_log: Optional[str] = Field(default=None, max_length=8192)
+    actions_taken: Optional[str] = Field(default=None, max_length=8192)
+    context: Optional[str] = Field(default=None, max_length=8192)
+    domain: Optional[str] = Field(default=None, max_length=128)
+    namespace_path: Optional[str] = Field(default=None, max_length=1024)
 
 
 @router.post("/learn-outcome", status_code=status.HTTP_201_CREATED)
@@ -810,7 +920,7 @@ def learn_outcome_endpoint(
     actor_name: str = Depends(get_actor_header),
     db: Session = Depends(get_db)
 ):
-    calling_agent = (req.agent_name or actor_name).lower()
+    calling_agent = resolve_agent_selector(db, actor_name, req.agent_name)
     try:
         record = ExperienceLearnerService.learn_single_outcome(
             db=db,
@@ -821,7 +931,8 @@ def learn_outcome_endpoint(
             actions_taken=req.actions_taken,
             context=req.context,
             domain=req.domain,
-            namespace_path=req.namespace_path
+            namespace_path=req.namespace_path,
+            tenant_id="default",
         )
         storage = storage_receipt()
         return {

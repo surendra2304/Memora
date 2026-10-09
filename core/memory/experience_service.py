@@ -17,17 +17,17 @@ from core.memory.pipeline.write_service import MemoryWriteService
 logger = logging.getLogger(__name__)
 
 class TaskOutcome(BaseModel):
-    task_name: str = Field(..., description="Name or domain of the task executed")
-    status: str = Field(..., description="Outcome status: 'failure' or 'success'")
-    error_log: Optional[str] = Field(default=None, description="Error messages or crash logs")
-    actions_taken: Optional[str] = Field(default=None, description="Sequence of actions or tool calls made")
-    context: Optional[str] = Field(default=None, description="Operational environment or context details")
-    domain: Optional[str] = Field(default=None, description="Functional domain e.g. 'tool_execution', 'code_synthesis', 'trading'")
+    task_name: str = Field(..., min_length=1, max_length=256, description="Name or domain of the task executed")
+    status: str = Field(..., min_length=1, max_length=64, description="Outcome status: 'failure' or 'success'")
+    error_log: Optional[str] = Field(default=None, max_length=8192, description="Error messages or crash logs")
+    actions_taken: Optional[str] = Field(default=None, max_length=8192, description="Sequence of actions or tool calls made")
+    context: Optional[str] = Field(default=None, max_length=8192, description="Operational environment or context details")
+    domain: Optional[str] = Field(default=None, max_length=128, description="Functional domain e.g. 'tool_execution', 'code_synthesis', 'trading'")
 
 class LearnExperienceRequest(BaseModel):
-    agent_id: Optional[str] = Field(default=None, description="Agent ID or name")
-    namespace_path: Optional[str] = Field(default=None, description="Namespace to store experience memories")
-    outcomes: List[TaskOutcome] = Field(..., min_length=1, description="List of task outcomes to extract lessons from")
+    agent_id: Optional[str] = Field(default=None, max_length=128, description="Agent ID or name")
+    namespace_path: Optional[str] = Field(default=None, max_length=1024, description="Namespace to store experience memories")
+    outcomes: List[TaskOutcome] = Field(..., min_length=1, max_length=20, description="List of task outcomes to extract lessons from")
 
 class ExperienceLearnerService:
     @classmethod
@@ -90,16 +90,27 @@ class ExperienceLearnerService:
         db: Session,
         actor_name: str,
         outcomes: List[TaskOutcome],
-        namespace_path: Optional[str] = None
+        namespace_path: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> MemoryRecord:
         """
         Extracts operational experience and writes it through the 10-step Write Pipeline
         as a high-importance MemoryType.EXPERIENCE record.
         """
-        actor = IdentityService.get_agent_by_name(db, actor_name)
+        if not outcomes or len(outcomes) > 20:
+            raise ValueError("Experience learning requires between 1 and 20 task outcomes.")
+        if namespace_path is not None and len(namespace_path) > 1024:
+            raise ValueError("Experience namespace path exceeds 1024 characters.")
+
+        actor = IdentityService.get_agent_by_name(
+            db, actor_name, tenant_id=tenant_id
+        )
         if not actor:
+            if tenant_id is not None:
+                raise ValueError("The authenticated agent is not registered in the requested tenant.")
             actor = IdentityService.register_agent(db, actor_name)
 
+        resolved_tenant = tenant_id or actor.tenant_id
         target_ns = namespace_path or f"memora://{actor.name}/private"
         synthesized_text = cls.synthesize_experience(outcomes)
         domains = list(set([o.domain or o.task_name for o in outcomes]))
@@ -107,6 +118,7 @@ class ExperienceLearnerService:
         result = MemoryWriteService.execute_pipeline(
             db=db,
             actor_name=actor.name,
+            tenant_id=resolved_tenant,
             content_text=synthesized_text,
             target_namespace_path=target_ns,
             memory_type=MemoryType.EXPERIENCE,
@@ -134,7 +146,8 @@ class ExperienceLearnerService:
         actions_taken: Optional[str] = None,
         context: Optional[str] = None,
         domain: Optional[str] = None,
-        namespace_path: Optional[str] = None
+        namespace_path: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> MemoryRecord:
         """
         Fast single-outcome learning for immediate real-time adaptation after any action.
@@ -151,7 +164,8 @@ class ExperienceLearnerService:
             db=db,
             actor_name=actor_name,
             outcomes=[outcome],
-            namespace_path=namespace_path
+            namespace_path=namespace_path,
+            tenant_id=tenant_id,
         )
 
     @classmethod
@@ -160,16 +174,20 @@ class ExperienceLearnerService:
         db: Session,
         actor_name: str,
         domain: Optional[str] = None,
-        limit: int = 5
+        limit: int = 5,
+        tenant_id: Optional[str] = "default",
     ) -> List[MemoryRecord]:
         """
         Retrieves top learned guidelines and experience records for a specific agent.
         """
-        actor = IdentityService.get_agent_by_name(db, actor_name)
+        actor = IdentityService.get_agent_by_name(
+            db, actor_name, tenant_id=tenant_id
+        )
         if not actor:
             return []
 
         query = db.query(MemoryRecord).filter(
+            MemoryRecord.tenant_id == actor.tenant_id,
             MemoryRecord.owner_id == actor.id,
             MemoryRecord.memory_type == MemoryType.EXPERIENCE,
             MemoryRecord.lifecycle_state == LifecycleState.ACTIVE

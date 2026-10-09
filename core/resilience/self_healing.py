@@ -23,6 +23,7 @@ can assert on a uniform contract.
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
@@ -89,11 +90,23 @@ class SelfHealingSupervisor:
     #: store cannot turn a health check into an unbounded write storm.
     MAX_REPAIRS_PER_CHECK = 500
 
+    def __init__(self) -> None:
+        # Qdrant reconciliation is paged. Keep a process-local cursor per tenant
+        # so repeated repair runs eventually inspect the full collection without
+        # loading an unbounded number of points into memory.
+        self._vector_offsets: Dict[str, Any] = {}
+        self._vector_offsets_lock = threading.Lock()
+
     # ------------------------------------------------------------------ run
-    def run(self, db: Session, dry_run: bool = True) -> HealingReport:
-        """Run every check. Never raises: a broken check is reported, not fatal."""
+    def run(
+        self,
+        db: Session,
+        dry_run: bool = True,
+        tenant_id: str = "default",
+    ) -> HealingReport:
+        """Run checks for one tenant. Never raises: a broken check is reported."""
         report = HealingReport(dry_run=dry_run)
-        checks: List[Callable[[Session, bool], CheckResult]] = [
+        checks: List[Callable[[Session, bool, str], CheckResult]] = [
             self.check_unconverged_tombstones,
             self.check_orphaned_vectors,
             self.check_dangling_supersession,
@@ -102,7 +115,7 @@ class SelfHealingSupervisor:
         ]
         for check in checks:
             try:
-                report.checks.append(check(db, dry_run))
+                report.checks.append(check(db, dry_run, tenant_id))
             except Exception as exc:  # a failing check must not abort the run
                 name = getattr(check, "__name__", "unknown")
                 logger.exception("self-healing check %s failed", name)
@@ -113,15 +126,21 @@ class SelfHealingSupervisor:
         return report
 
     # ------------------------------------------------------------- checks
-    def check_unconverged_tombstones(self, db: Session, dry_run: bool) -> CheckResult:
+    def check_unconverged_tombstones(
+        self, db: Session, dry_run: bool, tenant_id: str = "default"
+    ) -> CheckResult:
         """Retry deletions that never converged across all stores."""
         from storage.relational.models import DeletionTombstone
         from storage.vector.qdrant_adapter import vector_adapter
+        from storage.relational.turso_sync import delete_memory_from_turso
 
         name = "unconverged_tombstones"
         pending = (
             db.query(DeletionTombstone)
-            .filter(DeletionTombstone.status != "CONVERGED")
+            .filter(
+                DeletionTombstone.tenant_id == tenant_id,
+                DeletionTombstone.status != "CONVERGED",
+            )
             .limit(self.MAX_REPAIRS_PER_CHECK)
             .all()
         )
@@ -138,6 +157,7 @@ class SelfHealingSupervisor:
                     ("vector", tombstone.vector_deleted),
                     ("cache", tombstone.cache_deleted),
                     ("graph", tombstone.graph_deleted),
+                    ("turso", tombstone.turso_deleted),
                 )
                 if not done
             ]
@@ -155,6 +175,16 @@ class SelfHealingSupervisor:
                     )
                 except Exception as exc:
                     logger.warning("tombstone %s vector retry failed: %s", tombstone.memory_id, exc)
+
+            if not tombstone.turso_deleted:
+                try:
+                    tombstone.turso_deleted = bool(
+                        delete_memory_from_turso(
+                            tombstone.memory_id, tenant_id=tombstone.tenant_id
+                        )
+                    )
+                except Exception as exc:
+                    logger.warning("Turso deletion retry failed (%s)", type(exc).__name__)
 
             tombstone.retry_count += 1
             if tombstone.is_converged():
@@ -174,7 +204,9 @@ class SelfHealingSupervisor:
             details=details,
         )
 
-    def check_orphaned_vectors(self, db: Session, dry_run: bool) -> CheckResult:
+    def check_orphaned_vectors(
+        self, db: Session, dry_run: bool, tenant_id: str = "default"
+    ) -> CheckResult:
         """Find vector embeddings whose memory row is gone or soft-deleted.
 
         A soft delete transitions the record to LifecycleState.DELETED but never
@@ -185,46 +217,78 @@ class SelfHealingSupervisor:
         from storage.vector.qdrant_adapter import vector_adapter
 
         name = "orphaned_vectors"
-        store = getattr(vector_adapter, "_mock_store", None)
-        if store is None:
-            return CheckResult(name=name, healthy=True, details=["no vector store to inspect"])
+        with self._vector_offsets_lock:
+            offset = self._vector_offsets.get(tenant_id)
+        try:
+            vector_ids, next_offset = vector_adapter.list_memory_ids(
+                tenant_id=tenant_id,
+                limit=self.MAX_REPAIRS_PER_CHECK,
+                offset=offset,
+            )
+        except Exception as exc:
+            logger.warning("orphaned vector scan failed for tenant %s (%s)", tenant_id, type(exc).__name__)
+            return CheckResult(
+                name=name,
+                healthy=False,
+                error=f"Vector scan unavailable: {type(exc).__name__}",
+            )
 
-        vector_ids = set(store.keys())
         if not vector_ids:
-            return CheckResult(name=name, healthy=True)
+            if not dry_run:
+                with self._vector_offsets_lock:
+                    if next_offset is None:
+                        self._vector_offsets.pop(tenant_id, None)
+                    else:
+                        self._vector_offsets[tenant_id] = next_offset
+            return CheckResult(
+                name=name,
+                healthy=True,
+                details=["no vectors on the current tenant-scoped page"],
+            )
 
         live_ids = {
             row[0]
             for row in db.query(MemoryRecord.id)
             .filter(
-                MemoryRecord.id.in_(list(vector_ids)),
+                MemoryRecord.id.in_(vector_ids),
+                MemoryRecord.tenant_id == tenant_id,
                 MemoryRecord.lifecycle_state != LifecycleState.DELETED,
             )
             .all()
         }
-        orphans = sorted(vector_ids - live_ids)
-        if not orphans:
-            return CheckResult(name=name, healthy=True)
+        orphans = sorted(set(vector_ids) - live_ids)
 
         repaired = 0
-        if not dry_run:
+        if not dry_run and orphans:
             for memory_id in orphans[: self.MAX_REPAIRS_PER_CHECK]:
                 try:
-                    if vector_adapter.delete_embedding(memory_id):
+                    if vector_adapter.delete_embedding(memory_id, tenant_id=tenant_id):
                         repaired += 1
                 except Exception as exc:
                     logger.warning("orphan eviction failed for %s: %s", memory_id, exc)
             db.commit()
 
+        # Advance only after a dry-run-free page was completely reconciled. A
+        # failed deletion leaves the cursor in place so the next run retries it.
+        page_reconciled = not orphans or repaired == len(orphans)
+        if not dry_run and page_reconciled:
+            with self._vector_offsets_lock:
+                if next_offset is None:
+                    self._vector_offsets.pop(tenant_id, None)
+                else:
+                    self._vector_offsets[tenant_id] = next_offset
+
         return CheckResult(
             name=name,
-            healthy=False,
+            healthy=not orphans,
             findings=len(orphans),
             repaired=repaired,
             details=[f"vector present for deleted/absent memory {m}" for m in orphans],
         )
 
-    def check_dangling_supersession(self, db: Session, dry_run: bool) -> CheckResult:
+    def check_dangling_supersession(
+        self, db: Session, dry_run: bool, tenant_id: str = "default"
+    ) -> CheckResult:
         """Clear superseded_by_id pointers at rows that no longer exist."""
         from storage.relational.models import MemoryRecord
 
@@ -232,8 +296,11 @@ class SelfHealingSupervisor:
         dangling = (
             db.query(MemoryRecord)
             .filter(
+                MemoryRecord.tenant_id == tenant_id,
                 MemoryRecord.superseded_by_id.isnot(None),
-                ~MemoryRecord.superseded_by_id.in_(db.query(MemoryRecord.id)),
+                ~MemoryRecord.superseded_by_id.in_(
+                    db.query(MemoryRecord.id).filter(MemoryRecord.tenant_id == tenant_id)
+                ),
             )
             .limit(self.MAX_REPAIRS_PER_CHECK)
             .all()
@@ -259,7 +326,9 @@ class SelfHealingSupervisor:
             details=details,
         )
 
-    def check_open_circuits(self, db: Session, dry_run: bool) -> CheckResult:
+    def check_open_circuits(
+        self, db: Session, dry_run: bool, tenant_id: str = "default"
+    ) -> CheckResult:
         """Report dependencies whose breaker is open.
 
         Deliberately does NOT force-reset: the breaker's own half-open probe is
@@ -288,7 +357,9 @@ class SelfHealingSupervisor:
             details=details or ["all registered dependencies closed"],
         )
 
-    def check_decay_backlog(self, db: Session, dry_run: bool) -> CheckResult:
+    def check_decay_backlog(
+        self, db: Session, dry_run: bool, tenant_id: str = "default"
+    ) -> CheckResult:
         """Report memories past the decay threshold that no job has processed."""
         from datetime import datetime, timedelta, timezone
 
@@ -303,6 +374,7 @@ class SelfHealingSupervisor:
         backlog = (
             db.query(MemoryRecord)
             .filter(
+                MemoryRecord.tenant_id == tenant_id,
                 MemoryRecord.lifecycle_state.in_(
                     [LifecycleState.ACTIVE, LifecycleState.VERIFIED]
                 ),

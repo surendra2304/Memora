@@ -51,7 +51,7 @@ def test_a_same_named_agent_in_another_tenant_gets_nothing(two_tenants):
     db, _acme, globex = two_tenants
 
     bundle = ContextBuilderService.build_context_bundle(
-        db, agent_id_or_name=globex.id, task_query=SECRET_TEXT
+        db, agent_id_or_name=globex.id, task_query=SECRET_TEXT, tenant_id="globex"
     )
     tenants = {m["tenant_id"] for m in bundle.memories}
     assert "acme" not in tenants, f"cross-tenant leak: {tenants}"
@@ -73,7 +73,7 @@ def test_the_owner_tenant_can_still_read_its_own_memory(two_tenants):
     db, acme, _globex = two_tenants
 
     bundle = ContextBuilderService.build_context_bundle(
-        db, agent_id_or_name=acme.id, task_query=SECRET_TEXT
+        db, agent_id_or_name=acme.id, task_query=SECRET_TEXT, tenant_id="acme"
     )
     tenants = {m["tenant_id"] for m in bundle.memories}
     assert tenants == {"acme"}, f"owner lost access to its own memory: {tenants}"
@@ -97,7 +97,7 @@ def test_neither_search_nor_prefetch_loads_foreign_tenant_rows(two_tenants):
     Query.all = spy_all
     try:
         ContextBuilderService.build_context_bundle(
-            db, agent_id_or_name=globex.id, task_query=SECRET_TEXT
+            db, agent_id_or_name=globex.id, task_query=SECRET_TEXT, tenant_id="globex"
         )
     finally:
         Query.all = real_all

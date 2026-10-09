@@ -35,7 +35,9 @@ def team(test_db):
         test_db, "forge", role="worker xenon compressor specialist"
     )
     sentinel = IdentityService.register_agent(test_db, "sentinel", role="security")
-
+    # The canonical team-shared namespace may be initialized by its first
+    # authenticated writer; the pipeline must not let that flow create arbitrary
+    # universe/public or team-root namespaces.
     MemoryWriteService.execute_pipeline(
         test_db,
         caller_name="friday",
@@ -118,13 +120,15 @@ def test_an_assistance_request_never_discloses_another_agents_private_content(te
         assert entry["namespace_path"] != "memora://sentinel/private"
 
 
-def test_an_unknown_requester_is_registered_rather_than_rejected(team):
+def test_an_unknown_requester_is_rejected_without_identity_provisioning(team):
     db, *_ = team
-    result = CollaborationService.request_assistance(
-        db, requester_name="newcomer", query="xenon compressor"
-    )
-    assert result.requester == "newcomer"
-    assert IdentityService.get_agent_by_name(db, "newcomer") is not None
+    with pytest.raises(CollaborationError, match="unknown requester"):
+        CollaborationService.request_assistance(
+            db, requester_name="newcomer", query="xenon compressor"
+        )
+    assert IdentityService.get_agent_by_name(
+        db, "newcomer", tenant_id="default"
+    ) is None
 
 
 def test_assistance_response_serialises(team):

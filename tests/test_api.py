@@ -3,6 +3,8 @@ Integration Tests for FastAPI Endpoints
 """
 from fastapi.testclient import TestClient
 
+from core.identity.service import IdentityService
+
 def test_health_check(client: TestClient):
     response = client.get("/health")
     assert response.status_code == 200
@@ -86,14 +88,22 @@ def test_an_unregistered_caller_cannot_create_a_subagent(client: TestClient):
     names = [a["name"] for a in client.get("/agents").json()]
     assert "ghost" not in names, "an identity was created as a side effect"
 
-def test_memory_ingest_query_and_lifecycle(client: TestClient):
+def test_memory_ingest_query_and_lifecycle(client: TestClient, test_db):
+    # Only provisioned supervisors may verify a memory's lifecycle state.
+    IdentityService.register_agent(test_db, "intelx", role="supervisor")
+
     # Ingest memory
     ingest_payload = {
         "owner_name": "intelx",
         "namespace_path": "memora://intelx/private",
-        "memory_type": "semantic",
+        "memory_type": "episodic",
         "content_text": "Deep research findings regarding transformer attention latency.",
         "source": "intelx_crawler",
+        "provenance": {
+            "source_type": "verified_fact",
+            "trust_level": "verified",
+            "evidence_refs": ["synthetic-fixture:transformer-research"],
+        },
         "confidence": 0.95,
         "importance": 0.90,
         "lifecycle_state": "active"
@@ -102,7 +112,7 @@ def test_memory_ingest_query_and_lifecycle(client: TestClient):
     assert create_resp.status_code == 201
     mem_data = create_resp.json()
     mem_id = mem_data["id"]
-    assert mem_data["memory_type"] == "semantic"
+    assert mem_data["memory_type"] == "episodic"
     assert mem_data["lifecycle_state"] == "active"
 
     # Query memories
@@ -199,25 +209,37 @@ def test_legacy_memory_list_authenticates_and_enforces_private_namespace_policy(
     assert intelx_resp.status_code == 200
     assert memory_id in {record["id"] for record in intelx_resp.json()}
 
-def test_namespaces_api_and_grants(client: TestClient):
+def test_namespaces_api_and_grants(client: TestClient, test_db, monkeypatch):
     """
     Test /namespaces POST, GET, /namespaces/grants, and /namespaces/grants DELETE.
     """
-    # Create namespace
-    create_resp = client.post("/namespaces", json={"path": "memora://shared/team-ops", "type": "team-shared"})
+    # Provision the recipient first; grant creation must not mint identities.
+    IdentityService.register_agent(test_db, "forge")
+    monkeypatch.setenv("MEMORA_API_KEY", "namespace-admin-test-key")
+    admin_headers = {
+        "X-Agent-Name": "memora",
+        "X-API-Key": "namespace-admin-test-key",
+    }
+
+    # Open shared roots require the deployment administrator to provision them.
+    create_resp = client.post(
+        "/namespaces",
+        headers=admin_headers,
+        json={"path": "memora://shared/team-ops", "type": "team-shared"},
+    )
     assert create_resp.status_code == 201
     ns_data = create_resp.json()
     assert ns_data["path"] == "memora://shared/team-ops"
     assert ns_data["type"] == "team-shared"
 
     # List namespaces
-    list_resp = client.get("/namespaces")
+    list_resp = client.get("/namespaces", headers=admin_headers)
     assert list_resp.status_code == 200
     paths = [n["path"] for n in list_resp.json()]
     assert "memora://shared/team-ops" in paths
 
     # Grant access
-    grant_resp = client.post("/namespaces/grants", json={
+    grant_resp = client.post("/namespaces/grants", headers=admin_headers, json={
         "agent_name": "forge",
         "namespace_path": "memora://shared/team-ops",
         "actions": ["read", "write"]
@@ -228,7 +250,10 @@ def test_namespaces_api_and_grants(client: TestClient):
     assert "write" in grant_data["actions"]
 
     # Revoke access
-    revoke_resp = client.delete(f"/namespaces/grants?agent_id={grant_data['agent_id']}&namespace_id={grant_data['namespace_id']}")
+    revoke_resp = client.delete(
+        f"/namespaces/grants?agent_id={grant_data['agent_id']}&namespace_id={grant_data['namespace_id']}",
+        headers=admin_headers,
+    )
     assert revoke_resp.status_code == 200
     assert revoke_resp.json()["status"] == "revoked"
 

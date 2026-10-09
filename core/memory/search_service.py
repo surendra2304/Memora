@@ -4,6 +4,7 @@ Combines Dense Semantic Vector Search, Keyword Full-Text Search, Graph Traversal
 """
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
+import time
 from sqlalchemy.orm import Session
 
 from storage.relational.models import MemoryRecord, Namespace, LifecycleState, MemoryType
@@ -13,6 +14,7 @@ from core.identity.service import IdentityService
 from core.policy.engine import PolicyEngine
 from core.memory.graph_service import GraphService
 from core.memory.retrieval_config import get_retrieval_config
+from core.metrics.collector import metrics_collector
 
 class SearchResultItem:
     def __init__(
@@ -65,7 +67,7 @@ class SearchService:
         db: Session,
         query_text: str,
         actor_name: Optional[str] = None,
-        tenant_id: Optional[str] = None,
+        tenant_id: Optional[str] = "default",
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         workspace_id: Optional[str] = None,
@@ -88,6 +90,7 @@ class SearchService:
         purpose: Optional[str] = None,
         rrf_k: Optional[int] = None
     ) -> List[SearchResultItem]:
+        started_at = time.perf_counter()
         retrieval_cfg = get_retrieval_config()
         vector_weight = retrieval_cfg["vector_weight"] if vector_weight is None else vector_weight
         keyword_weight = retrieval_cfg["keyword_weight"] if keyword_weight is None else keyword_weight
@@ -106,6 +109,11 @@ class SearchService:
             if actor_name
             else None
         )
+        if actor_name and actor is None:
+            # A named caller without a tenant-bound identity must not fall through
+            # to an unfiltered corpus query. API credentials are not tenant claims,
+            # so resolve failure is a closed denial, not an administrative search.
+            return []
         resolved_tenant: str = str(tenant_id or (getattr(actor, "tenant_id", "default") if actor else "default"))
 
         # -------------------------------------------------------------
@@ -172,9 +180,18 @@ class SearchService:
         # -------------------------------------------------------------
         all_candidate_ids = set(vector_ranks.keys()) | set(keyword_ranks.keys()) | set(graph_boosts.keys())
         if not all_candidate_ids:
+            metrics_collector.record_retrieval(
+                relevance_scores=[],
+                ages_days=[],
+                latency_ms=(time.perf_counter() - started_at) * 1000,
+            )
             return []
 
-        cand_q = db.query(MemoryRecord).filter(
+        # Reapply every caller scope to the union of lexical, vector, and graph
+        # candidates. The lexical leg is pre-filtered above, but vector/graph
+        # candidates can otherwise reintroduce records outside a requested
+        # namespace or memory-type constraint.
+        cand_q = db.query(MemoryRecord).join(Namespace).filter(
             MemoryRecord.id.in_(all_candidate_ids),
             MemoryRecord.tenant_id == resolved_tenant,
             MemoryRecord.lifecycle_state.in_(allowed_states)
@@ -187,6 +204,10 @@ class SearchService:
             cand_q = cand_q.filter(MemoryRecord.workspace_id == workspace_id)
         if task_id:
             cand_q = cand_q.filter(MemoryRecord.task_id == task_id)
+        if namespace_path:
+            cand_q = cand_q.filter(Namespace.path == namespace_path)
+        if memory_types:
+            cand_q = cand_q.filter(MemoryRecord.memory_type.in_(memory_types))
 
         records = cand_q.all()
         record_map = {r.id: r for r in records}
@@ -227,7 +248,8 @@ class SearchService:
                     action="read",
                     purpose=purpose,
                     memory_id=record.id,
-                    log_audit=False
+                    log_audit=False,
+                    allow_expired=include_expired,
                 )
                 if not decision.allowed:
                     continue
@@ -284,4 +306,15 @@ class SearchService:
                 x.record.id
             )
         )
-        return scored_results[:limit]
+        results = scored_results[:limit]
+        result_ages_days = []
+        for result in results:
+            created_at = _to_utc(result.record.created_at)
+            if created_at is not None:
+                result_ages_days.append(max(0.0, (now_utc - created_at).total_seconds() / 86400.0))
+        metrics_collector.record_retrieval(
+            relevance_scores=[result.final_score for result in results],
+            ages_days=result_ages_days,
+            latency_ms=(time.perf_counter() - started_at) * 1000,
+        )
+        return results
