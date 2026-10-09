@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from apps.api.dependencies import authenticate_agent
+from apps.api.dependencies import AGENT_API_KEY_ENV_VARS, authenticate_agent
 from storage.relational.models import EventConsumerCursor, EventLog
 from storage.relational.session import get_db
 from storage.relational.turso_events import EventIdTenantConflictError, acknowledge as acknowledge_turso_event, append as append_turso_event, configured as turso_events_configured, production_mode as turso_required, read as read_turso_events, read_cursor as read_turso_cursor
@@ -22,7 +22,7 @@ from storage.relational.turso_events import EventIdTenantConflictError, acknowle
 router = APIRouter(prefix="/v1/events", tags=["Agent Event Feed"])
 mesh_router = APIRouter(tags=["Agent Event Ingest"])
 
-_AGENTS = {"friday", "memora", "inference", "stratex", "intelx", "futuris", "cortex", "forge", "sentinel"}
+_AGENTS = frozenset(AGENT_API_KEY_ENV_VARS)
 
 
 class IncomingEnvelope(BaseModel):

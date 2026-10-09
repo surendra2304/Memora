@@ -7,6 +7,20 @@ from typing import Optional
 from fastapi import Header, HTTPException, status
 from core.config import settings
 
+AGENT_API_KEY_ENV_VARS = {
+    "friday": "FRIDAY_API_KEY",
+    "inference": "INFERENCE_API_KEY",
+    "stratex": "STRATEX_API_KEY",
+    "intelx": "INTELX_API_KEY",
+    "futuris": "FUTURIS_API_KEY",
+    "cortex": "CORTEX_API_KEY",
+    "forge": "FORGE_API_KEY",
+    "sentinel": "SENTINEL_API_KEY",
+    "ai_universe": "AI_UNIVERSE_API_KEY",
+    "memora": "MEMORA_API_KEY",
+}
+
+
 def get_actor_header(
     x_agent_name: Optional[str] = Header(default=None, alias="X-Agent-Name"),
     x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
@@ -125,22 +139,10 @@ def authenticate_agent(
 ) -> str:
     """Authenticate an ecosystem agent using its named service credential."""
     agent = (x_agent_name or "").strip().lower()
-    key_names = {
-        "friday": "FRIDAY_API_KEY",
-        "inference": "INFERENCE_API_KEY",
-        "stratex": "STRATEX_API_KEY",
-        "intelx": "INTELX_API_KEY",
-        "futuris": "FUTURIS_API_KEY",
-        "cortex": "CORTEX_API_KEY",
-        "forge": "FORGE_API_KEY",
-        "sentinel": "SENTINEL_API_KEY",
-        "ai_universe": "AI_UNIVERSE_API_KEY",
-        "memora": "MEMORA_API_KEY",
-    }
     supplied = x_api_key
     if not supplied and authorization and authorization.lower().startswith("bearer "):
         supplied = authorization[7:].strip()
-    expected = os.getenv(key_names.get(agent, ""), "") if agent in key_names else ""
+    expected = os.getenv(AGENT_API_KEY_ENV_VARS.get(agent, ""), "")
     production = str(getattr(settings, "MEMORA_ENV", "")).lower() == "production" or os.getenv("ENVIRONMENT", "").lower() == "production"
 
     # Authentication fails closed. The previous guard waved through any request that
@@ -156,7 +158,7 @@ def authenticate_agent(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Missing agent credentials",
             )
-        if agent not in key_names or not expected:
+        if agent not in AGENT_API_KEY_ENV_VARS or not expected:
             # A known caller whose key is absent is a configuration fault, not a
             # bad credential. Report it as such rather than as an authentication failure.
             raise HTTPException(

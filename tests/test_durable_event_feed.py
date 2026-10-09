@@ -406,6 +406,39 @@ def _signed_envelope(key, *, message_id="intelx-news-1", to_agent="futuris", pay
     return IncomingEnvelope(**fields, signature=signature)
 
 
+@pytest.mark.parametrize(
+    ("sender", "recipient", "credential_env"),
+    [
+        ("ai_universe", "friday", "AI_UNIVERSE_API_KEY"),
+        ("friday", "ai_universe", "FRIDAY_API_KEY"),
+    ],
+)
+def test_mesh_allowlist_matches_authenticated_agent_names(
+    test_db, monkeypatch, sender, recipient, credential_env
+):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
+    monkeypatch.setattr("apps.api.routers.v1_events.turso_events_configured", lambda: False)
+    monkeypatch.setattr("apps.api.routers.v1_events.turso_required", lambda: False)
+    key = "synthetic-mesh-test-key"
+    monkeypatch.setenv(credential_env, key)
+    envelope = _signed_envelope(
+        key,
+        message_id=f"allowlist-{sender}-to-{recipient}",
+        to_agent=recipient,
+        intent="agent.notice",
+        sender=sender,
+        payload={"message": "synthetic allowlist test"},
+    )
+
+    result = ingest_envelope(envelope, f"Bearer {key}", test_db)
+
+    assert result["status"] == "accepted"
+    event = test_db.query(EventLog).filter_by(event_id=envelope.message_id).one()
+    assert event.target_agent == recipient
+    assert event.payload["source_agent"] == sender
+
+
 def test_signed_intelx_event_is_durable_targeted_and_idempotent(test_db, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "development")
     monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
