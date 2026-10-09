@@ -40,7 +40,7 @@ def test_fresh_create_all_database_is_stamped_before_future_upgrades(tmp_path, m
             stamped_revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert stamped_revision == "f35ecb0a7c12"
+        assert stamped_revision == "b7c24f91e8d3"
 
         # The same schema can now pass through the deployment migration command
         # without replaying historical CREATE TABLE/ADD COLUMN operations.
