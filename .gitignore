@@ -48,3 +48,8 @@ data/cache/
 data/*.backup*
 reports_and_data/
 scripts/_journey_api_launch.py
+
+# Local database backup files
+*.local_bak
+*.bak
+
