@@ -130,6 +130,61 @@ class BaseAgentAdapter(ABC):  # noqa: B024 - intentional: a complete base, not a
         detail = data.get("detail", str(data)) if isinstance(data, dict) else str(data)
         raise MemoraAdapterError(f"Memora API Error ({status_code}): {detail}", status_code=status_code, response_data=data)
 
+    async def _send_request_async(
+        self,
+        method: str,
+        endpoint: str,
+        json_body: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        purpose: Optional[str] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """Send an asynchronous HTTP request using the pooled async client with circuit breaker protection."""
+        from core.resilience.http_client import get_async_client
+        from core.resilience.circuit_breaker import circuit_registry
+
+        headers = self._get_headers(purpose=purpose)
+        if extra_headers:
+            headers.update(extra_headers)
+        url = f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+        client = get_async_client(timeout=15.0)
+        breaker = circuit_registry.get(f"adapter_{self.agent_name}", failure_threshold=5, recovery_timeout=20.0)
+
+        async def _exec():
+            return await client.request(
+                method=method,
+                url=url,
+                json=json_body,
+                params=params,
+                headers=headers,
+            )
+
+        resp = await breaker.call_async(_exec)
+        status_code = resp.status_code
+        try:
+            data = resp.json()
+        except Exception:
+            data = {"text": resp.text}
+
+        if 200 <= status_code < 300:
+            return data
+
+        if status_code == 403:
+            detail = data.get("detail", "Access denied by 5D Policy Engine.") if isinstance(data, dict) else str(data)
+            logger.warning(f"Memora Access Denied (403) for agent '{self.agent_name}': {detail}")
+            raise MemoraAccessDeniedError(f"Access Denied for agent '{self.agent_name}': {detail}", status_code=403, response_data=data)
+
+        if status_code == 404:
+            detail = data.get("detail", "Resource not found.") if isinstance(data, dict) else str(data)
+            raise MemoraNotFoundError(f"Resource not found: {detail}", status_code=404, response_data=data)
+
+        if status_code == 422:
+            detail = data.get("detail", "Security or validation error.") if isinstance(data, dict) else str(data)
+            raise MemoraSecurityViolationError(f"Security/Validation Violation: {detail}", status_code=422, response_data=data)
+
+        detail = data.get("detail", str(data)) if isinstance(data, dict) else str(data)
+        raise MemoraAdapterError(f"Memora API Error ({status_code}): {detail}", status_code=status_code, response_data=data)
+
     # -------------------------------------------------------------
     # MEMORA API WRAPPER METHODS
     # -------------------------------------------------------------

@@ -30,6 +30,45 @@ Memora is deployed within the unified private container mesh (`friday_mesh`) on 
 
 All 8 peer agents interact directly with Memora via HTTP within `friday_mesh` at `http://memora:8000` using bearer authentication (`MEMORA_API_KEY`).
 
+```mermaid
+flowchart TD
+    subgraph Agents ["FRIDAY Universe Peer Agents (friday_mesh)"]
+        FRIDAY["FRIDAY Core (Gateway)"]
+        CORTEX["Cortex"]
+        FORGE["Forge"]
+        FUTURIS["Futuris"]
+        INFERENCE["Inference"]
+        INTELX["IntelX"]
+        SENTINEL["Sentinel"]
+        STRATEX["Stratex"]
+    end
+
+    subgraph MemoraService ["Memora Service (:8000 / Host :8006)"]
+        subgraph APILayer ["FastAPI / Uvicorn (PID 1)"]
+            PROBES["Probes (/health, /ready, /metrics)"]
+            ROUTERS["39 Routes across 15 Routers"]
+            ENVELOPE["Uniform Error Envelopes"]
+        end
+
+        subgraph CoreEngine ["Cognitive Core & Resilience"]
+            POLICY["5D Policy Engine"]
+            PIPELINE["10-Step Write Pipeline"]
+            BREAKER["AsyncCircuitBreaker & Connection Pool"]
+            CACHE["TenantScopedCache (LRU / TTL)"]
+        end
+
+        subgraph StorageLayer ["Persistence & Telemetry"]
+            SQLITE[("SQLite 3 WAL Engine\nmemora.db")]
+            QDRANT[("Qdrant Vector DB\n:6333")]
+            REDIS[("Redis 7 Event Bus\n:6379")]
+        end
+    end
+
+    Agents -->|"HTTP Bearer Auth"| APILayer
+    APILayer --> CoreEngine
+    CoreEngine --> StorageLayer
+```
+
 ---
 
 ## ⚡ Core Architecture & Capabilities
@@ -96,19 +135,55 @@ alembic revision --autogenerate -m "describe_schema_change"
 
 ---
 
-## 🌐 Health & Process Liveness Contract
+## 🌐 Health, Readiness & Observability Contracts
 
-Memora provides standardized health check and liveness endpoints for Docker, Kubernetes, and reverse-proxy probes.
+Memora provides standardized health check, readiness, and telemetry endpoints for Docker, Kubernetes, and reverse-proxy probes.
 
-### `GET /` & `GET /health`
-Returns `HTTP 200 OK` with JSON contract:
+### 1. `GET /health` (Liveness Probe)
+Returns `HTTP 200 OK` (or `503 Degraded`) with process liveness and storage status:
 ```json
 {
-  "status": "ok",
+  "status": "healthy",
   "service": "memora",
+  "version": "2.0.0",
   "evidence_class": "process_liveness",
   "observed_at": "2026-10-14T21:45:00.000000+00:00",
-  "storage": "sqlite_wal"
+  "storage": "sqlite_wal",
+  "database": "healthy",
+  "database_backend": "sqlite",
+  "database_durable": true,
+  "vector_store": {"status": "connected", "available": true}
+}
+```
+
+### 2. `GET /ready` (Readiness Probe)
+Verifies database connection pool, SQLite WAL mode, vector store connectivity, and circuit breaker status before receiving traffic:
+```json
+{
+  "status": "ready",
+  "service": "memora",
+  "version": "2.0.0",
+  "database": "healthy",
+  "wal": "wal_active",
+  "vector_store": "connected",
+  "circuits": "healthy",
+  "evidence_class": "readiness_probe",
+  "observed_at": "2026-10-14T21:45:00.000000+00:00"
+}
+```
+
+### 3. `GET /v1/metrics` & `GET /metrics` (Telemetry & SLIs)
+- `GET /v1/metrics`: Returns JSON SLI telemetry including `uptime_seconds`, `memory_rss_mb`, `write_success_rate`, `policy_denial_rate`, and percentile latencies (`p50`, `p95`, `p99`).
+- `GET /metrics`: Standard Prometheus-formatted scrape endpoint (supports JSON via `Accept: application/json` or `?format=json`).
+
+### 4. Uniform Error Envelope
+All error responses (4xx and 5xx) conform to a standardized error envelope:
+```json
+{
+  "detail": "Descriptive error detail",
+  "error": "error_code_identifier",
+  "message": "Human readable explanation",
+  "success": false
 }
 ```
 
@@ -121,13 +196,19 @@ Returns `HTTP 200 OK` with JSON contract:
 | Variable | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `MEMORA_ENV` | string | `production` | Deployment mode (`production`, `development`, `testing`). |
-| `PORT` | integer | `8000` | Internal container HTTP port. |
+| `PORT` | integer | `8000` | Internal container HTTP port (Host: `8006`). |
 | `HOST` | string | `0.0.0.0` | Listening network interface. |
 | `DEBUG` | boolean | `false` | Enable verbose debugging and OpenAPI schema reload. |
 | `DATABASE_URL` | string | `sqlite:///./data/memora.db` | Primary database connection URL. |
 | `SQLITE_FALLBACK_URL` | string | `sqlite:///./data/memora.db` | SQLite fallback database path when primary is unreachable. |
 | `USE_SQLITE_FALLBACK` | boolean | `true` | Allow fallback to local SQLite WAL database. |
+| `MEMORA_SQLITE_AUTHORITATIVE` | boolean | `true` | Marks persistent local SQLite as authoritative in production. |
 | `MEMORA_SQLITE_BUSY_TIMEOUT` | float | `30` | SQLite busy timeout in seconds. |
+| `CIRCUIT_BREAKER_FAILURE_THRESHOLD` | integer | `5` | Consecutive failures before circuit opens. |
+| `CIRCUIT_BREAKER_RECOVERY_TIMEOUT` | float | `30.0` | Cool-off seconds before probe attempt. |
+| `HTTP_CLIENT_TIMEOUT_SECONDS` | float | `10.0` | Default timeout for async pooled HTTP client. |
+| `MEMORY_CACHE_TTL_SECONDS` | float | `300.0` | In-memory tenant cache TTL in seconds. |
+| `MEMORY_CACHE_MAX_CAPACITY` | integer | `2000` | In-memory cache max items per tenant partition. |
 | `REDIS_URL` | string | `redis://redis:6379/0` | Redis connection URL for candidate caching and events. |
 | `QDRANT_URL` | string | `http://qdrant:6333` | Qdrant vector database URL. |
 | `QDRANT_COLLECTION` | string | `memora_embeddings` | Qdrant vector collection name. |

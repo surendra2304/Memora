@@ -59,3 +59,24 @@ class Settings(BaseSettings):
         return key
 
 settings = Settings()
+
+
+def validate_startup_config() -> None:
+    """
+    Validates required configuration on service boot.
+    Fails fast in production with explicit diagnostics pointing to .env.example.
+    """
+    import os
+    env = (os.getenv("ENVIRONMENT") or settings.MEMORA_ENV).lower()
+    if env == "production":
+        missing = []
+        if not (settings.MEMORA_API_KEY or settings.MEMORA_MASTER_KEY or os.getenv("MEMORA_API_KEY") or os.getenv("MEMORA_MASTER_KEY")):
+            missing.append("MEMORA_API_KEY (or MEMORA_MASTER_KEY)")
+        if not (settings.DATABASE_URL or os.getenv("DATABASE_URL")):
+            missing.append("DATABASE_URL")
+
+        if missing:
+            raise RuntimeError(
+                f"Production startup configuration error: Missing required setting(s): {', '.join(missing)}. "
+                "Review your environment configuration or refer to .env.example."
+            )

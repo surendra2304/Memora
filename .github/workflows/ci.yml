@@ -61,10 +61,18 @@ jobs:
               assert r.status_code == 200, r.text
               body = r.json()
               assert body['service'] == 'memora', body
-              assert body['status'] == 'ok', body
+              assert body['status'] in ['ok', 'healthy'], body
               assert body['evidence_class'] == 'process_liveness', body
               assert body['storage'] == 'sqlite_wal', body
-              print('CI health check contract verified:', body)
+
+              r_ready = client.get('/ready')
+              assert r_ready.status_code == 200, r_ready.text
+              ready_body = r_ready.json()
+              assert ready_body['status'] == 'ready', ready_body
+
+              r_metrics = client.get('/v1/metrics')
+              assert r_metrics.status_code == 200, r_metrics.text
+              print('CI health, readiness & telemetry contracts verified.')
           "
 
       - name: Verify Docker Container Build

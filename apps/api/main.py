@@ -5,16 +5,20 @@ FastAPI server providing persistent memory and context infrastructure.
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Depends, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from sqlalchemy.orm import Session
 
 from apps.api.dependencies import authenticate_agent
 from apps.api.middleware import RequestBodyLimitMiddleware
-from core.config import settings
-from storage.relational.session import init_db, storage_ready
+from core.config import settings, validate_startup_config
+from storage.relational.session import init_db, storage_ready, get_db
 from storage.relational.models import Agent, Namespace, MemoryRecord
 from storage.vector.qdrant_adapter import vector_adapter
 from core.events.emitter import event_emitter
+from apps.api.routers.health import readiness_check
 from apps.api.routers import (
     health_router,
     agents_router,
@@ -154,6 +158,8 @@ def sync_from_turso():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Validate required production environment variables
+    validate_startup_config()
     # Initialize database tables, vector connection, and event bus
     init_db()
     sync_result = sync_from_turso() if _startup_turso_sync_enabled() and storage_ready() else {"status": "disabled", "agents_imported": 0, "namespaces_imported": 0, "memories_imported": 0}
@@ -171,6 +177,11 @@ async def lifespan(app: FastAPI):
     finally:
         logger.info("Initiating graceful shutdown sequence for Memora...")
         event_emitter.stop_cloud_sync()
+        try:
+            from core.resilience.http_client import close_async_client
+            await close_async_client()
+        except Exception:
+            pass
         try:
             from storage.relational.session import checkpoint_wal, engine
             checkpoint_wal()
@@ -190,6 +201,45 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan
 )
+
+# Standardized Global Error Envelopes
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    detail = exc.detail
+    if isinstance(detail, dict):
+        error_code = detail.get("error", f"http_{exc.status_code}")
+        message = detail.get("message", str(detail))
+    elif isinstance(detail, list):
+        error_code = f"http_{exc.status_code}"
+        message = str(detail)
+    else:
+        error_code = "not_found" if exc.status_code == 404 else f"http_{exc.status_code}"
+        message = str(detail)
+
+    return JSONResponse(
+        status_code=exc.status_code,
+        headers=getattr(exc, "headers", None),
+        content={
+            "detail": detail,
+            "error": error_code,
+            "message": message,
+            "success": False,
+        },
+    )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = exc.errors()
+    message = "; ".join(f"{'.'.join(str(l) for l in err.get('loc', []))}: {err.get('msg')}" for err in errors)
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": errors,
+            "error": "validation_error",
+            "message": message or "Request validation failed",
+            "success": False,
+        },
+    )
 
 # CORS.
 #
@@ -276,6 +326,13 @@ def dashboard():
     if STATIC_INDEX.exists():
         return HTMLResponse(content=STATIC_INDEX.read_text(encoding="utf-8"))
     return RedirectResponse(url="/docs")
+
+
+@app.api_route("/ready", methods=["GET", "HEAD"], tags=["Health"])
+def root_ready(db: Session = Depends(get_db)):
+    """Dedicated root readiness probe for container orchestration."""
+    return readiness_check(db)
+
 
 if __name__ == "__main__":
     import uvicorn

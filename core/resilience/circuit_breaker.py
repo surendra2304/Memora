@@ -211,6 +211,44 @@ class CircuitBreaker:
             self._record_success(probe_token)
             return result
 
+    async def call_async(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Run async func through the breaker, or raise CircuitOpenError."""
+        with self._lock:
+            state = self._resolve_state_locked()
+            if state is CircuitState.OPEN:
+                self._rejections += 1
+                retry_after = 0.0
+                if self._opened_at is not None:
+                    retry_after = max(
+                        0.0, self.recovery_timeout - (self._clock() - self._opened_at)
+                    )
+                raise CircuitOpenError(self.name, retry_after)
+            probe_token: int | None = None
+            if state is CircuitState.HALF_OPEN:
+                if self._half_open_probe_in_flight:
+                    self._rejections += 1
+                    raise CircuitOpenError(self.name, 0.0, reason="probe_in_flight")
+                self._probe_generation += 1
+                probe_token = self._probe_generation
+                self._half_open_probe_in_flight = True
+
+        try:
+            result = await func(*args, **kwargs)
+        except self.expected_exceptions:
+            self._record_failure(probe_token)
+            raise
+        except Exception:
+            if probe_token is not None:
+                self._release_probe(probe_token)
+            raise
+        except BaseException:
+            if probe_token is not None:
+                self._release_probe(probe_token)
+            raise
+        else:
+            self._record_success(probe_token)
+            return result
+
     def _release_probe(self, probe_token: int) -> None:
         with self._lock:
             if self._probe_generation == probe_token:
@@ -337,3 +375,48 @@ class CircuitRegistry:
 
 #: Process-wide registry imported by the adapters and the health endpoint.
 circuit_registry = CircuitRegistry()
+
+class AsyncCircuitBreaker(CircuitBreaker):
+    """Asynchronous variant of CircuitBreaker supporting await breaker.call(...)."""
+
+    async def call(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        return await self.call_async(func, *args, **kwargs)
+
+
+async def retry_with_backoff_async(
+    func: Callable[..., Any],
+    *args: Any,
+    max_retries: int = 3,
+    initial_delay: float = 0.5,
+    max_delay: float = 5.0,
+    jitter: bool = True,
+    retry_exceptions: tuple = (Exception,),
+    fallback: Optional[Callable[..., Any]] = None,
+    **kwargs: Any,
+) -> Any:
+    """Execute an async callable with exponential backoff and randomized jitter."""
+    import asyncio
+    import random
+
+    attempt = 0
+    delay = initial_delay
+    while True:
+        try:
+            return await func(*args, **kwargs)
+        except retry_exceptions as exc:
+            attempt += 1
+            if attempt > max_retries:
+                if fallback is not None:
+                    logger.warning("Max retries exceeded for %s (%s). Running fallback.", func, exc)
+                    if asyncio.iscoroutinefunction(fallback):
+                        return await fallback(*args, **kwargs)
+                    return fallback(*args, **kwargs)
+                raise
+            sleep_duration = delay
+            if jitter:
+                sleep_duration = random.uniform(0.5 * delay, 1.5 * delay)
+            sleep_duration = min(sleep_duration, max_delay)
+            logger.info("Attempt %d failed (%s). Retrying in %.2fs...", attempt, exc, sleep_duration)
+            await asyncio.sleep(sleep_duration)
+            delay = min(delay * 2.0, max_delay)
+

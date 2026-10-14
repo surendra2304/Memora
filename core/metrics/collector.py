@@ -8,6 +8,9 @@ from typing import Dict, Any, List
 from collections import deque
 from datetime import datetime, timezone
 import threading
+import time
+
+_start_time = time.time()
 
 class MetricsCollector:
     def __init__(self, max_history: int = 1000):
@@ -129,8 +132,23 @@ class MetricsCollector:
         p99 = self._percentile(latencies, 0.99)
         ce_avg = sum(cross_encoder_latencies) / len(cross_encoder_latencies) if cross_encoder_latencies else 0.0
 
+        import time
+        uptime_seconds = round(time.time() - _start_time, 2)
+        memory_rss_mb = 0.0
+        try:
+            import resource
+            memory_rss_mb = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0, 2)
+        except Exception:
+            try:
+                import psutil
+                memory_rss_mb = round(psutil.Process().memory_info().rss / (1024.0 * 1024.0), 2)
+            except Exception:
+                pass
+
         return {
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "uptime_seconds": uptime_seconds,
+            "memory_rss_mb": memory_rss_mb,
             "write_success_rate": round(write_rate, 4),
             "policy_denial_rate": round(denial_rate, 4),
             "contradiction_rate": round(contradiction_rate, 4),

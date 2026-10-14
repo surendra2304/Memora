@@ -165,7 +165,8 @@ def create_db_engine():
 
     # 3. Standard SQLite connection
     _active_storage_backend = "sqlite"
-    _active_storage_durable = False
+    sqlite_authoritative = os.getenv("MEMORA_SQLITE_AUTHORITATIVE", "").lower() in {"1", "true", "yes"}
+    _active_storage_durable = sqlite_authoritative
     return _new_sqlite_engine(db_url)
 
 engine = create_db_engine()

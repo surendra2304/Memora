@@ -38,7 +38,13 @@ class RequestBodyLimitMiddleware:
                         "detail": (
                             "Request body exceeds the "
                             f"{self.max_body_bytes}-byte limit."
-                        )
+                        ),
+                        "error": "content_too_large",
+                        "message": (
+                            "Request body exceeds the "
+                            f"{self.max_body_bytes}-byte limit."
+                        ),
+                        "success": False,
                     },
                 )
                 await response(scope, receive, send)
