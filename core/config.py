@@ -35,13 +35,14 @@ class Settings(BaseSettings):
     DEFAULT_CONFIDENCE_THRESHOLD: float = 0.75
     DEFAULT_IMPORTANCE_THRESHOLD: float = 0.50
 
-    # CORS. Comma-separated list of allowed browser origins, e.g.
-    # MEMORA_CORS_ORIGINS=https://app.example.com,https://admin.example.com
-    # An empty value (the default) allows no cross-origin browser access, which
-    # is correct for an agent-to-agent API. "*" is permitted but is mutually
-    # exclusive with credentialed requests per the CORS spec, so credentials are
-    # disabled automatically when it is used.
-    MEMORA_CORS_ORIGINS: str = ""
+    # CORS: Whitelist of allowed browser origins
+    MEMORA_CORS_ORIGINS: str = (
+        "https://friday-universe.duckdns.org,"
+        "http://localhost:8000,"
+        "http://127.0.0.1:8000,"
+        "http://localhost:8006,"
+        "http://localhost:3000"
+    )
 
     def get_cors_origins(self) -> list[str]:
         return [o.strip() for o in self.MEMORA_CORS_ORIGINS.split(",") if o.strip()]

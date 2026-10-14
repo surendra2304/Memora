@@ -53,7 +53,7 @@ def build_real_memories():
     real_records.append({
         "agent": "friday",
         "type": MemoryType.PROJECT,
-        "content": "FRIDAY Ecosystem Network Hub: Operating at Local Desktop Hub (https://friday-zw59.onrender.com/health). Authenticates inter-agent communication via FRIDAY_API_KEY. Connects 766 active conversations and 2,153 operator messages.",
+        "content": "FRIDAY Ecosystem Network Hub: Operating at Local Desktop Hub (http://friday:10000/health). Authenticates inter-agent communication via FRIDAY_API_KEY. Connects 766 active conversations and 2,153 operator messages.",
         "importance": 0.93,
         "confidence": 1.0,
         "entities": ["FRIDAYHub", "EcosystemController", "RESTGateway", "LiveEndpoint"],
@@ -93,7 +93,7 @@ def build_real_memories():
     real_records.append({
         "agent": "forge",
         "type": MemoryType.DECISION,
-        "content": "Engine Architecture & Workspace Isolation: Operating at https://forge-e9kl.onrender.com with 293 recorded tasks, 3,066 audit events, and 445 state checkpoints. Bounded to project directories in D:/Forge/workspaces.",
+        "content": "Engine Architecture & Workspace Isolation: Operating at http://forge:8000 with 293 recorded tasks, 3,066 audit events, and 445 state checkpoints. Bounded to project directories in D:/Forge/workspaces.",
         "importance": 0.91,
         "confidence": 1.0,
         "entities": ["WorkspaceIsolation", "ForgeEngine", "CheckpointAudit"],
@@ -133,7 +133,7 @@ def build_real_memories():
     real_records.append({
         "agent": "sentinel",
         "type": MemoryType.SEMANTIC,
-        "content": "Cybersecurity Baseline & Cloud Gateway: Deployed locally at https://sentinel-a861.onrender.com with connection to Memora Cloud security policy ledger under memora://sentinel/private. Guards the 9-agent universe from prompt injections and privilege escalations.",
+        "content": "Cybersecurity Baseline & Cloud Gateway: Deployed locally at http://sentinel:8000 with connection to Memora Cloud security policy ledger under memora://sentinel/private. Guards the 9-agent universe from prompt injections and privilege escalations.",
         "importance": 0.92,
         "confidence": 1.0,
         "entities": ["SecurityGateway", "PrivilegeSeparation", "PromptInjectionDefense"],
@@ -164,10 +164,10 @@ def build_real_memories():
     real_records.append({
         "agent": "inference",
         "type": MemoryType.SEMANTIC,
-        "content": "Multi-Model Intelligence Gateway: Deployed live at https://inference-h7bn.onrender.com/health pooling 25 multi-provider API keys (Groq, NVIDIA, DeepSeek, Cerebras, OpenRouter, Google Gemini) across 3,550 completed tasks and 5,607 model runs.",
+        "content": "Multi-Model Intelligence Gateway: Deployed live at http://inference:8000/health pooling 25 multi-provider API keys (Groq, NVIDIA, DeepSeek, Cerebras, OpenRouter, Google Gemini) across 3,550 completed tasks and 5,607 model runs.",
         "importance": 0.95,
         "confidence": 1.0,
-        "entities": ["InferenceGateway", "25APIKeys", "Groq", "NVIDIA", "RenderCloud"],
+        "entities": ["InferenceGateway", "25APIKeys", "Groq", "NVIDIA", "OracleCloudMesh"],
         "source": "Inference/SYSTEM_MANIFEST.md"
     })
     real_records.append({
@@ -204,10 +204,10 @@ def build_real_memories():
     real_records.append({
         "agent": "cortex",
         "type": MemoryType.PROJECT,
-        "content": "Autonomous Web Operations Hub: Deployed live at https://cortex-0m7c.onrender.com/health. Manages real-time visitor telemetry, automated lead qualification, and connects to SQLite Web DB (sqlite+aiosqlite:///./data/cortex.db).",
+        "content": "Autonomous Web Operations Hub: Deployed live at http://cortex:8000/health. Manages real-time visitor telemetry, automated lead qualification, and connects to SQLite Web DB (sqlite+aiosqlite:///./data/cortex.db).",
         "importance": 0.92,
         "confidence": 1.0,
-        "entities": ["WebOperations", "LeadQualification", "CortexCloud", "RenderDeployment"],
+        "entities": ["WebOperations", "LeadQualification", "CortexCloud", "ContainerMeshDeployment"],
         "source": "Cortex/SYSTEM_MANIFEST.md"
     })
 
@@ -244,7 +244,7 @@ def build_real_memories():
     real_records.append({
         "agent": "intelx",
         "type": MemoryType.PROCEDURAL,
-        "content": "Evidence Triangulation & Quorum Verification (clm-ag-01): Multi-agent quorum consensus across academic and industrial literature reduces factual hallucinations and citations errors by 64% across enterprise synthesis runs. Deployed live at https://intelx-mygl.onrender.com.",
+        "content": "Evidence Triangulation & Quorum Verification (clm-ag-01): Multi-agent quorum consensus across academic and industrial literature reduces factual hallucinations and citations errors by 64% across enterprise synthesis runs. Deployed live at http://intelx:8000.",
         "importance": 0.95,
         "confidence": 1.0,
         "entities": ["QuorumVerification", "HallucinationReduction", "CitationExtraction", "IntelXCloud"],
@@ -284,10 +284,10 @@ def build_real_memories():
     real_records.append({
         "agent": "futuris",
         "type": MemoryType.PROJECT,
-        "content": "Predictive Forecasting Engine: Deployed live at https://futuris-th6f.onrender.com/health. Provides statistical tensor forecasts, Brier calibration scores, and automated event emission connected to SQLite Tensor DB.",
+        "content": "Predictive Forecasting Engine: Deployed live at http://futuris:8000/health. Provides statistical tensor forecasts, Brier calibration scores, and automated event emission connected to SQLite Tensor DB.",
         "importance": 0.93,
         "confidence": 1.0,
-        "entities": ["FuturisCloud", "BrierScore", "TensorDB", "RenderDeployment"],
+        "entities": ["FuturisCloud", "BrierScore", "TensorDB", "ContainerMeshDeployment"],
         "source": "Futuris/SYSTEM_MANIFEST.md"
     })
 
@@ -306,7 +306,7 @@ def build_real_memories():
     real_records.append({
         "agent": "stratex",
         "type": MemoryType.DECISION,
-        "content": "Live Trading Engine Status: Active strategy: 'aggressor'. Binance API connection: CONNECTED. Engine status: ONLINE. Healthy: True. Deployed live at https://stratex-8wj1.onrender.com managing automated crypto futures positions.",
+        "content": "Live Trading Engine Status: Active strategy: 'aggressor'. Binance API connection: CONNECTED. Engine status: ONLINE. Healthy: True. Deployed live at http://stratex:8000 managing automated crypto futures positions.",
         "importance": 0.97,
         "confidence": 1.0,
         "entities": ["AggressorStrategy", "BinanceConnected", "EngineOnline", "StratexCloud"],
@@ -337,10 +337,10 @@ def build_real_memories():
     real_records.append({
         "agent": "memora",
         "type": MemoryType.PROJECT,
-        "content": "Unified Long-Term Memory Fabric Architecture: Deployed live at https://memora-cavc.onrender.com/health. Connects to Turso LibSQL Cloud DB (AWS Mumbai, libsql://memora-db-surendra2304.aws-ap-south-1.turso.io) providing 9 GB distributed memory storage.",
+        "content": "Unified Long-Term Memory Fabric Architecture: Deployed live at http://memora:8000/health under private container mesh friday_mesh with Caddy HTTPS proxy. Powered by SQLite 3 WAL Mode and Alembic migrations.",
         "importance": 0.99,
         "confidence": 1.0,
-        "entities": ["MemoraCloud", "TursoAWSMumbai", "LibSQL", "PersistentFabric"],
+        "entities": ["MemoraCloud", "SQLiteWAL", "AlembicMigrations", "PersistentFabric"],
         "source": "Memora/SYSTEM_MANIFEST.md"
     })
     real_records.append({

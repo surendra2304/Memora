@@ -2,40 +2,39 @@
 
 > **Official Subsystem Name:** Memora  
 > **Role in Ecosystem:** Unified Long-Term Memory Fabric & RBAC Partitioned Vector/Episodic Vault  
-> **Repository:** [surendra2304/Memora](https://github.com/surendra2304/Memora) (Branch: master)  
+> **Repository:** [surendra2304/Memora](https://github.com/surendra2304/Memora) (Branch: main)  
 > **Workspace Path:** d:\FRIDAY Universe\Memora  
 
 ---
 
-## ☁️ 1. Configured service (runtime unverified)
+## ☁️ 1. Modernized Infrastructure (Oracle Cloud Always Free)
 
 | Attribute | Repository configuration |
 | :--- | :--- |
-| **Configured Service URL (deployment unverified)** | [https://memora-cavc.onrender.com](https://memora-cavc.onrender.com) |
-| **Health Check Endpoint** | https://memora-cavc.onrender.com/health |
-| **API key variable (keep value in secret environment)** | `MEMORA_API_KEY` (unique secret configured outside source control) |
+| **Public Gateway URL** | [https://friday-universe.duckdns.org/memora](https://friday-universe.duckdns.org/memora) |
+| **Health Check Endpoint** | https://friday-universe.duckdns.org/memora/health |
+| **Internal Mesh Service URL** | http://memora:8000 |
+| **Internal Container Port** | 8000 (Host Port: 8006) |
+| **API key variable** | `MEMORA_API_KEY` (configured via environment) |
 | **Authentication Header** | `Authorization: Bearer <MEMORA_API_KEY>` |
-| **Configured database topology (runtime unverified)** | Turso LibSQL Cloud DB (configured; current capacity/plan must be verified in Turso) |
-| **Configured database URL or namespace (not a secret)** | libsql://memora-db-surendra2304.aws-ap-south-1.turso.io |
-| **Configured host (plan, region, and runtime unverified)** | Render service configured (current plan, region, and deployment unverified) |
+| **Database Engine** | SQLite 3 with WAL Mode (`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;`) + Alembic migrations |
+| **Container Network** | `friday_mesh` |
 
 ---
 
 ## 🎯 2. Purpose & Responsibilities
 
 ### What Memora IS:
-* Memora is the persistent memory fabric of the ecosystem. It provides URI-partitioned memory namespaces (memora://<agent>/private) and RBAC security. Live database capacity and availability require verification in Turso.
+* Memora is the persistent episodic memory, knowledge graph, and vector recall engine for all 8 agents in the FRIDAY Universe. It provides URI-partitioned memory namespaces (`memora://<agent>/private`) and RBAC security.
 
 ### What Memora DOES:
-* Operates as the **Unified Long-Term Memory Fabric & RBAC Partitioned Vector/Episodic Vault** within the 9-agent FRIDAY Universe.
-* Communicates directly with peer agents via authenticated REST and WebSocket protocols.
-* Persists private long-term memory records to **Memora** under memora://memora/private.
+* Operates as the **Unified Long-Term Memory Fabric & RBAC Partitioned Vector/Episodic Vault** within the FRIDAY Universe.
+* Communicates directly with peer agents via authenticated REST and WebSocket protocols within `friday_mesh`.
+* Persists private long-term memory records to **Memora** under `memora://memora/private`.
 
 ---
 
-## 🌐 3. Ecosystem endpoint configuration
-
-These variable names and URLs are references only; they do not prove live communication. Set real credentials in secret environments.
+## 🌐 3. Ecosystem Endpoint Configuration (`friday_mesh`)
 
 ```env
 # ============================================================================== #
@@ -43,49 +42,41 @@ These variable names and URLs are references only; they do not prove live commun
 # ============================================================================== #
 
 # 1. ⚡ Inference AI Multi-Model Gateway
-INFERENCE_URL=https://inference-h7bn.onrender.com
-# Configure a unique Inference service key outside source control.
+INFERENCE_URL=http://inference:8000
 
-# 2. Memora cloud memory service (active backend/capacity not verified)
-MEMORA_URL=https://memora-cavc.onrender.com
-# Configure a unique Memora service key outside source control.
+# 2. 🧠 Memora Memory & Knowledge Graph Service
+MEMORA_URL=http://memora:8000
 
-# 3. 📈 Stratex Paper/Testnet Strategy Platform (Binance Futures)
-STRATEX_URL=https://stratex-8wj1.onrender.com
-# Configure a unique Stratex service key outside source control.
+# 3. 📈 Stratex Paper/Testnet Strategy Platform
+STRATEX_URL=http://stratex:8000
 
-# 4. IntelX research service (active storage backend not verified)
-INTELX_URL=https://intelx-mygl.onrender.com
-# Configure a unique IntelX service key outside source control.
+# 4. 🔍 IntelX Autonomous Research & OSINT Engine
+INTELX_URL=http://intelx:8000
 
 # 5. 🔮 Futuris Calibrated Predictive Forecasting Engine
-FUTURIS_URL=https://futuris-th6f.onrender.com
-# Configure a unique Futuris service key outside source control.
+FUTURIS_URL=http://futuris:8000
 
 # 6. 🌐 Cortex Autonomous Web Operations & Intelligence
-CORTEX_URL=https://cortex-0m7c.onrender.com
-# Configure a unique Cortex service key outside source control.
+CORTEX_URL=http://cortex:8000
 
 # 7. 🛠️ Forge Local Software Engineering Engine
-FORGE_URL=https://forge-e9kl.onrender.com
-# Configure a unique Forge service key outside source control.
+FORGE_URL=http://forge:8000
 
-# 8. 🛡️ Sentinel Local Cybersecurity & Threat Defense Shield
-SENTINEL_URL=https://sentinel-a861.onrender.com
-# Configure a unique Sentinel service key outside source control.
+# 8. 🛡️ Sentinel Cybersecurity & Threat Defense Shield
+SENTINEL_URL=http://sentinel:8000
 
-# 9. 🤖 FRIDAY Central Desktop Operating System
-FRIDAY_URL=https://friday-zw59.onrender.com
-# Configure a unique FRIDAY service key outside source control.
+# 9. 🤖 FRIDAY Central Gateway / Orchestrator
+FRIDAY_URL=http://friday:10000
 ```
 
 ---
 
-## 🤖 4. Repository guide
+## 🤖 4. Repository Guide
 
-When opening this repository:
-* **Identity:** You are working inside **Memora** (d:\FRIDAY Universe\Memora).
-* **Configured URL (deployment unverified): https://memora-cavc.onrender.com.
-* **Authentication:** Incoming requests require a unique `MEMORA_API_KEY` configured in the service environment.
-* **Test Evidence:** Label local tests, test doubles, and live endpoint checks separately; report only results actually observed.
-* **No Unapproved Git Pushes:** Keep modifications local unless explicitly instructed to push.
+When working in this repository:
+* **Identity:** You are working inside **Memora** (`d:\FRIDAY Universe\Memora`).
+* **Container Port:** 8000 (Host Port: 8006).
+* **Mesh URL:** `http://memora:8000`.
+* **Public Gateway:** `https://friday-universe.duckdns.org/memora`.
+* **Authentication:** Incoming requests require a configured `MEMORA_API_KEY`.
+* **Database:** SQLite 3 with WAL mode and Alembic migrations.

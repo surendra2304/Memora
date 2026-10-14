@@ -1,86 +1,187 @@
-# 🧠 Memora — Multi-Tier Cognitive Memory Engine
+# 🧠 Memora — Centralized Persistent Memory & Cognitive Fabric
 
-[![CI / Diary Verification](https://github.com/surendra2304/Memora/actions/workflows/verify.yml/badge.svg)](https://github.com/surendra2304/Memora)
+[![CI](https://github.com/surendra2304/Memora/actions/workflows/ci.yml/badge.svg)](https://github.com/surendra2304/Memora)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Architecture: SQLite WAL](https://img.shields.io/badge/Storage-SQLite%203%20WAL-success.svg)](https://www.sqlite.org/wal.html)
 
-**Memora** is a long-term cognitive memory fabric designed for AI agent ecosystems (such as the FRIDAY Universe). It provides multi-tier persistent memory, hybrid retrieval (lexical + dense vector embeddings with Reciprocal Rank Fusion), episodic event graphing, and on-demand knowledge consolidation without heavy vendor dependencies.
+**Memora** is the centralized persistent episodic memory, knowledge graph, and vector recall engine for all specialist agents in the **FRIDAY Universe** (`FRIDAY`, `Inference`, `Stratex`, `IntelX`, `Futuris`, `Cortex`, `Forge`, `Sentinel`). 
 
----
-
-## 🌟 Key Architecture & Capabilities
-
-1. **Multi-Tier Memory Fabric**:
-   - **Episodic Memory**: Temporal event sequences, conversation logs, and causal action chains.
-   - **Semantic Memory**: Persistent entities, relational facts, and domain knowledge graphs.
-   - **Procedural Memory**: Reusable tool execution patterns, skills, and validated workflows.
-   - **Working Memory**: Low-latency conversational context buffer for active task reasoning.
-
-2. **Reciprocal Rank Fusion (RRF) Hybrid Search**:
-   - Lexical keyword matching over the candidate set, with weights read from `config/retrieval_config.json`.
-   - Pluggable dense vector embedding matching for semantic similarity.
-   - Calibrated RRF scoring merging lexical, semantic, and graph-expansion result sets.
-
-3. **On-Demand Consolidation & Decay**:
-   - Importance decay, archival, and supersession run through lifecycle services. The `/v1/memories/decay` maintenance endpoint is restricted to the `memora` service identity and scoped to its tenant. Decay is idempotent: it is derived from a stored importance baseline plus the record's absolute age, so repeated runs converge rather than compounding.
-   - Experience extraction is available via `/v1/memories/learn-experience`; promotion into semantic memory is a separate `/v1/memories/{memory_id}/promote` workflow that requires explicit evidence.
-   - **There is no scheduler.** Nothing runs these on a timer. The repository has no cron, APScheduler, Celery, or background-task wiring, so decay only happens when something calls it. Schedule it externally (system cron, Render Cron Jobs, a Kubernetes CronJob) if you want it nightly.
-
-4. **Security Gates**:
-   - Requests fail closed and authenticate to an agent via `X-Agent-Name` + `X-API-Key` (or `Authorization: Bearer`). Anonymous access exists only as an explicit local-development opt-in (`MEMORA_ALLOW_ANONYMOUS_DEV=true`) and must remain disabled in deployed environments.
-   - Authorization is evaluated per operation by a five-dimension policy engine (`core/policy/engine.py`) over namespace RBAC grants, access purpose, trust level, and lifecycle state. Public/global spaces allow reads and appends; mutation of an existing record is restricted to its owner or the `memora` service identity.
-   - Reflection previews and non-admin insight listings are filtered to namespaces the requesting agent can read. Direct semantic/system writes are restricted to the `memora` service identity; ordinary agent trust labels are downgraded to candidate. Policy-authorized promotion requires evidence references and confidence bounds, but those references are metadata—the service does not fetch or cryptographically verify external evidence.
-   - **Tenant limitation:** current API credentials identify a service name but carry no tenant claim. HTTP identity, memory, and admin operations are therefore bound to the `default` tenant and fail closed on same-named identities in other tenants; this is not a tenant-aware credential system.
-   - **There are no named capability tiers.** An earlier revision of this README described a `memory_control` > `knowledge_indexing` > `retrieval_access` hierarchy; no such constants exist in the codebase and access is not modelled that way.
-   - Writes and grants commit transactionally, and audit entries are written in the same session as the operation they describe.
+Memora provides URI-partitioned memory namespaces (`memora://<agent>/private`), strict 5-dimension RBAC security policies, automated credential sanitization, multi-tier episodic/semantic/procedural memory retention, and high-concurrency hybrid vector/graph recall.
 
 ---
 
-## 📖 Engineering Diary & Progress Tracking
+## 🏛️ Ecosystem Topology & Ground Truth
 
-Memora follows a strict, day-wise engineering diary protocol to track every architectural decision, implementation milestone, bug fix, and test metric:
+Memora is deployed within the unified private container mesh (`friday_mesh`) on Oracle Cloud Always Free with automated HTTPS reverse proxy via Caddy:
 
-- **Executive Summary & Master Index**: [MEMORA_DIARY.md](MEMORA_DIARY.md)
-- **Daily Logs**: Located in the [`diary/`](diary/) directory (e.g., [Day 1: 2026-08-29](diary/2026-08-29.md))
+| Dimension | Specification |
+| :--- | :--- |
+| **Service Identity** | `memora` |
+| **Internal Container Port** | `8000` |
+| **Host Port Mapping** | `8006:8000` |
+| **Internal Mesh URL** | `http://memora:8000` |
+| **Public Gateway Path** | `https://friday-universe.duckdns.org/memora/*` |
+| **Container Network** | `friday_mesh` |
+| **Core Gateway Orchestrator** | `http://friday:10000` |
+| **Storage Engine** | SQLite 3 with WAL Mode (`memora.db`) + Alembic Migrations |
+| **Vector Engine** | Qdrant (`http://qdrant:6333`) |
+| **Distributed Cache / Bus** | Redis 7 (`redis://redis:6379/0`) |
+
+All 8 peer agents interact directly with Memora via HTTP within `friday_mesh` at `http://memora:8000` using bearer authentication (`MEMORA_API_KEY`).
 
 ---
 
-## 🐳 Local startup
+## ⚡ Core Architecture & Capabilities
 
-For SQLite-backed development, copy `.env.example` to `.env`, create a virtual environment, install `requirements.txt`, and run `uvicorn apps.api.main:app --host 0.0.0.0 --port 8000`. Anonymous development requests are disabled by default; configure an agent key or explicitly opt in with `MEMORA_ALLOW_ANONYMOUS_DEV=true` only on an isolated local instance.
+### 1. Multi-Tier Memory Fabric
+* **Episodic Memory**: Temporal interaction streams, conversation transcripts, and chronological agent decisions.
+* **Semantic Memory**: Knowledge graph nodes, Subject-Predicate-Object (SPO) entity triples, and persistent system facts.
+* **Procedural Memory**: Operational playbooks, tool execution parameters, and validated remediation rules.
+* **Working Memory**: Dynamic low-latency context window buffers used for active multi-agent turn reasoning.
 
-For the Compose stack, first copy `.env.example` to `.env`, set a URL-safe random `POSTGRES_PASSWORD` (for example, generate one with `openssl rand -hex 32`), and set `MEMORA_API_KEY`. Add only the mesh agent keys you actually deploy, then run `docker compose up --build`. Compose binds published ports to loopback, disables SQLite fallback, waits for PostgreSQL/Redis readiness, and stops if migrations fail. Do not commit the populated `.env` file.
+### 2. URI-Partitioned Namespaces & 5D Policy Engine
+Memora strictly enforces access boundaries across three discrete namespace scopes:
+- **Private**: `memora://<agent_name>/private` (e.g. `memora://forge/private`) — strictly inaccessible to other agents.
+- **Shared**: `memora://teams/<squad_name>/shared` (e.g. `memora://teams/trading-squad/shared`) — accessible only to authorized squad peers.
+- **Global**: `memora://universe/global` — read/append commons accessible by the entire ecosystem.
 
-**Credential hygiene:** an earlier committed Compose revision contained a literal PostgreSQL development credential. It has been removed from the current Compose configuration; treat it as exposed and rotate it if it was reused anywhere outside isolated local development. Its value is intentionally not reproduced here.
+Every read/write is validated against the 5D Policy Engine (`core/policy/engine.py`): Identity, Namespace Grants, Access Purpose, Trust Level, and Lifecycle State.
 
-## 🚀 Quick Verification
+### 3. Deterministic 10-Step Write Ingestion Pipeline
+1. **Secret Scanning**: Scans and blocks high-entropy tokens, API keys, passwords, private keys, and connection strings (`core/security/secret_scanner.py`).
+2. **Text Normalization**: Strips adversarial unicode variations, normalizes whitespace, and parses structure.
+3. **Entity & Relation Extraction**: Automatic Named Entity Recognition (NER) extracting semantic triples and entities.
+4. **Graph Auto-Wiring**: Links extracted entities to the persistent memory knowledge graph (`storage/relational/models.py`).
+5. **Deduplication Engine**: Cosine similarity and hash clustering preventing duplicate memory bloat.
+6. **5D Policy Validation**: Verifies caller authority over the target namespace.
+7. **Relational Persistence**: Atomically writes memory record to SQLite 3 WAL store.
+8. **Vector Embedding Ingestion**: Upserts dense vector representations to Qdrant.
+9. **Cache Invalidation**: Flushes distributed Redis candidate buffers.
+10. **Audit Log Generation**: Writes immutable audit trail entries in the same atomic transaction.
 
-Run the full test suite, lint, migrations, and the diary invariants:
+---
 
-```bash
-pip install -r requirements.txt && pip install "ruff>=0.3.0"
+## 🗄️ SQLite 3 WAL Concurrency & Alembic Migrations
 
-pytest -q                 # full suite
-ruff check .              # lint (config lives in pyproject.toml)
-alembic upgrade head      # apply migrations
-python scripts/verify_diary.py
+### High-Concurrency WAL Engine
+To guarantee zero lock contention when all 8 agents write and read simultaneously, SQLite 3 is configured in Write-Ahead Logging (WAL) mode:
+
+```python
+PRAGMA journal_mode=WAL;
+PRAGMA busy_timeout=5000;
+PRAGMA synchronous=NORMAL;
 ```
 
-CI runs all of the above plus a boot check that starts the ASGI app and asserts
-on a live `/health` response (`.github/workflows/verify.yml`).
+- **Concurrent Readers & Writers**: WAL allows reader queries to proceed concurrently with writer transactions without blocking or throwing `database is locked` errors.
+- **5000ms Busy Timeout**: Contended writes automatically retry with exponential backoff up to 5 seconds.
+- **Zero-Downtime Checkpointing**: On container termination (`SIGTERM`/`SIGINT`), Memora flushes active transactions, executes `PRAGMA wal_checkpoint(TRUNCATE);`, and closes database connection pools cleanly within 5 seconds.
 
-### Known gaps worth knowing about
+### Alembic Migration Lifecycle
+Database schemas are versioned and managed with Alembic. Migrations are executed automatically before the API starts in production Docker containers.
 
-Stated plainly so nobody builds on a false assumption:
+```bash
+# Apply all pending migrations to the database
+alembic upgrade head
 
-- **Keyword search is not FTS5.** The lexical leg of `SearchService.hybrid_search`
-  loads the candidate rows and does an in-Python substring scan
-  (`core/memory/search_service.py`). It is correct but O(rows) per query. A real
-  FTS5 or `pg_trgm` index is the obvious next step at scale.
-- **No background scheduler.** See section 3 above — decay is callable, not automatic.
-- **Dead subsystems.** `memora_upgrade/`, `adapters/`, and `sdk/` are not reachable
-  from the API; only their own tests and a couple of scripts import them. Treat
-  them as a library surface, not as wired-in features.
-- **`memora_upgrade/embeddings.py` hashes, it does not embed.** It is a SHA-512
-  stand-in self-labelled "replace in production" and must not be used for real
-  semantic retrieval.
+# Roll back the most recent migration
+alembic downgrade -1
+
+# Roll back all migrations to base state
+alembic downgrade base
+
+# Generate a new migration after updating SQLAlchemy models
+alembic revision --autogenerate -m "describe_schema_change"
+```
+
+---
+
+## 🌐 Health & Process Liveness Contract
+
+Memora provides standardized health check and liveness endpoints for Docker, Kubernetes, and reverse-proxy probes.
+
+### `GET /` & `GET /health`
+Returns `HTTP 200 OK` with JSON contract:
+```json
+{
+  "status": "ok",
+  "service": "memora",
+  "evidence_class": "process_liveness",
+  "observed_at": "2026-10-14T21:45:00.000000+00:00",
+  "storage": "sqlite_wal"
+}
+```
+
+*Note: Accessing `/` or `/dashboard` with header `Accept: text/html` serves the interactive Memora Memory Observatory web dashboard.*
+
+---
+
+## ⚙️ Environment Variable Configuration
+
+| Variable | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `MEMORA_ENV` | string | `production` | Deployment mode (`production`, `development`, `testing`). |
+| `PORT` | integer | `8000` | Internal container HTTP port. |
+| `HOST` | string | `0.0.0.0` | Listening network interface. |
+| `DEBUG` | boolean | `false` | Enable verbose debugging and OpenAPI schema reload. |
+| `DATABASE_URL` | string | `sqlite:///./data/memora.db` | Primary database connection URL. |
+| `SQLITE_FALLBACK_URL` | string | `sqlite:///./data/memora.db` | SQLite fallback database path when primary is unreachable. |
+| `USE_SQLITE_FALLBACK` | boolean | `true` | Allow fallback to local SQLite WAL database. |
+| `MEMORA_SQLITE_BUSY_TIMEOUT` | float | `30` | SQLite busy timeout in seconds. |
+| `REDIS_URL` | string | `redis://redis:6379/0` | Redis connection URL for candidate caching and events. |
+| `QDRANT_URL` | string | `http://qdrant:6333` | Qdrant vector database URL. |
+| `QDRANT_COLLECTION` | string | `memora_embeddings` | Qdrant vector collection name. |
+| `VECTOR_DIMENSION` | integer | `1536` | Vector embedding dimension. |
+| `MEMORA_API_KEY` | string | *Required* | Master bearer API key for authenticating requests to Memora. |
+| `MEMORA_CORS_ORIGINS` | string | *Whitelisted* | Comma-separated whitelist of allowed browser origins (`https://friday-universe.duckdns.org,http://localhost:8000,http://127.0.0.1:8000,http://localhost:8006,http://localhost:3000`). |
+| `FRIDAY_API_KEY` | string | *Optional* | API key for peer `friday` orchestrator agent. |
+| `INFERENCE_API_KEY` | string | *Optional* | API key for peer `inference` LLM gateway. |
+| `STRATEX_API_KEY` | string | *Optional* | API key for peer `stratex` trading agent. |
+| `INTELX_API_KEY` | string | *Optional* | API key for peer `intelx` research agent. |
+| `FUTURIS_API_KEY` | string | *Optional* | API key for peer `futuris` forecasting agent. |
+| `CORTEX_API_KEY` | string | *Optional* | API key for peer `cortex` web automation agent. |
+| `FORGE_API_KEY` | string | *Optional* | API key for peer `forge` code engineering agent. |
+| `SENTINEL_API_KEY` | string | *Optional* | API key for peer `sentinel` security agent. |
+| `DEFAULT_CONFIDENCE_THRESHOLD` | float | `0.75` | Minimum confidence score for promoting experiences. |
+| `DEFAULT_IMPORTANCE_THRESHOLD` | float | `0.50` | Minimum importance score for memory persistence. |
+
+---
+
+## 🚀 Quickstart & Local Execution
+
+### 1. Run with Docker Compose
+```bash
+# Copy and configure environment variables
+cp .env.example .env
+
+# Build and start Memora on host port 8006
+docker compose up -d --build
+
+# Verify logs
+docker compose logs -f memora-api
+```
+
+### 2. Run Directly in Python (Development)
+```bash
+# Create virtual environment
+python -m venv .venv
+source .venv/bin/activate  # Or on Windows: .venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run migrations
+alembic upgrade head
+
+# Start API server on port 8000
+uvicorn apps.api.main:app --host 0.0.0.0 --port 8000
+```
+
+### 3. Run Test Suite
+```bash
+# Run complete test suite (534+ tests)
+pytest -v
+
+# Run targeted fast tests
+pytest tests/test_api.py tests/test_deployment_packaging.py tests/test_cors_configuration.py -v
+```

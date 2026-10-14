@@ -4,7 +4,7 @@ FastAPI server providing persistent memory and context infrastructure.
 """
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
@@ -36,8 +36,14 @@ from apps.api.routers import (
 import os
 import requests
 import logging
+from datetime import datetime, timezone
 
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(levelname)s] [memora]: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("memora")
 
 def _startup_turso_sync_enabled() -> bool:
     """Only production or an explicit opt-in may import the cloud DB at boot."""
@@ -163,7 +169,20 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        logger.info("Initiating graceful shutdown sequence for Memora...")
         event_emitter.stop_cloud_sync()
+        try:
+            from storage.relational.session import checkpoint_wal, engine
+            checkpoint_wal()
+            engine.dispose()
+            logger.info("Relational database connections cleanly closed.")
+        except Exception as exc:
+            logger.warning("Database shutdown clean-up encountered exception: %s", exc)
+        try:
+            vector_adapter.disconnect()
+        except Exception:
+            pass
+        logger.info("Memora graceful shutdown sequence completed.")
 
 app = FastAPI(
     title="MEMORA API",
@@ -237,7 +256,21 @@ def dashboard_overview():
 
 STATIC_INDEX = Path(__file__).resolve().parent / "static" / "index.html"
 
-@app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse, include_in_schema=False)
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
+def root(request: Request):
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept and "application/json" not in accept:
+        if STATIC_INDEX.exists():
+            return HTMLResponse(content=STATIC_INDEX.read_text(encoding="utf-8"))
+        return RedirectResponse(url="/docs")
+    return JSONResponse(status_code=200, content={
+        "status": "ok",
+        "service": "memora",
+        "evidence_class": "process_liveness",
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "storage": "sqlite_wal",
+    })
+
 @app.api_route("/dashboard", methods=["GET", "HEAD"], response_class=HTMLResponse, include_in_schema=False)
 def dashboard():
     if STATIC_INDEX.exists():

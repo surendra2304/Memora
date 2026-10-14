@@ -32,7 +32,7 @@ class MemoraClient:
         local_db_path: Optional[str] = None,
         timeout: float = 4.0
     ):
-        self.base_url = (base_url or os.getenv("MEMORA_URL", "https://memora-cavc.onrender.com")).rstrip("/")
+        self.base_url = (base_url or os.getenv("MEMORA_URL", "http://memora:8000")).rstrip("/")
         self.api_key = api_key or os.getenv("MEMORA_API_KEY")
         self.timeout = timeout
         

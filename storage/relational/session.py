@@ -88,10 +88,10 @@ def _new_sqlite_engine(url: str):
         def _set_sqlite_pragmas(dbapi_connection, _record):  # pragma: no cover - driver hook
             cursor = dbapi_connection.cursor()
             try:
-                cursor.execute("PRAGMA journal_mode=WAL")
-                cursor.execute(f"PRAGMA busy_timeout={int(timeout_seconds * 1000)}")
+                cursor.execute("PRAGMA journal_mode=WAL;")
+                cursor.execute("PRAGMA busy_timeout=5000;")
                 # WAL's recommended durability/performance trade-off.
-                cursor.execute("PRAGMA synchronous=NORMAL")
+                cursor.execute("PRAGMA synchronous=NORMAL;")
             finally:
                 cursor.close()
 
@@ -132,11 +132,7 @@ def create_db_engine():
                 logger.warning(f"PostgreSQL unavailable ({e}). Falling back to SQLite: {fallback_url}")
                 _active_storage_backend = "sqlite_fallback"
                 _active_storage_durable = False
-                return create_engine(
-                    fallback_url,
-                    connect_args={"check_same_thread": False},
-                    echo=settings.DB_ECHO
-                )
+                return _new_sqlite_engine(fallback_url)
             raise e
 
     # 2. Turso cloud database connection through Turso's SQLAlchemy dialect.
@@ -225,3 +221,15 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+def checkpoint_wal():
+    """Checkpoint SQLite WAL log to ensure all writes are flushed to disk before exit."""
+    try:
+        if "sqlite" in str(engine.url):
+            with engine.connect() as conn:
+                conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE);"))
+            logger.info("SQLite WAL checkpoint completed successfully.")
+    except Exception as exc:
+        logger.warning("SQLite WAL checkpoint failed: %s", exc)
+

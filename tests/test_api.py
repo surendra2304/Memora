@@ -9,12 +9,23 @@ def test_health_check(client: TestClient):
     response = client.get("/health")
     assert response.status_code == 200
     data = response.json()
-    assert data["service"] == "memora-api"
-    assert data["status"] in ["healthy", "degraded"]
+    assert data["service"] in ["memora", "memora-api"]
+    assert data["status"] in ["ok", "healthy", "degraded"]
+    assert data["storage"] == "sqlite_wal"
+
+
+def test_root_returns_process_liveness_contract(client: TestClient):
+    response = client.get("/")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ok"
+    assert data["service"] == "memora"
+    assert data["evidence_class"] == "process_liveness"
+    assert data["storage"] == "sqlite_wal"
 
 
 def test_root_serves_memora_memory_observatory_not_legacy_dashboard(client: TestClient):
-    response = client.get("/")
+    response = client.get("/", headers={"Accept": "text/html"})
 
     assert response.status_code == 200
     assert "Memora — Memory Observatory" in response.text

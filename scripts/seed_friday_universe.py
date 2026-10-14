@@ -198,10 +198,10 @@ FRIDAY_AGENTS = [
             },
             {
                 "type": MemoryType.PROJECT,
-                "content": "FRIDAY Universe Telemetry Dashboard: Real-time telemetry streaming and agent status visualization operational on Render with WebSocket notifications.",
+                "content": "FRIDAY Universe Telemetry Dashboard: Real-time telemetry streaming and agent status visualization operational on Oracle Cloud Docker mesh with WebSocket notifications.",
                 "importance": 0.89,
                 "confidence": 1.0,
-                "entities": ["TelemetryDashboard", "WebSocketStreaming", "RenderDeployment"]
+                "entities": ["TelemetryDashboard", "WebSocketStreaming", "OracleCloudDeployment"]
             }
         ]
     },

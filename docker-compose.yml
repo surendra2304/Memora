@@ -3,16 +3,18 @@ services:
     build: .
     container_name: memora-api
     ports:
-      - "127.0.0.1:8000:8000"
+      - "8006:8000"
     environment:
-      DATABASE_URL: "postgresql+psycopg2://memora_user:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/memora_db"
-      USE_SQLITE_FALLBACK: "false"
+      DATABASE_URL: "sqlite:///./data/memora.db"
+      USE_SQLITE_FALLBACK: "true"
+      SQLITE_FALLBACK_URL: "sqlite:///./data/memora.db"
       REDIS_URL: "redis://redis:6379/0"
       QDRANT_URL: "http://qdrant:6333"
       QDRANT_COLLECTION: "memora_embeddings"
       MEMORA_ENV: "production"
       MEMORA_ALLOW_ANONYMOUS_DEV: "false"
       MEMORA_API_KEY: "${MEMORA_API_KEY:?Set MEMORA_API_KEY in .env}"
+      MEMORA_CORS_ORIGINS: "https://friday-universe.duckdns.org,http://localhost:8000,http://127.0.0.1:8000,http://localhost:8006,http://localhost:3000"
       FRIDAY_API_KEY: "${FRIDAY_API_KEY:-}"
       INFERENCE_API_KEY: "${INFERENCE_API_KEY:-}"
       STRATEX_API_KEY: "${STRATEX_API_KEY:-}"
@@ -22,31 +24,11 @@ services:
       FORGE_API_KEY: "${FORGE_API_KEY:-}"
       SENTINEL_API_KEY: "${SENTINEL_API_KEY:-}"
       AI_UNIVERSE_API_KEY: "${AI_UNIVERSE_API_KEY:-}"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      qdrant:
-        condition: service_started
-    restart: unless-stopped
-
-  postgres:
-    image: postgres:16-alpine
-    container_name: memora-postgres
-    environment:
-      POSTGRES_USER: "memora_user"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
-      POSTGRES_DB: "memora_db"
-    ports:
-      - "127.0.0.1:5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U memora_user -d memora_db"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      - memora_data:/app/data
+    networks:
+      - default
+      - friday_mesh
     restart: unless-stopped
 
   redis:
@@ -61,6 +43,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - default
     restart: unless-stopped
 
   qdrant:
@@ -71,9 +55,17 @@ services:
       - "127.0.0.1:6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
+    networks:
+      - default
     restart: unless-stopped
 
 volumes:
-  postgres_data:
+  memora_data:
   redis_data:
   qdrant_data:
+
+networks:
+  default:
+  friday_mesh:
+    name: friday_mesh
+    external: true

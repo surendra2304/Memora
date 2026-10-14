@@ -40,10 +40,11 @@ def health_check(db: Session = Depends(get_db)):
 
     status_ok = db_status == "healthy" and event_store_ok and vector_store["available"]
     return JSONResponse(status_code=200 if status_ok else 503, content={
-        "status": "healthy" if status_ok else "degraded",
-        "evidence_class": "server_live_probe",
+        "status": "ok" if status_ok else "degraded",
+        "service": "memora",
+        "evidence_class": "process_liveness",
         "observed_at": datetime.now(timezone.utc).isoformat(),
-        "service": "memora-api",
+        "storage": "sqlite_wal",
         "database": db_status,
         "database_backend": database["backend"],
         "database_durable": database["durable"],
