@@ -50,10 +50,8 @@ logging.basicConfig(
 logger = logging.getLogger("memora")
 
 def _startup_turso_sync_enabled() -> bool:
-    """Only production or an explicit opt-in may import the cloud DB at boot."""
-    environment = (os.getenv("ENVIRONMENT", "") or settings.MEMORA_ENV).lower()
-    explicit = os.getenv("MEMORA_SYNC_TURSO_ON_STARTUP", "").lower() in {"1", "true", "yes"}
-    return environment == "production" or explicit
+    """Only an explicit migration opt-in may import data from legacy Turso."""
+    return os.getenv("MEMORA_SYNC_TURSO_ON_STARTUP", "").strip().lower() in {"1", "true", "yes"}
 
 def sync_from_turso():
     if (os.getenv("ENVIRONMENT", "") or settings.MEMORA_ENV).lower() == "production" and not storage_ready():
