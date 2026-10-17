@@ -147,3 +147,40 @@ def test_production_postgres_engine_is_authoritative(monkeypatch):
         assert session.storage_ready() is True
     finally:
         pg_engine.dispose()
+
+
+def test_postgres_pool_settings_are_bounded_for_shared_oracle_host(monkeypatch):
+    """Keep Memora from creating oversized pools on the shared 2-OCPU host."""
+    from contextlib import contextmanager
+
+    captured = {}
+
+    class FakeConnection:
+        def execute(self, _statement):
+            return 1
+
+    class FakeEngine:
+        @contextmanager
+        def connect(self):
+            yield FakeConnection()
+
+    def fake_create_engine(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return FakeEngine()
+
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("MEMORA_DB_POOL_SIZE", "999")
+    monkeypatch.setenv("MEMORA_DB_MAX_OVERFLOW", "999")
+    monkeypatch.setattr(session.settings, "DATABASE_URL", "postgresql://memora:secret@postgres:5432/memora_db")
+    monkeypatch.setattr(session.settings, "TURSO_DATABASE_URL", None)
+    monkeypatch.setattr(session.settings, "TURSO_AUTH_TOKEN", None)
+    monkeypatch.setattr(session, "create_engine", fake_create_engine)
+
+    engine = session.create_db_engine()
+
+    assert isinstance(engine, FakeEngine)
+    assert captured["pool_size"] == 8
+    assert captured["max_overflow"] == 8
+    assert captured["pool_timeout"] == 10
+    assert captured["pool_pre_ping"] is True
