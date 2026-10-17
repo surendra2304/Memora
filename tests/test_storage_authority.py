@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from storage.relational import session
 
 
-def test_production_sqlite_is_non_authoritative_and_readiness_fails_closed(tmp_path, monkeypatch):
+def test_production_sqlite_configuration_is_rejected_before_engine_creation(tmp_path, monkeypatch):
     db_path = tmp_path / "production-local.db"
     monkeypatch.setattr(session, "_active_storage_backend", "uninitialized")
     monkeypatch.setattr(session, "_active_storage_durable", False)
@@ -16,25 +16,12 @@ def test_production_sqlite_is_non_authoritative_and_readiness_fails_closed(tmp_p
     monkeypatch.setattr(session.settings, "TURSO_DATABASE_URL", None)
     monkeypatch.setattr(session.settings, "TURSO_AUTH_TOKEN", None)
 
-    isolated_engine = session.create_db_engine()
-    try:
-        with isolated_engine.connect() as connection:
-            connection.exec_driver_sql("SELECT 1")
-        assert db_path.exists()
-        assert session.storage_receipt() == {
-            "backend": "sqlite",
-            "durable": False,
-            "durability": "process_local",
-        }
-        assert session.storage_ready() is False
-        with pytest.raises(HTTPException) as error:
-            next(session.get_db())
-        assert error.value.status_code == 503
-    finally:
-        isolated_engine.dispose()
+    with pytest.raises(RuntimeError, match="requires the self-hosted PostgreSQL DATABASE_URL"):
+        session.create_db_engine()
+    assert not db_path.exists()
 
 
-def test_unsupported_turso_orm_connection_cannot_use_sqlite_fallback_as_durable(tmp_path, monkeypatch):
+def test_unsupported_turso_url_cannot_fall_back_to_sqlite_in_production(tmp_path, monkeypatch):
     fallback_path = tmp_path / "fallback.db"
     monkeypatch.setattr(session, "_active_storage_backend", "uninitialized")
     monkeypatch.setattr(session, "_active_storage_durable", False)
@@ -44,20 +31,9 @@ def test_unsupported_turso_orm_connection_cannot_use_sqlite_fallback_as_durable(
     monkeypatch.setattr(session.settings, "TURSO_AUTH_TOKEN", None)
     monkeypatch.setattr(session.settings, "SQLITE_FALLBACK_URL", f"sqlite:///{fallback_path.as_posix()}")
 
-    isolated_engine = session.create_db_engine()
-    try:
-        with isolated_engine.connect() as connection:
-            connection.exec_driver_sql("SELECT 1")
-        assert fallback_path.exists()
-        assert session.storage_receipt() == {
-            "backend": "sqlite_fallback",
-            "durable": False,
-            "durability": "process_local",
-        }
-        assert session.storage_ready() is False
-    finally:
-        isolated_engine.dispose()
-
+    with pytest.raises(RuntimeError, match="requires the self-hosted PostgreSQL DATABASE_URL"):
+        session.create_db_engine()
+    assert not fallback_path.exists()
 
 def test_turso_url_uses_supported_sqlalchemy_libsql_format():
     assert session._turso_sqlalchemy_url(
