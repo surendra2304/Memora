@@ -58,7 +58,7 @@ flowchart TD
         end
 
         subgraph StorageLayer ["Persistence & Telemetry"]
-            SQLITE[("SQLite 3 WAL Engine\nmemora.db")]
+            POSTGRES[("PostgreSQL 18\nmemora_db")]
             QDRANT[("Qdrant Vector DB\n:6333")]
             REDIS[("Redis 7 Event Bus\n:6379")]
         end
@@ -94,7 +94,7 @@ Every read/write is validated against the 5D Policy Engine (`core/policy/engine.
 4. **Graph Auto-Wiring**: Links extracted entities to the persistent memory knowledge graph (`storage/relational/models.py`).
 5. **Deduplication Engine**: Cosine similarity and hash clustering preventing duplicate memory bloat.
 6. **5D Policy Validation**: Verifies caller authority over the target namespace.
-7. **Relational Persistence**: Atomically writes memory record to SQLite 3 WAL store.
+7. **Relational Persistence**: Atomically writes the relational memory record to the configured PostgreSQL 18 `memora_db` in production (SQLite is development/test-only).
 8. **Vector Embedding Ingestion**: Upserts dense vector representations to Qdrant.
 9. **Cache Invalidation**: Flushes distributed Redis candidate buffers.
 10. **Audit Log Generation**: Writes immutable audit trail entries in the same atomic transaction.
@@ -148,9 +148,9 @@ Returns `HTTP 200 OK` (or `503 Degraded`) with process liveness and storage stat
   "version": "2.0.0",
   "evidence_class": "process_liveness",
   "observed_at": "2026-10-14T21:45:00.000000+00:00",
-  "storage": "sqlite_wal",
+  "storage": "postgresql",
   "database": "healthy",
-  "database_backend": "sqlite",
+  "database_backend": "postgresql",
   "database_durable": true,
   "vector_store": {"status": "connected", "available": true}
 }
