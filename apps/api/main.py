@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -228,11 +229,18 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     errors = exc.errors()
+    # Pydantic v2 may include a ValueError instance in ctx when a custom
+    # validator rejects a payload. JSONResponse cannot serialize exceptions,
+    # so encode the structured validation report with a safe exception stringifier.
+    safe_errors = jsonable_encoder(
+        errors,
+        custom_encoder={BaseException: lambda exc: str(exc)},
+    )
     message = "; ".join(f"{'.'.join(str(l) for l in err.get('loc', []))}: {err.get('msg')}" for err in errors)
     return JSONResponse(
         status_code=422,
         content={
-            "detail": errors,
+            "detail": safe_errors,
             "error": "validation_error",
             "message": message or "Request validation failed",
             "success": False,
