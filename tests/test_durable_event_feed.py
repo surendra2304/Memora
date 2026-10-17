@@ -43,7 +43,7 @@ def test_rolled_back_memory_transaction_does_not_leave_event(test_db):
     assert test_db.query(EventLog).filter_by(event_id=event.event_id).first() is None
 
 
-def test_startup_cloud_import_requires_production_or_explicit_opt_in(monkeypatch):
+def test_startup_cloud_import_requires_explicit_opt_in(monkeypatch):
     from apps.api.main import _startup_turso_sync_enabled
 
     monkeypatch.setenv("ENVIRONMENT", "development")
@@ -53,7 +53,7 @@ def test_startup_cloud_import_requires_production_or_explicit_opt_in(monkeypatch
     assert _startup_turso_sync_enabled() is True
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.delenv("MEMORA_SYNC_TURSO_ON_STARTUP", raising=False)
-    assert _startup_turso_sync_enabled() is True
+    assert _startup_turso_sync_enabled() is False
 
 
 def test_feed_sanitizes_private_context_payload_and_obeys_cursor_and_tenant(test_db):
