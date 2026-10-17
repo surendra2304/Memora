@@ -47,76 +47,27 @@ def test_turso_url_uses_supported_sqlalchemy_libsql_format():
     ) == "sqlite+libsql://memory.example.turso.io?region=aws&secure=true"
 
 
-def test_production_prefers_configured_turso_over_ephemeral_sqlite(monkeypatch):
-    class FakeConnection:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def execute(self, _statement):
-            return None
-
-    class FakeEngine:
-        def connect(self):
-            return FakeConnection()
-
-    captured = {}
-
-    def fake_create_engine(url, **kwargs):
-        captured["url"] = url
-        captured["kwargs"] = kwargs
-        return FakeEngine()
-
+def test_production_does_not_implicitly_select_configured_turso(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setattr(session.settings, "DATABASE_URL", "sqlite:///./data/memora.db")
     monkeypatch.setattr(session.settings, "TURSO_DATABASE_URL", "https://memory.example.turso.io")
     monkeypatch.setattr(session.settings, "TURSO_AUTH_TOKEN", "isolated-test-token")
-    monkeypatch.setattr(session, "create_engine", fake_create_engine)
 
-    engine = session.create_db_engine()
-
-    assert isinstance(engine, FakeEngine)
-    assert captured["url"] == "sqlite+libsql://memory.example.turso.io?secure=true"
-    assert captured["kwargs"]["connect_args"] == {"auth_token": "isolated-test-token"}
-    assert session.storage_receipt() == {
-        "backend": "turso",
-        "durable": True,
-        "durability": "shared_durable",
-    }
+    with pytest.raises(RuntimeError, match="requires the self-hosted PostgreSQL DATABASE_URL"):
+        session.create_db_engine()
 
 
-def test_unsupported_local_turso_driver_import_stays_non_authoritative(tmp_path, monkeypatch):
+def test_production_rejects_sqlite_even_when_turso_driver_is_unavailable(tmp_path, monkeypatch):
     fallback_path = tmp_path / "windows-fallback.db"
-    original_create_engine = session.create_engine
-
-    def create_engine_with_unavailable_libsql(url, **kwargs):
-        if url.startswith("sqlite+libsql://"):
-            raise ModuleNotFoundError("isolated simulation: driver unavailable on this platform")
-        return original_create_engine(url, **kwargs)
-
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setattr(session.settings, "DATABASE_URL", "sqlite:///./data/memora.db")
     monkeypatch.setattr(session.settings, "TURSO_DATABASE_URL", "https://memory.example.turso.io")
     monkeypatch.setattr(session.settings, "TURSO_AUTH_TOKEN", "isolated-test-token")
     monkeypatch.setattr(session.settings, "SQLITE_FALLBACK_URL", f"sqlite:///{fallback_path.as_posix()}")
-    monkeypatch.setattr(session, "create_engine", create_engine_with_unavailable_libsql)
 
-    fallback_engine = session.create_db_engine()
-    try:
-        with fallback_engine.connect() as connection:
-            connection.exec_driver_sql("SELECT 1")
-        assert fallback_path.exists()
-        assert session.storage_receipt() == {
-            "backend": "sqlite_fallback",
-            "durable": False,
-            "durability": "process_local",
-        }
-        assert session.storage_ready() is False
-    finally:
-        fallback_engine.dispose()
-
+    with pytest.raises(RuntimeError, match="requires the self-hosted PostgreSQL DATABASE_URL"):
+        session.create_db_engine()
+    assert not fallback_path.exists()
 
 def test_write_receipt_names_actual_storage_backend(monkeypatch):
     from types import SimpleNamespace
