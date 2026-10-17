@@ -117,3 +117,33 @@ def test_sdk_outage_never_reads_or_writes_a_local_memory_database(tmp_path, monk
     assert result["cloud"] is False
     assert recalled == []
     assert not local_db.exists()
+
+
+def test_production_postgres_engine_is_authoritative(monkeypatch):
+    """Exercise Memora's real PostgreSQL engine branch against the CI service."""
+    import os
+
+    from sqlalchemy import text
+
+    dsn = os.getenv("MEMORA_TEST_POSTGRES_URL")
+    if not dsn:
+        pytest.skip("MEMORA_TEST_POSTGRES_URL is supplied by the PostgreSQL 18 CI job")
+
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setattr(session.settings, "DATABASE_URL", dsn)
+    monkeypatch.setattr(session.settings, "TURSO_DATABASE_URL", None)
+    monkeypatch.setattr(session.settings, "TURSO_AUTH_TOKEN", None)
+    monkeypatch.setattr(session.settings, "USE_SQLITE_FALLBACK", False)
+    monkeypatch.setattr(session, "_active_storage_backend", "uninitialized")
+    monkeypatch.setattr(session, "_active_storage_durable", False)
+
+    pg_engine = session.create_db_engine()
+    try:
+        with pg_engine.connect() as connection:
+            assert connection.execute(text("SELECT 1")).scalar_one() == 1
+        receipt = session.storage_receipt()
+        assert receipt["backend"] == "postgresql"
+        assert receipt["durable"] is True
+        assert session.storage_ready() is True
+    finally:
+        pg_engine.dispose()
