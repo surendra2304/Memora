@@ -122,13 +122,19 @@ def create_db_engine():
     # 1. PostgreSQL connection
     if db_url.startswith("postgresql"):
         try:
+            # Every FRIDAY specialist owns a small SQLAlchemy pool while sharing one
+            # PostgreSQL instance. Do not let default per-service pools add up to
+            # hundreds of connections on the 2-OCPU Oracle host.
+            pool_size = max(1, min(int(os.getenv("MEMORA_DB_POOL_SIZE", "3")), 8))
+            max_overflow = max(0, min(int(os.getenv("MEMORA_DB_MAX_OVERFLOW", "2")), 8))
             engine = create_engine(
                 db_url,
                 pool_pre_ping=True,
-                pool_size=10,
-                max_overflow=20,
+                pool_size=pool_size,
+                max_overflow=max_overflow,
+                pool_timeout=10,
                 echo=settings.DB_ECHO,
-                connect_args={"connect_timeout": 3}
+                connect_args={"connect_timeout": 3},
             )
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
