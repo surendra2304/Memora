@@ -82,6 +82,22 @@ def test_ai_universe_has_a_dedicated_production_credential(auth, monkeypatch):
     ) == "ai_universe"
 
 
+def test_vyralx_has_a_dedicated_production_credential(auth, monkeypatch):
+    monkeypatch.setenv("VYRALX_API_KEY", "v" * 43)
+    assert auth.authenticate_agent(
+        **_headers(x_agent_name="vyralx", x_api_key="v" * 43)
+    ) == "vyralx"
+
+
+def test_vyralx_without_a_configured_key_fails_closed(auth, monkeypatch):
+    monkeypatch.delenv("VYRALX_API_KEY", raising=False)
+    with pytest.raises(HTTPException) as exc:
+        auth.authenticate_agent(
+            **_headers(x_agent_name="vyralx", x_api_key="v" * 43)
+        )
+    assert exc.value.status_code == 503
+
+
 def test_anonymous_access_requires_an_explicit_opt_in(auth, monkeypatch):
     monkeypatch.delenv("FRIDAY_API_KEY", raising=False)
     with pytest.raises(HTTPException):

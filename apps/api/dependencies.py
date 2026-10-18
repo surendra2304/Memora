@@ -17,6 +17,7 @@ AGENT_API_KEY_ENV_VARS = {
     "forge": "FORGE_API_KEY",
     "sentinel": "SENTINEL_API_KEY",
     "ai_universe": "AI_UNIVERSE_API_KEY",
+    "vyralx": "VYRALX_API_KEY",
     "memora": "MEMORA_API_KEY",
 }
 

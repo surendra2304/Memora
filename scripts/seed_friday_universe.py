@@ -1,6 +1,6 @@
 """
 Seed FRIDAY Universe Database
-Initializes the exact 9 canonical agents of the FRIDAY Universe, eliminates
+Initializes the exact 10 canonical agents of the FRIDAY Universe, eliminates
 legacy artifacts (ai_universe, nexus, etc.), and seeds realistic, production-grade
 memories across all agents.
 """
@@ -351,6 +351,30 @@ FRIDAY_AGENTS = [
     }
 ]
 
+FRIDAY_AGENTS.append({
+    "name": "vyralx",
+    "role": "worker",
+    "description": "Original video production, source provenance, narration, captions, rendering and reviewed publishing",
+    "bounded_scope": None,
+    "memories": [
+        {
+            "type": MemoryType.PROCEDURAL,
+            "content": "VyralX production safety workflow: build original scripts, use approved media, retain source/license provenance for every scene, run production QA, and require operator review before a publish job can upload.",
+            "importance": 0.92,
+            "confidence": 1.0,
+            "entities": ["VyralX", "MediaProvenance", "ProductionQA", "PublishReview"]
+        },
+        {
+            "type": MemoryType.DECISION,
+            "content": "VyralX uses Inference for original content generation and Memora private namespace memora://vyralx/private for bounded project-completion continuity summaries. Memory context is untrusted continuity data, not verified factual evidence.",
+            "importance": 0.90,
+            "confidence": 1.0,
+            "entities": ["Inference", "Memora", "PrivateNamespace", "EvidenceTraceability"]
+        }
+    ]
+})
+
+
 def seed_database():
     init_db()
     db: Session = SessionLocal()
@@ -370,7 +394,7 @@ def seed_database():
         db.query(MemoryRecord).delete()
         db.commit()
 
-        print("[*] Registering and Updating 9 FRIDAY Universe Agents...")
+        print("[*] Registering and Updating 10 FRIDAY Universe Agents...")
         agent_instances = {}
         for a_data in FRIDAY_AGENTS:
             agent = db.query(Agent).filter(Agent.name == a_data["name"]).first()
