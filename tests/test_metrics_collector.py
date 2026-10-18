@@ -102,6 +102,10 @@ def test_metrics_collector_is_safe_for_concurrent_writes_and_snapshots():
 
     def reader():
         start.wait()
+        # Take one required snapshot before checking the stop flag. On a fast CI
+        # runner, all writers may finish before this thread is scheduled; the
+        # previous loop then recorded zero snapshots and made the test flaky.
+        snapshot_count.append(collector.get_metrics_summary()["total_writes"])
         while not stop_reader.is_set():
             snapshot_count.append(collector.get_metrics_summary()["total_writes"])
 

@@ -3,7 +3,7 @@
 [![CI](https://github.com/surendra2304/Memora/actions/workflows/ci.yml/badge.svg)](https://github.com/surendra2304/Memora)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Architecture: SQLite WAL](https://img.shields.io/badge/Storage-SQLite%203%20WAL-success.svg)](https://www.sqlite.org/wal.html)
+[![Production DB: PostgreSQL](https://img.shields.io/badge/Production%20DB-PostgreSQL%2018-blue.svg)](https://www.postgresql.org/docs/)
 
 **Memora** is the centralized persistent episodic memory, knowledge graph, and vector recall engine for all specialist agents in the **FRIDAY Universe** (`FRIDAY`, `Inference`, `Stratex`, `IntelX`, `Futuris`, `Cortex`, `Forge`, `Sentinel`). 
 
@@ -24,7 +24,7 @@ Memora is deployed within the unified private container mesh (`friday_mesh`) on 
 | **Public Gateway Path** | `https://friday-universe.duckdns.org/memora/*` |
 | **Container Network** | `friday_mesh` |
 | **Core Gateway Orchestrator** | `http://friday:10000` |
-| **Storage Engine** | SQLite 3 with WAL Mode (`memora.db`) + Alembic Migrations |
+| **Production Storage Engine** | PostgreSQL 18 (`memora_db`) + Alembic Migrations; SQLite is development/test-only |
 | **Vector Engine** | Qdrant (`http://qdrant:6333`) |
 | **Distributed Cache / Bus** | Redis 7 (`redis://redis:6379/0`) |
 
@@ -58,7 +58,7 @@ flowchart TD
         end
 
         subgraph StorageLayer ["Persistence & Telemetry"]
-            SQLITE[("SQLite 3 WAL Engine\nmemora.db")]
+            POSTGRES[("PostgreSQL 18\nmemora_db")]
             QDRANT[("Qdrant Vector DB\n:6333")]
             REDIS[("Redis 7 Event Bus\n:6379")]
         end
@@ -94,7 +94,7 @@ Every read/write is validated against the 5D Policy Engine (`core/policy/engine.
 4. **Graph Auto-Wiring**: Links extracted entities to the persistent memory knowledge graph (`storage/relational/models.py`).
 5. **Deduplication Engine**: Cosine similarity and hash clustering preventing duplicate memory bloat.
 6. **5D Policy Validation**: Verifies caller authority over the target namespace.
-7. **Relational Persistence**: Atomically writes memory record to SQLite 3 WAL store.
+7. **Relational Persistence**: Atomically writes the relational memory record to the configured PostgreSQL 18 `memora_db` in production (SQLite is development/test-only).
 8. **Vector Embedding Ingestion**: Upserts dense vector representations to Qdrant.
 9. **Cache Invalidation**: Flushes distributed Redis candidate buffers.
 10. **Audit Log Generation**: Writes immutable audit trail entries in the same atomic transaction.
@@ -103,7 +103,7 @@ Every read/write is validated against the 5D Policy Engine (`core/policy/engine.
 
 ## 🗄️ SQLite 3 WAL Concurrency & Alembic Migrations
 
-### High-Concurrency WAL Engine
+### Development-only SQLite WAL mode
 To guarantee zero lock contention when all 8 agents write and read simultaneously, SQLite 3 is configured in Write-Ahead Logging (WAL) mode:
 
 ```python
@@ -112,7 +112,7 @@ PRAGMA busy_timeout=5000;
 PRAGMA synchronous=NORMAL;
 ```
 
-- **Concurrent Readers & Writers**: WAL allows reader queries to proceed concurrently with writer transactions without blocking or throwing `database is locked` errors.
+- **Development only**: WAL can help local test/dev concurrency; it is not the production multi-agent storage backend.
 - **5000ms Busy Timeout**: Contended writes automatically retry with exponential backoff up to 5 seconds.
 - **Zero-Downtime Checkpointing**: On container termination (`SIGTERM`/`SIGINT`), Memora flushes active transactions, executes `PRAGMA wal_checkpoint(TRUNCATE);`, and closes database connection pools cleanly within 5 seconds.
 
@@ -148,9 +148,9 @@ Returns `HTTP 200 OK` (or `503 Degraded`) with process liveness and storage stat
   "version": "2.0.0",
   "evidence_class": "process_liveness",
   "observed_at": "2026-10-14T21:45:00.000000+00:00",
-  "storage": "sqlite_wal",
+  "storage": "postgresql",
   "database": "healthy",
-  "database_backend": "sqlite",
+  "database_backend": "postgresql",
   "database_durable": true,
   "vector_store": {"status": "connected", "available": true}
 }
@@ -199,10 +199,10 @@ All error responses (4xx and 5xx) conform to a standardized error envelope:
 | `PORT` | integer | `8000` | Internal container HTTP port (Host: `8006`). |
 | `HOST` | string | `0.0.0.0` | Listening network interface. |
 | `DEBUG` | boolean | `false` | Enable verbose debugging and OpenAPI schema reload. |
-| `DATABASE_URL` | string | `sqlite:///./data/memora.db` | Primary database connection URL. |
+| `DATABASE_URL` | string | required PostgreSQL 18 DSN in production | Primary authoritative relational database connection URL. |
 | `SQLITE_FALLBACK_URL` | string | `sqlite:///./data/memora.db` | SQLite fallback database path when primary is unreachable. |
-| `USE_SQLITE_FALLBACK` | boolean | `true` | Allow fallback to local SQLite WAL database. |
-| `MEMORA_SQLITE_AUTHORITATIVE` | boolean | `true` | Marks persistent local SQLite as authoritative in production. |
+| `USE_SQLITE_FALLBACK` | boolean | `false` | Development-only fallback; production refuses SQLite fallback. |
+| `MEMORA_SQLITE_AUTHORITATIVE` | boolean | `false` | Legacy SQLite durability flag; must remain false in production. |
 | `MEMORA_SQLITE_BUSY_TIMEOUT` | float | `30` | SQLite busy timeout in seconds. |
 | `CIRCUIT_BREAKER_FAILURE_THRESHOLD` | integer | `5` | Consecutive failures before circuit opens. |
 | `CIRCUIT_BREAKER_RECOVERY_TIMEOUT` | float | `30.0` | Cool-off seconds before probe attempt. |

@@ -10,6 +10,20 @@ jobs:
   ci:
     name: Build, Migrate, Test & Containerize
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: memora_test
+          POSTGRES_PASSWORD: memora_test
+          POSTGRES_DB: memora_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U memora_test -d memora_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -46,6 +60,12 @@ jobs:
         run: |
           mkdir -p data
           pytest -q
+
+      - name: Run PostgreSQL 18 production-storage integration test
+        env:
+          MEMORA_TEST_POSTGRES_URL: postgresql+psycopg2://memora_test:memora_test@localhost:5432/memora_test
+        run: |
+          pytest -q tests/test_storage_authority.py::test_production_postgres_engine_is_authoritative
 
       - name: Verify Application Boot & Health Contract
         env:

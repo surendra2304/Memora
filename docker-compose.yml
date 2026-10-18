@@ -2,17 +2,18 @@ services:
   memora-api:
     build: .
     container_name: memora-api
-    ports:
-      - "8006:8000"
+    expose:
+      - "8000"
     environment:
-      DATABASE_URL: "sqlite:///./data/memora.db"
-      USE_SQLITE_FALLBACK: "true"
+      DATABASE_URL: "${DATABASE_URL:?Set DATABASE_URL to the private PostgreSQL 18 memora_db DSN}"
+      USE_SQLITE_FALLBACK: "false"
       SQLITE_FALLBACK_URL: "sqlite:///./data/memora.db"
       REDIS_URL: "redis://redis:6379/0"
       QDRANT_URL: "http://qdrant:6333"
       QDRANT_COLLECTION: "memora_embeddings"
       MEMORA_ENV: "production"
       MEMORA_ALLOW_ANONYMOUS_DEV: "false"
+      MEMORA_SQLITE_AUTHORITATIVE: "false"
       MEMORA_API_KEY: "${MEMORA_API_KEY:?Set MEMORA_API_KEY in .env}"
       MEMORA_CORS_ORIGINS: "https://friday-universe.duckdns.org,http://localhost:8000,http://127.0.0.1:8000,http://localhost:8006,http://localhost:3000"
       FRIDAY_API_KEY: "${FRIDAY_API_KEY:-}"
@@ -23,7 +24,6 @@ services:
       CORTEX_API_KEY: "${CORTEX_API_KEY:-}"
       FORGE_API_KEY: "${FORGE_API_KEY:-}"
       SENTINEL_API_KEY: "${SENTINEL_API_KEY:-}"
-      AI_UNIVERSE_API_KEY: "${AI_UNIVERSE_API_KEY:-}"
     volumes:
       - memora_data:/app/data
     networks:

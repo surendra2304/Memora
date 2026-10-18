@@ -31,6 +31,15 @@ def storage_receipt() -> dict[str, str | bool]:
     }
 
 
+def validate_production_database_url(url: str) -> None:
+    """Fail closed when production is configured with a local or hosted non-PostgreSQL store."""
+    if production_mode() and not url.lower().startswith(("postgresql://", "postgresql+")):
+        raise RuntimeError(
+            "Memora production requires the self-hosted PostgreSQL DATABASE_URL; "
+            "SQLite and Turso are development/migration-only backends."
+        )
+
+
 def storage_ready() -> bool:
     return not production_mode() or _active_storage_durable
 
@@ -103,21 +112,29 @@ def create_db_engine():
     configured_turso_url = settings.TURSO_DATABASE_URL or os.getenv("TURSO_DATABASE_URL", "")
     turso_token = settings.TURSO_AUTH_TOKEN or os.getenv("TURSO_AUTH_TOKEN", "")
 
-    # Render's manifest historically supplied an ephemeral SQLite DATABASE_URL.
-    # In production, prefer the configured Turso primary when credentials exist.
-    if production_mode() and configured_turso_url and turso_token:
+    # Production is self-hosted and PostgreSQL-only. Hosted Turso is never selected
+    # implicitly; local development can opt in explicitly if migration work requires it.
+    use_turso_primary = os.getenv("MEMORA_USE_TURSO", "").strip().lower() in {"1", "true", "yes"}
+    if use_turso_primary and not production_mode() and configured_turso_url and turso_token:
         db_url = configured_turso_url
+    validate_production_database_url(db_url)
 
     # 1. PostgreSQL connection
     if db_url.startswith("postgresql"):
         try:
+            # Every FRIDAY specialist owns a small SQLAlchemy pool while sharing one
+            # PostgreSQL instance. Do not let default per-service pools add up to
+            # hundreds of connections on the 2-OCPU Oracle host.
+            pool_size = max(1, min(int(os.getenv("MEMORA_DB_POOL_SIZE", "3")), 8))
+            max_overflow = max(0, min(int(os.getenv("MEMORA_DB_MAX_OVERFLOW", "2")), 8))
             engine = create_engine(
                 db_url,
                 pool_pre_ping=True,
-                pool_size=10,
-                max_overflow=20,
+                pool_size=pool_size,
+                max_overflow=max_overflow,
+                pool_timeout=10,
                 echo=settings.DB_ECHO,
-                connect_args={"connect_timeout": 3}
+                connect_args={"connect_timeout": 3},
             )
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
@@ -126,14 +143,16 @@ def create_db_engine():
             _active_storage_durable = True
             return engine
         except Exception as e:
-            if settings.USE_SQLITE_FALLBACK:
-                fallback_url = settings.SQLITE_FALLBACK_URL
-                _ensure_sqlite_dir(fallback_url)
-                logger.warning(f"PostgreSQL unavailable ({e}). Falling back to SQLite: {fallback_url}")
-                _active_storage_backend = "sqlite_fallback"
-                _active_storage_durable = False
-                return _new_sqlite_engine(fallback_url)
-            raise e
+            # A production write must never drift to a process-local database when
+            # the canonical PostgreSQL store is unavailable.
+            if production_mode() or not settings.USE_SQLITE_FALLBACK:
+                raise RuntimeError("Memora PostgreSQL is unavailable; refusing SQLite fallback.") from e
+            fallback_url = settings.SQLITE_FALLBACK_URL
+            _ensure_sqlite_dir(fallback_url)
+            logger.warning("PostgreSQL unavailable; falling back to SQLite in non-production mode.")
+            _active_storage_backend = "sqlite_fallback"
+            _active_storage_durable = False
+            return _new_sqlite_engine(fallback_url)
 
     # 2. Turso cloud database connection through Turso's SQLAlchemy dialect.
     if "turso.io" in db_url or db_url.startswith(("libsql://", "sqlite+libsql://")):
