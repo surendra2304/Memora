@@ -11,6 +11,14 @@ Memora provides URI-partitioned memory namespaces (`memora://<agent>/private`), 
 
 ---
 
+## VyralX peer integration
+
+- Memora must have the registered `vyralx` agent identity and its private namespace, `memora://vyralx/private`, before VyralX memory read/write is enabled.
+- Configure `VYRALX_API_KEY` in Memora and set the identical secret as VyralX's `MEMORA_API_KEY`. VyralX calls `GET /v1/memories/search` and `POST /v1/memories` with `X-Agent-Name: vyralx`.
+- After deploying the code, verify the registered identity, authenticated search, and completion-summary write before enabling VyralX Memora read/write flags. These code changes do not provision production credentials or demonstrate live service health.
+
+---
+
 ## 🏛️ Ecosystem Topology & Ground Truth
 
 Memora is deployed within the unified private container mesh (`friday_mesh`) on Oracle Cloud Always Free with automated HTTPS reverse proxy via Caddy:
@@ -28,7 +36,7 @@ Memora is deployed within the unified private container mesh (`friday_mesh`) on 
 | **Vector Engine** | Qdrant (`http://qdrant:6333`) |
 | **Distributed Cache / Bus** | Redis 7 (`redis://redis:6379/0`) |
 
-All 8 peer agents interact directly with Memora via HTTP within `friday_mesh` at `http://memora:8000` using bearer authentication (`MEMORA_API_KEY`).
+FRIDAY Universe peer services interact with Memora via HTTP within `friday_mesh` at `http://memora:8000`. Authenticated reads and writes require `X-Agent-Name` plus the matching bearer/`X-API-Key` credential. VyralX uses the dedicated `VYRALX_API_KEY` value on Memora and the same secret as `MEMORA_API_KEY` in VyralX; keep both values in deployment secrets, never in source control.
 
 ```mermaid
 flowchart TD
@@ -41,6 +49,7 @@ flowchart TD
         INTELX["IntelX"]
         SENTINEL["Sentinel"]
         STRATEX["Stratex"]
+        VYRALX["VyralX"]
     end
 
     subgraph MemoraService ["Memora Service (:8000 / Host :8006)"]
