@@ -15,7 +15,8 @@ Memora provides URI-partitioned memory namespaces (`memora://<agent>/private`), 
 
 - Memora must have the registered `vyralx` agent identity and its private namespace, `memora://vyralx/private`, before VyralX memory read/write is enabled.
 - Configure `VYRALX_API_KEY` in Memora and set the identical secret as VyralX's `MEMORA_API_KEY`. VyralX calls `GET /v1/memories/search` and `POST /v1/memories` with `X-Agent-Name: vyralx`.
-- After deploying the code, verify the registered identity, authenticated search, and completion-summary write before enabling VyralX Memora read/write flags. These code changes do not provision production credentials or demonstrate live service health.
+- After deploying the code and configuring the secret, run `python scripts/register_vyralx_identity.py` inside the Memora service. This safe, idempotent script ensures the VyralX identity and private namespace without deleting or rewriting existing memories; it fails if the credential is missing/too short or the namespace is owned by another agent.
+- Do not run `scripts/seed_friday_universe.py` merely to add VyralX to an existing production database: that broad seed routine clears/rebuilds memory records. Verify authenticated search and completion-summary write/readback before enabling VyralX Memora read/write flags. Code changes alone do not prove live service health.
 
 ---
 
