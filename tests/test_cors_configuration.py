@@ -42,12 +42,15 @@ _PROBE = textwrap.dedent(
 def _cors_headers(env_value: str) -> dict:
     """Boot the app with MEMORA_CORS_ORIGINS=env_value and read the CORS headers."""
     import os
+    from pathlib import Path
 
+    repo_root = Path(__file__).resolve().parent.parent
     env = dict(os.environ)
     env["MEMORA_CORS_ORIGINS"] = env_value
-    env["PYTHONPATH"] = os.getcwd()
+    env["PYTHONPATH"] = str(repo_root)
     result = subprocess.run(
         [sys.executable, "-c", _PROBE],
+        cwd=str(repo_root),
         capture_output=True,
         text=True,
         env=env,

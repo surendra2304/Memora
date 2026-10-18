@@ -4,6 +4,7 @@ Tests that Alembic migration 5e89a1b2c3d4 (identity scope & idempotency)
 can cleanly downgrade to 433bb01f2a2a and upgrade back to head.
 """
 import os
+from pathlib import Path
 import tempfile
 import sqlite3
 from alembic.config import Config
@@ -17,7 +18,8 @@ def test_alembic_migration_upgrade_and_rollback():
 
     try:
         # Prepare alembic config pointing to temp db
-        alembic_cfg = Config("alembic.ini")
+        alembic_ini = str(Path(__file__).resolve().parent.parent / "alembic.ini")
+        alembic_cfg = Config(alembic_ini)
         alembic_cfg.set_main_option("sqlalchemy.url", f"sqlite:///{temp_db_path.replace(os.sep, '/')}")
 
         # 1. Upgrade to head (5e89a1b2c3d4)

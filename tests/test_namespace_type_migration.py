@@ -1,8 +1,11 @@
 """Data migration guards for namespaces previously promoted by substring matching."""
+from pathlib import Path
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
+
+_ALEMBIC_INI = str(Path(__file__).resolve().parent.parent / "alembic.ini")
 
 from core.policy.engine import PolicyEngine
 from storage.relational.base import Base
@@ -38,7 +41,7 @@ def test_upgrade_closes_noncanonical_public_and_global_namespace_rows():
             ],
         )
 
-    config = Config("alembic.ini")
+    config = Config(_ALEMBIC_INI)
     config.attributes["connection"] = engine
     command.upgrade(config, "head")
 
@@ -99,7 +102,7 @@ def test_migrated_personal_namespaces_are_not_open_to_other_agents(tmp_path):
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES ('f35ecb0a7c12')")
         )
-    config = Config("alembic.ini")
+    config = Config(_ALEMBIC_INI)
     config.attributes["connection"] = engine
     command.upgrade(config, "head")
 

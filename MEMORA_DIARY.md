@@ -26,7 +26,7 @@
 | **Hybrid Search** | Vector (Qdrant) + Keyword (FTS) + Graph (MemoryRelationship) + RRF Fusion ($k=60$) |
 | **Lifecycle Manager** | State Machine (6 states), Confidence-Weighted Supersession & Forgetting Decay |
 | **Write Pipeline** | Deterministic 10-Step Pipeline (Secret Scan, Normalization, Entity Graphing, Dedup, 5D Policy) |
-| **Storage Engine** | PostgreSQL 16 (Relational) + Qdrant (Vector) + Redis 7 (Cache) + SQLite Fallback |
+| **Storage Engine** | PostgreSQL 18 (Relational) + Qdrant (Vector) + Redis 7 (Cache) + SQLite Fallback |
 | **API Framework** | FastAPI (ASGI) + SQLAlchemy 2.0 + Alembic Migrations |
 
 ---

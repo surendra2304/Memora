@@ -1,6 +1,9 @@
+from pathlib import Path
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
+
+_ALEMBIC_INI = str(Path(__file__).resolve().parent.parent / "alembic.ini")
 
 from storage.relational import session as relational_session
 
@@ -44,7 +47,7 @@ def test_fresh_create_all_database_is_stamped_before_future_upgrades(tmp_path, m
 
         # The same schema can now pass through the deployment migration command
         # without replaying historical CREATE TABLE/ADD COLUMN operations.
-        config = Config("alembic.ini")
+        config = Config(_ALEMBIC_INI)
         config.attributes["connection"] = engine
         command.upgrade(config, "head")
         with engine.connect() as connection:
@@ -52,7 +55,7 @@ def test_fresh_create_all_database_is_stamped_before_future_upgrades(tmp_path, m
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one() == stamped_revision
 
-        migration_config = Config("alembic.ini")
+        migration_config = Config(_ALEMBIC_INI)
         migration_config.attributes["connection"] = migration_only_engine
         command.upgrade(migration_config, "head")
         # The current ORM metadata and a clean migration-only install have the
