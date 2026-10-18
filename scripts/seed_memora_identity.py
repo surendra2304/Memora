@@ -1,5 +1,5 @@
 """
-Seed script for Memora: Seeds identity-scoped memories and contracts for all 8 peer agents.
+Seed script for Memora: Seeds identity-scoped memories and contracts for the FRIDAY Universe peer agents.
 """
 import sys
 import os
@@ -13,10 +13,10 @@ from core.memory.service import MemoryService
 def seed_database():
     db = SessionLocal()
     try:
-        print("Seeding Memora with identity-scoped records across all 8 peer agents...")
+        print("Seeding Memora with identity-scoped records for the FRIDAY Universe agents...")
         
         # 1. Register Agents
-        agents = ["friday", "inference", "forge", "sentinel", "cortex", "intelx", "futuris", "stratex"]
+        agents = ["friday", "inference", "forge", "sentinel", "cortex", "intelx", "futuris", "stratex", "memora", "vyralx"]
         for a in agents:
             IdentityService.register_agent(db, name=a, role="worker" if a != "friday" else "supervisor")
         
