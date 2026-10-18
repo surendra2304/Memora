@@ -10,7 +10,7 @@ import os
 
 from core.identity.service import IdentityService
 from storage.relational.models import NamespaceType
-from storage.relational.session import SessionLocal, init_db
+from storage.relational.session import SessionLocal, init_db, storage_ready
 
 
 def register_vyralx_identity() -> tuple[str, str]:
@@ -22,6 +22,10 @@ def register_vyralx_identity() -> tuple[str, str]:
         )
 
     init_db()
+    if not storage_ready():
+        raise RuntimeError(
+            "Memora storage is not ready and authoritative; refusing to provision the VyralX identity."
+        )
     db = SessionLocal()
     try:
         agent = IdentityService.register_agent(
