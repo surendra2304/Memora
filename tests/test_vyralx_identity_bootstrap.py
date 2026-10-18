@@ -43,6 +43,7 @@ def test_vyralx_bootstrap_is_scoped_and_preserves_existing_records(monkeypatch, 
     )
     monkeypatch.setenv("VYRALX_API_KEY", "v" * 43)
     monkeypatch.setattr(bootstrap, "init_db", lambda: None)
+    monkeypatch.setattr(bootstrap, "storage_ready", lambda: True)
     monkeypatch.setattr(bootstrap, "SessionLocal", lambda: session)
     monkeypatch.setattr(bootstrap, "IdentityService", _fake_identity(agent, namespace))
 
@@ -69,6 +70,14 @@ def test_vyralx_bootstrap_rejects_a_namespace_owned_by_another_agent(monkeypatch
     with pytest.raises(RuntimeError, match="not owned by the VyralX identity"):
         bootstrap.register_vyralx_identity()
     assert session.closed is True
+
+
+def test_vyralx_bootstrap_refuses_non_authoritative_storage(monkeypatch):
+    monkeypatch.setenv("VYRALX_API_KEY", "v" * 43)
+    monkeypatch.setattr(bootstrap, "init_db", lambda: None)
+    monkeypatch.setattr(bootstrap, "storage_ready", lambda: False)
+    with pytest.raises(RuntimeError, match="not ready and authoritative"):
+        bootstrap.register_vyralx_identity()
 
 
 def test_vyralx_bootstrap_fails_before_touching_database_without_strong_key(monkeypatch):
