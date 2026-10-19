@@ -2,6 +2,7 @@
 Turso Cloud Direct Synchronizer
 Syncs all tables, schemas, agents, namespaces, and memories to Turso Cloud DB.
 """
+import argparse
 import os
 import sqlite3
 import requests
@@ -39,7 +40,21 @@ def execute_batch(statements: list[str]):
                 errors.append(f"Statement {i}: {res.get('error', {}).get('message', 'Unknown error')}")
     return len(errors) == 0, errors
 
-def sync_database():
+def sync_database(*, allow_destructive_rebuild: bool = False):
+    """Rebuild the remote Turso schema only after explicit CLI confirmation.
+
+    This legacy utility drops remote memory/audit/namespace tables before it
+    recreates them from a local SQLite file. It is disabled by default because
+    running it against the configured production endpoint can destroy remote
+    records and security metadata.
+    """
+    if not allow_destructive_rebuild:
+        raise SystemExit(
+            "REFUSING destructive Turso rebuild. This script drops remote tables. "
+            "Verify the exact target and a restorable backup, then rerun with "
+            "--allow-destructive-rebuild only if a full rebuild is intentional."
+        )
+
     local_db = "./data/memora.db"
     if not os.path.exists(local_db):
         print(f"[!] Local database {local_db} not found.")
@@ -148,4 +163,13 @@ def sync_database():
         print(f"[!] Error parsing stats: {e}, raw response: {resp}")
 
 if __name__ == "__main__":
-    sync_database()
+    parser = argparse.ArgumentParser(
+        description="Destructively rebuild a Turso replica from the local SQLite database."
+    )
+    parser.add_argument(
+        "--allow-destructive-rebuild",
+        action="store_true",
+        help="Explicitly acknowledge that remote tables will be dropped and rebuilt.",
+    )
+    args = parser.parse_args()
+    sync_database(allow_destructive_rebuild=args.allow_destructive_rebuild)
