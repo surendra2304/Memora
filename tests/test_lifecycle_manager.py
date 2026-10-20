@@ -8,11 +8,14 @@ from fastapi.testclient import TestClient
 from storage.relational.models import (
     NamespaceType,
     MemoryRecord,
+    MemoryRelationship,
     MemoryType,
     LifecycleState
 )
 from storage.vector.qdrant_adapter import vector_adapter
 from core.identity.service import IdentityService
+from core.memory.service import MemoryService
+from core.memory.graph_service import GraphService
 from core.lifecycle.supersession import SupersessionEngine
 
 def test_verify_memory_endpoint(client: TestClient, test_db):
@@ -77,6 +80,14 @@ def test_supersede_and_retrieval_exclusion(client: TestClient, test_db):
     test_db.add(new_mem)
     test_db.commit()
 
+    historical_edge = GraphService.create_relationship(
+        test_db,
+        old_mem.id,
+        new_mem.id,
+        commit=False,
+    )
+    test_db.commit()
+
     # Call supersede endpoint
     sup_resp = client.post(
         f"/v1/memories/{old_mem.id}/supersede",
@@ -93,6 +104,7 @@ def test_supersede_and_retrieval_exclusion(client: TestClient, test_db):
     test_db.refresh(old_mem)
     assert old_mem.lifecycle_state == LifecycleState.SUPERSEDED
     assert old_mem.superseded_by_id == new_mem.id
+    assert test_db.query(MemoryRelationship).filter_by(id=historical_edge.id).one()
 
     # 1. NORMAL QUERY: Should only return new_mem (old_mem is excluded)
     normal_query_resp = client.post(
@@ -226,6 +238,51 @@ def test_soft_and_hard_deletion(client: TestClient, test_db):
     # Confirmed removed from DB and vector store
     assert test_db.query(MemoryRecord).filter(MemoryRecord.id == mem2_id).first() is None
     assert mem2_id not in vector_adapter._mock_store
+
+
+def test_soft_delete_removes_incident_graph_edges_only(test_db):
+    """Soft-deleted memories retain history but no longer participate in the live graph."""
+    agent = IdentityService.register_agent(test_db, "lifecycle_graph_agent")
+    ns = IdentityService.get_namespace_by_path(test_db, "memora://lifecycle_graph_agent/private")
+    records = [
+        MemoryRecord(
+            namespace_id=ns.id,
+            owner_id=agent.id,
+            memory_type=MemoryType.EPISODIC,
+            content_text=f"Lifecycle graph record {index}",
+            lifecycle_state=LifecycleState.ACTIVE,
+        )
+        for index in range(4)
+    ]
+    test_db.add_all(records)
+    test_db.flush()
+    deleted, outgoing_neighbor, incoming_neighbor, unrelated = records
+
+    incident_edges = [
+        GraphService.create_relationship(test_db, deleted.id, outgoing_neighbor.id, commit=False),
+        GraphService.create_relationship(test_db, incoming_neighbor.id, deleted.id, commit=False),
+    ]
+    unrelated_edge = GraphService.create_relationship(
+        test_db, outgoing_neighbor.id, unrelated.id, commit=False
+    )
+    incident_edge_ids = [edge.id for edge in incident_edges]
+    unrelated_edge_id = unrelated_edge.id
+    test_db.commit()
+
+    result = MemoryService.delete_memory(
+        test_db,
+        memory_id=deleted.id,
+        actor_name=agent.name,
+        hard_delete=False,
+    )
+
+    assert result["status"] == "soft_deleted"
+    assert test_db.query(MemoryRecord).filter_by(id=deleted.id).one().lifecycle_state == LifecycleState.DELETED
+    assert test_db.query(MemoryRelationship).filter(
+        MemoryRelationship.id.in_(incident_edge_ids)
+    ).count() == 0
+    assert test_db.query(MemoryRelationship).filter_by(id=unrelated_edge_id).one()
+    assert test_db.query(MemoryRelationship).count() == 1
 
 def test_time_based_decay_and_auto_archival(client: TestClient, test_db):
     """

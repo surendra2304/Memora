@@ -183,6 +183,56 @@ def test_graph_service_guard_rejects_dangling_edges_directly(test_db):
         )
 
 
+def test_graph_service_rejects_cross_tenant_edges_but_allows_local_edges(test_db):
+    """Direct service callers cannot persist a graph edge across tenant boundaries."""
+    from core.memory.graph_service import GraphService, InvalidRelationshipError
+    from core.memory.pipeline.write_service import MemoryWriteService
+    from storage.relational.models import MemoryRelationship
+
+    IdentityService.register_agent(test_db, "forge", tenant_id="acme")
+    IdentityService.register_agent(test_db, "forge", tenant_id="globex")
+    acme_source = MemoryWriteService.execute_pipeline(
+        db=test_db,
+        caller_name="forge",
+        tenant_id="acme",
+        content_text="acme local graph source",
+    ).record
+    acme_target = MemoryWriteService.execute_pipeline(
+        db=test_db,
+        caller_name="forge",
+        tenant_id="acme",
+        content_text="acme local graph target",
+    ).record
+    globex_target = MemoryWriteService.execute_pipeline(
+        db=test_db,
+        caller_name="forge",
+        tenant_id="globex",
+        content_text="globex isolated graph target",
+    ).record
+
+    with pytest.raises(
+        InvalidRelationshipError,
+        match="cannot cross tenant boundaries",
+    ):
+        GraphService.create_relationship(
+            db=test_db,
+            source_memory_id=acme_source.id,
+            target_memory_id=globex_target.id,
+            commit=False,
+        )
+
+    assert test_db.query(MemoryRelationship).count() == 0
+    local_edge = GraphService.create_relationship(
+        db=test_db,
+        source_memory_id=acme_source.id,
+        target_memory_id=acme_target.id,
+        commit=False,
+    )
+    assert local_edge.source_memory_id == acme_source.id
+    assert local_edge.target_memory_id == acme_target.id
+    assert test_db.query(MemoryRelationship).count() == 1
+
+
 def test_owner_can_still_link_its_own_memories(client: TestClient, mesh, test_db):
     friday_id, _ = _two_private_memories(client, mesh, test_db)
     other = client.post(

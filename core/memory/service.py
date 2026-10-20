@@ -15,6 +15,7 @@ from storage.relational.models import (
     MemoryType,
     LifecycleState,
     DeletionTombstone,
+    MemoryRelationship,
 )
 from storage.vector.qdrant_adapter import vector_adapter
 from core.identity.service import IdentityService
@@ -685,7 +686,6 @@ class MemoryService:
 
             # 2. Graph relationship deletion (Requirement 9: multi-store convergence)
             try:
-                from storage.relational.models import MemoryRelationship
                 db.query(MemoryRelationship).filter(
                     or_(
                         MemoryRelationship.source_memory_id == memory_id,
@@ -730,6 +730,15 @@ class MemoryService:
                 "tombstone_status": tombstone.status
             }
         else:
+            # Deleted records remain in SQL for audit/history, so database
+            # foreign-key cascades do not run. Remove their graph edges in the
+            # same transaction to keep deleted memories out of live traversal.
+            db.query(MemoryRelationship).filter(
+                or_(
+                    MemoryRelationship.source_memory_id == memory_id,
+                    MemoryRelationship.target_memory_id == memory_id,
+                )
+            ).delete(synchronize_session=False)
             MemoryLifecycleEngine.transition(record, LifecycleState.DELETED)
             PolicyEngine.log_audit_decision(
                 db,

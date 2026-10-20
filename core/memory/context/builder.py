@@ -9,6 +9,7 @@ import re
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import aliased
 
 from storage.relational.models import (
     LifecycleState,
@@ -108,46 +109,28 @@ class ContextBuilderService:
         # -------------------------------------------------------------
         # 2. HYBRID RETRIEVAL WITH GRACEFUL DEGRADATION
         # -------------------------------------------------------------
-        try:
-            search_results = SearchService.hybrid_search(
-                db=db,
-                query_text=task_query,
-                actor_name=actor.name,
-                # Pass the resolved tenant down. Without it hybrid_search
-                # re-resolved actor_name unscoped, which — now that agent names
-                # are unique per tenant rather than globally — could bind the
-                # request to a same-named agent in another tenant and return
-                # that tenant's memories.
-                tenant_id=getattr(actor, "tenant_id", "default"),
-                user_id=user_id,
-                workspace_id=workspace_id,
-                task_id=task_id,
-                namespace_path=namespace_path,
-                purpose=purpose,
-                limit=max_candidates
-            )
-        except Exception:
+        def mark_vector_unavailable() -> None:
+            nonlocal is_degraded
             is_degraded = True
-            search_results = SearchService.hybrid_search(
-                db=db,
-                query_text=task_query,
-                actor_name=actor.name,
-                # Pass the resolved tenant down. Without it hybrid_search
-                # re-resolved actor_name unscoped, which — now that agent names
-                # are unique per tenant rather than globally — could bind the
-                # request to a same-named agent in another tenant and return
-                # that tenant's memories.
-                tenant_id=getattr(actor, "tenant_id", "default"),
-                user_id=user_id,
-                workspace_id=workspace_id,
-                task_id=task_id,
-                namespace_path=namespace_path,
-                purpose=purpose,
-                limit=max_candidates,
-                vector_weight=0.0,
-                keyword_weight=0.85,
-                graph_weight=0.15
-            )
+
+        search_results = SearchService.hybrid_search(
+            db=db,
+            query_text=task_query,
+            actor_name=actor.name,
+            # Pass the resolved tenant down. Without it hybrid_search
+            # re-resolved actor_name unscoped, which — now that agent names
+            # are unique per tenant rather than globally — could bind the
+            # request to a same-named agent in another tenant and return
+            # that tenant's memories.
+            tenant_id=getattr(actor, "tenant_id", "default"),
+            user_id=user_id,
+            workspace_id=workspace_id,
+            task_id=task_id,
+            namespace_path=namespace_path,
+            purpose=purpose,
+            limit=max_candidates,
+            on_vector_unavailable=mark_vector_unavailable,
+        )
 
         # -------------------------------------------------------------
         # 2b. PREDICTIVE CONTEXT PRE-FETCHING (Experience & Procedural Stores)
@@ -245,7 +228,13 @@ class ContextBuilderService:
             metrics_collector.record_compaction(tokens_saved)
 
         included_memory_ids = []
+        authorized_memory_ids = {item.record.id for item in policy_filtered}
         for m in budgeted_memories:
+            m.source_memory_ids = [
+                memory_id
+                for memory_id in m.source_memory_ids
+                if memory_id in authorized_memory_ids
+            ]
             included_memory_ids.extend(m.source_memory_ids)
         included_memory_ids = list(set(included_memory_ids))
 
@@ -254,10 +243,27 @@ class ContextBuilderService:
         # -------------------------------------------------------------
         graph_edges = []
         if len(included_memory_ids) > 1:
-            rels = db.query(MemoryRelationship).filter(
-                MemoryRelationship.source_memory_id.in_(included_memory_ids),
-                MemoryRelationship.target_memory_id.in_(included_memory_ids)
-            ).all()
+            source_memory = aliased(MemoryRecord)
+            target_memory = aliased(MemoryRecord)
+            actor_tenant_id = getattr(actor, "tenant_id", "default")
+            rels = (
+                db.query(MemoryRelationship)
+                .join(
+                    source_memory,
+                    MemoryRelationship.source_memory_id == source_memory.id,
+                )
+                .join(
+                    target_memory,
+                    MemoryRelationship.target_memory_id == target_memory.id,
+                )
+                .filter(
+                    MemoryRelationship.source_memory_id.in_(included_memory_ids),
+                    MemoryRelationship.target_memory_id.in_(included_memory_ids),
+                    source_memory.tenant_id == actor_tenant_id,
+                    target_memory.tenant_id == actor_tenant_id,
+                )
+                .all()
+            )
 
             for r in rels:
                 graph_edges.append({

@@ -51,14 +51,21 @@ def verify_all_agents():
             print(f"\n[+] Testing Agent: {name.upper()} ({role}) - {desc}")
             
             # 1. Identity & Namespace Resolution
-            agent = IdentityService.get_agent_by_name(db, name)
+            agent = IdentityService.get_agent_by_name(db, name, tenant_id="default")
             if not agent:
                 agent = IdentityService.register_agent(db, name=name, role=role, description=desc, tenant_id="default")
             
             private_ns_path = f"memora://{name}/private"
-            private_ns = IdentityService.get_namespace_by_path(db, private_ns_path)
+            private_ns = IdentityService.get_namespace_by_path(
+                db, private_ns_path, tenant_id=agent.tenant_id
+            )
             if not private_ns:
-                private_ns = IdentityService.resolve_namespace(db, private_ns_path, owner_agent_id=agent.id, tenant_id="default")
+                private_ns = IdentityService.resolve_namespace(
+                    db,
+                    private_ns_path,
+                    owner_agent_id=agent.id,
+                    tenant_id=agent.tenant_id,
+                )
                 
             # 2. Ingest Memory via 10-Step Write Pipeline
             test_content = f"Official ecosystem capability verified for {name.upper()}: operational protocol online."
@@ -66,6 +73,7 @@ def verify_all_agents():
                 db=db,
                 content_text=test_content,
                 caller_name=name,
+                tenant_id=agent.tenant_id,
                 target_namespace_path=private_ns_path,
                 memory_type=MemoryType.PROCEDURAL,
                 source=f"{name}_runtime",
@@ -98,6 +106,7 @@ def verify_all_agents():
                 db=db,
                 query_text=f"operational protocol {name}",
                 actor_name=name,
+                tenant_id=agent.tenant_id,
                 limit=3
             )
             assert len(hits) >= 1

@@ -4,7 +4,7 @@ Manages semantic knowledge graph edges, dependencies, entity resolution, and nei
 """
 from typing import List, Optional, Dict, Any
 import math
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 from sqlalchemy import or_
 import logging
 
@@ -215,12 +215,27 @@ class GraphService:
 
         for hop in range(1, max_hops + 1):
             next_layer = set()
-            rels = db.query(MemoryRelationship).filter(
+            source_memory = aliased(MemoryRecord)
+            target_memory = aliased(MemoryRecord)
+            relationship_query = db.query(MemoryRelationship).join(
+                source_memory,
+                MemoryRelationship.source_memory_id == source_memory.id,
+            ).join(
+                target_memory,
+                MemoryRelationship.target_memory_id == target_memory.id,
+            ).filter(
                 or_(
                     MemoryRelationship.source_memory_id.in_(current_layer),
                     MemoryRelationship.target_memory_id.in_(current_layer)
                 )
-            ).all()
+            )
+            if actor is not None:
+                actor_tenant = getattr(actor, "tenant_id", "default")
+                relationship_query = relationship_query.filter(
+                    source_memory.tenant_id == actor_tenant,
+                    target_memory.tenant_id == actor_tenant,
+                )
+            rels = relationship_query.all()
 
             for r in rels:
                 neighbor = r.target_memory_id if r.source_memory_id in current_layer else r.source_memory_id
@@ -259,12 +274,23 @@ class GraphService:
     @staticmethod
     def get_graph_neighbors(
         db: Session,
-        memory_ids: List[str]
+        memory_ids: List[str],
+        tenant_id: Optional[str] = None,
     ) -> Dict[str, float]:
-        if not memory_ids:
+        if not memory_ids or not tenant_id:
             return {}
 
-        rels = db.query(MemoryRelationship).filter(
+        source_memory = aliased(MemoryRecord)
+        target_memory = aliased(MemoryRecord)
+        rels = db.query(MemoryRelationship).join(
+            source_memory,
+            MemoryRelationship.source_memory_id == source_memory.id,
+        ).join(
+            target_memory,
+            MemoryRelationship.target_memory_id == target_memory.id,
+        ).filter(
+            source_memory.tenant_id == tenant_id,
+            target_memory.tenant_id == tenant_id,
             or_(
                 MemoryRelationship.source_memory_id.in_(memory_ids),
                 MemoryRelationship.target_memory_id.in_(memory_ids)

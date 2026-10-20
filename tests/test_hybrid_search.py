@@ -2,7 +2,10 @@
 Comprehensive Integration Tests for MEMORA Hybrid Storage and Search Architecture
 Tests Vector Embedding, Keyword Full-Text Search, Graph Store, and Reciprocal Rank Fusion (RRF).
 """
+from datetime import datetime, timedelta, timezone
+
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 from storage.relational.models import (
     MemoryRecord,
     MemoryType,
@@ -13,6 +16,7 @@ from storage.vector.qdrant_adapter import vector_adapter
 from core.identity.service import IdentityService
 from core.memory.graph_service import GraphService
 from core.memory.search_service import SearchService
+from storage.relational.models import Namespace, NamespaceType
 
 def test_embedding_generator_and_vector_adapter():
     """
@@ -118,6 +122,301 @@ def test_hybrid_search_with_rrf_and_graph_boost(test_db):
     assert top_result.record.id == m1.id
     assert top_result.final_score > 0.0
     assert len(top_result.match_reasons) >= 1
+
+
+def test_search_requires_actor_and_enforces_private_shared_and_global_scopes(test_db, monkeypatch):
+    """Persisted memories are visible only through the actor's namespace authority."""
+    owner = IdentityService.register_agent(test_db, "scope-owner")
+    peer = IdentityService.register_agent(test_db, "scope-peer")
+    private_ns = IdentityService.get_namespace_by_path(
+        test_db, "memora://scope-owner/private"
+    )
+    shared_ns = Namespace(
+        tenant_id="default",
+        path="memora://team/scope-project",
+        agent_id=owner.id,
+        type=NamespaceType.TEAM_SHARED,
+    )
+    global_ns = Namespace(
+        tenant_id="default",
+        path="memora://universe/scope-knowledge",
+        agent_id=None,
+        type=NamespaceType.UNIVERSE_GLOBAL,
+    )
+    test_db.add_all([shared_ns, global_ns])
+    test_db.flush()
+
+    private_record = MemoryRecord(
+        tenant_id="default",
+        namespace_id=private_ns.id,
+        owner_id=owner.id,
+        memory_type=MemoryType.EPISODIC,
+        content_text="distinctive scope persistence marker",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    shared_record = MemoryRecord(
+        tenant_id="default",
+        namespace_id=shared_ns.id,
+        owner_id=owner.id,
+        memory_type=MemoryType.EPISODIC,
+        content_text="distinctive scope persistence marker",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    global_record = MemoryRecord(
+        tenant_id="default",
+        namespace_id=global_ns.id,
+        owner_id=owner.id,
+        memory_type=MemoryType.EPISODIC,
+        content_text="distinctive scope persistence marker",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    test_db.add_all([private_record, shared_record, global_record])
+    test_db.commit()
+
+    monkeypatch.setattr(EmbeddingGenerator, "generate_embedding", staticmethod(lambda _text: [0.0]))
+    monkeypatch.setattr(vector_adapter, "search_similarity", lambda **_kwargs: [])
+    monkeypatch.setattr(GraphService, "get_graph_neighbors", lambda _db, _ids, **_kwargs: {})
+
+    def search(actor_name=None):
+        return SearchService.hybrid_search(
+            test_db,
+            query_text="distinctive scope persistence marker",
+            actor_name=actor_name,
+            limit=10,
+        )
+
+    assert search() == []
+    assert {hit.record.id for hit in search("scope-peer")} == {global_record.id}
+    assert {hit.record.id for hit in search("scope-owner")} == {
+        private_record.id,
+        shared_record.id,
+        global_record.id,
+    }
+
+    IdentityService.grant_access(
+        test_db,
+        agent_id=peer.id,
+        namespace_id=shared_ns.id,
+        actions=["read", "query"],
+    )
+
+    assert {hit.record.id for hit in search("scope-peer")} == {
+        shared_record.id,
+        global_record.id,
+    }
+    assert IdentityService.revoke_access(
+        test_db, peer.id, shared_ns.id, tenant_id="default"
+    )
+    assert {hit.record.id for hit in search("scope-peer")} == {global_record.id}
+
+    IdentityService.grant_access(
+        test_db,
+        agent_id=peer.id,
+        namespace_id=shared_ns.id,
+        actions=["read", "query"],
+        expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    assert {hit.record.id for hit in search("scope-peer")} == {global_record.id}
+
+    active_expiry = datetime.now(timezone.utc) + timedelta(hours=1)
+    read_only_grant = IdentityService.grant_access(
+        test_db,
+        agent_id=peer.id,
+        namespace_id=shared_ns.id,
+        actions=["read"],
+        expires_at=active_expiry,
+    )
+    assert not read_only_grant.is_expired()
+    assert {hit.record.id for hit in search("scope-peer")} == {global_record.id}
+
+    query_grant = IdentityService.grant_access(
+        test_db,
+        agent_id=peer.id,
+        namespace_id=shared_ns.id,
+        actions=["read", "query"],
+    )
+    assert query_grant.expires_at == read_only_grant.expires_at
+    assert {hit.record.id for hit in search("scope-peer")} == {
+        shared_record.id,
+        global_record.id,
+    }
+    assert test_db.query(MemoryRecord).filter_by(id=private_record.id).one().content_text == (
+        "distinctive scope persistence marker"
+    )
+
+
+def test_graph_neighbor_expansion_is_scoped_to_both_endpoint_tenants(test_db):
+    """Graph expansion neither returns nor loads a cross-tenant relationship."""
+    from storage.relational.models import MemoryRelationship
+
+    local_agent = IdentityService.register_agent(
+        test_db, "graph-local", tenant_id="tenant-local"
+    )
+    foreign_agent = IdentityService.register_agent(
+        test_db, "graph-foreign", tenant_id="tenant-foreign"
+    )
+    local_ns = IdentityService.resolve_namespace(
+        test_db,
+        "memora://graph-local/private",
+        owner_agent_id=local_agent.id,
+        tenant_id="tenant-local",
+    )
+    foreign_ns = IdentityService.resolve_namespace(
+        test_db,
+        "memora://graph-foreign/private",
+        owner_agent_id=foreign_agent.id,
+        tenant_id="tenant-foreign",
+    )
+    seed = MemoryRecord(
+        tenant_id="tenant-local",
+        namespace_id=local_ns.id,
+        owner_id=local_agent.id,
+        memory_type=MemoryType.SEMANTIC,
+        content_text="local graph seed",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    local_neighbor = MemoryRecord(
+        tenant_id="tenant-local",
+        namespace_id=local_ns.id,
+        owner_id=local_agent.id,
+        memory_type=MemoryType.SEMANTIC,
+        content_text="local graph neighbor",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    foreign_neighbor = MemoryRecord(
+        tenant_id="tenant-foreign",
+        namespace_id=foreign_ns.id,
+        owner_id=foreign_agent.id,
+        memory_type=MemoryType.SEMANTIC,
+        content_text="foreign graph neighbor",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    test_db.add_all([seed, local_neighbor, foreign_neighbor])
+    test_db.flush()
+    test_db.add_all([
+        GraphService.create_relationship(
+            test_db, seed.id, local_neighbor.id, commit=False
+        ),
+        # Simulate a legacy/corrupt edge, since create_relationship correctly
+        # rejects cross-tenant links.
+        MemoryRelationship(
+            source_memory_id=seed.id,
+            target_memory_id=foreign_neighbor.id,
+            relationship_type="relates_to",
+            weight=1.0,
+        ),
+    ])
+    test_db.commit()
+
+    graph_queries = []
+
+    def capture_graph_query(_conn, _cursor, statement, parameters, _context, _executemany):
+        if "memory_relationships" in statement:
+            graph_queries.append((statement, parameters))
+
+    engine = test_db.get_bind()
+    event.listen(engine, "before_cursor_execute", capture_graph_query)
+    try:
+        neighbors = GraphService.get_graph_neighbors(
+            test_db, [seed.id], tenant_id="tenant-local"
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", capture_graph_query)
+
+    assert neighbors == {local_neighbor.id: 0.15}
+    assert len(graph_queries) == 1
+    graph_sql, graph_parameters = graph_queries[0]
+    assert graph_sql.count("tenant_id") >= 2
+    assert list(graph_parameters).count("tenant-local") == 2
+    assert GraphService.get_graph_neighbors(test_db, [seed.id]) == {}
+
+
+def test_graph_api_filters_cross_tenant_edges_before_loading_relationships(client, test_db):
+    """Actor-aware graph traversal scopes both endpoints in its relationship query."""
+    from storage.relational.models import MemoryRelationship
+
+    local_agent = IdentityService.register_agent(test_db, "graph-api-local")
+    foreign_agent = IdentityService.register_agent(
+        test_db, "graph-api-foreign", tenant_id="tenant-foreign"
+    )
+    local_ns = IdentityService.get_namespace_by_path(
+        test_db, "memora://graph-api-local/private"
+    )
+    foreign_ns = IdentityService.resolve_namespace(
+        test_db,
+        "memora://graph-api-foreign/private",
+        owner_agent_id=foreign_agent.id,
+        tenant_id="tenant-foreign",
+    )
+    seed = MemoryRecord(
+        tenant_id="default",
+        namespace_id=local_ns.id,
+        owner_id=local_agent.id,
+        memory_type=MemoryType.SEMANTIC,
+        content_text="graph API seed",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    local_neighbor = MemoryRecord(
+        tenant_id="default",
+        namespace_id=local_ns.id,
+        owner_id=local_agent.id,
+        memory_type=MemoryType.SEMANTIC,
+        content_text="graph API local neighbor",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    foreign_neighbor = MemoryRecord(
+        tenant_id="tenant-foreign",
+        namespace_id=foreign_ns.id,
+        owner_id=foreign_agent.id,
+        memory_type=MemoryType.SEMANTIC,
+        content_text="graph API foreign neighbor",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    test_db.add_all([seed, local_neighbor, foreign_neighbor])
+    test_db.flush()
+    test_db.add(
+        GraphService.create_relationship(
+            test_db, seed.id, local_neighbor.id, commit=False
+        )
+    )
+    # Model a legacy/corrupt row that could not be created through the service.
+    test_db.add(
+        MemoryRelationship(
+            source_memory_id=seed.id,
+            target_memory_id=foreign_neighbor.id,
+            relationship_type="relates_to",
+            weight=1.0,
+        )
+    )
+    test_db.commit()
+
+    relationship_queries = []
+
+    def capture_relationship_query(
+        _conn, _cursor, statement, parameters, _context, _executemany
+    ):
+        if "FROM memory_relationships" in statement:
+            relationship_queries.append((statement, parameters))
+
+    engine = test_db.get_bind()
+    event.listen(engine, "before_cursor_execute", capture_relationship_query)
+    try:
+        response = client.get(
+            f"/v1/memories/{seed.id}/graph",
+            headers={"X-Agent-Name": "graph-api-local"},
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", capture_relationship_query)
+
+    assert response.status_code == 200
+    graph = response.json()
+    assert graph["connected_memory_ids"] == [local_neighbor.id]
+    assert [edge["target_id"] for edge in graph["edges"]] == [local_neighbor.id]
+    assert len(relationship_queries) == 2
+    for graph_sql, graph_parameters in relationship_queries:
+        assert graph_sql.count("tenant_id") >= 2
+        assert list(graph_parameters).count("default") == 2
+
 
 def test_api_v1_memories_search_endpoint(client: TestClient, test_db):
     """

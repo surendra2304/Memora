@@ -217,20 +217,43 @@ def test_multi_store_deletion_convergence(test_db):
         content_text="Secondary record linked to primary.",
         lifecycle_state=LifecycleState.ACTIVE
     )
-    test_db.add_all([rec1, rec2])
+    rec3 = MemoryRecord(
+        id="mem-del-unrelated-003",
+        namespace_id=ns.id,
+        owner_id=agent.id,
+        memory_type=MemoryType.EPISODIC,
+        content_text="Unrelated record whose graph edge must remain.",
+        lifecycle_state=LifecycleState.ACTIVE
+    )
+    test_db.add_all([rec1, rec2, rec3])
     test_db.flush()
 
-    # 2. Add graph edge
-    rel = MemoryRelationship(
-        source_memory_id=rec1.id,
-        target_memory_id=rec2.id,
-        relationship_type="relates_to"
+    # 2. Add incoming, outgoing, and unrelated graph edges
+    incident_edges = [
+        MemoryRelationship(
+            source_memory_id=rec1.id,
+            target_memory_id=rec2.id,
+            relationship_type="relates_to",
+        ),
+        MemoryRelationship(
+            source_memory_id=rec2.id,
+            target_memory_id=rec1.id,
+            relationship_type="derived_from",
+        ),
+    ]
+    unrelated_edge = MemoryRelationship(
+        source_memory_id=rec2.id,
+        target_memory_id=rec3.id,
+        relationship_type="relates_to",
     )
-    test_db.add(rel)
+    test_db.add_all([*incident_edges, unrelated_edge])
+    test_db.flush()
+    incident_edge_ids = [edge.id for edge in incident_edges]
+    unrelated_edge_id = unrelated_edge.id
     test_db.commit()
 
     # Verify edge exists
-    assert test_db.query(MemoryRelationship).filter(MemoryRelationship.source_memory_id == rec1.id).count() == 1
+    assert test_db.query(MemoryRelationship).count() == 3
 
     # 3. Execute hard deletion
     res = MemoryService.delete_memory(test_db, memory_id=rec1.id, actor_name="friday", hard_delete=True)
@@ -242,8 +265,12 @@ def test_multi_store_deletion_convergence(test_db):
     # Verify relational record is gone
     assert test_db.query(MemoryRecord).filter(MemoryRecord.id == rec1.id).first() is None
 
-    # Verify graph edge is cleaned up
-    assert test_db.query(MemoryRelationship).filter(MemoryRelationship.source_memory_id == rec1.id).count() == 0
+    # Verify all incident graph edges are cleaned while unrelated edges survive
+    assert test_db.query(MemoryRelationship).filter(
+        MemoryRelationship.id.in_(incident_edge_ids)
+    ).count() == 0
+    assert test_db.query(MemoryRelationship).filter_by(id=unrelated_edge_id).one()
+    assert test_db.query(MemoryRelationship).count() == 1
 
     # Verify tombstone record was stored and converged
     tombstone = test_db.query(DeletionTombstone).filter(DeletionTombstone.memory_id == rec1.id).first()

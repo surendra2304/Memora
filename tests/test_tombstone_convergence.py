@@ -3,6 +3,9 @@ Unit and Integration Tests for Multi-Store Deletion Convergence Worker.
 Verifies that unconverged DeletionTombstones are polled and converged
 across relational SQL, vector store, cache, graph relationships, and Turso replicas.
 """
+import importlib
+
+from sqlalchemy import text
 from storage.relational.models import (
     DeletionTombstone,
     MemoryRecord,
@@ -14,6 +17,84 @@ from storage.convergence.tombstone_worker import TombstoneConvergenceWorker
 from storage.vector.qdrant_adapter import vector_adapter
 from core.cache.memory_cache import memory_cache
 from core.identity.service import IdentityService
+from sqlalchemy.orm import Query
+
+
+def _make_retry_case(db, tenant):
+    agent = IdentityService.register_agent(db, name=f"{tenant}_agent", tenant_id=tenant)
+    namespace = IdentityService.resolve_namespace(
+        db,
+        path=f"memora://{tenant}/retry",
+        owner_agent_id=agent.id,
+        tenant_id=tenant,
+    )
+    records = []
+    for index in range(3):
+        record = MemoryRecord(
+            tenant_id=tenant,
+            user_id="user",
+            agent_id=agent.name,
+            workspace_id="workspace",
+            namespace_id=namespace.id,
+            owner_id=agent.id,
+            memory_type=MemoryType.EPISODIC,
+            content_text=f"Retry record {index}",
+            content_hash=f"{tenant}_hash_{index}",
+            lifecycle_state=LifecycleState.ACTIVE,
+        )
+        db.add(record)
+        records.append(record)
+    db.flush()
+    target_id, unrelated_source_id, unrelated_target_id = (
+        record.id for record in records
+    )
+    tombstone = DeletionTombstone(
+        tenant_id=tenant,
+        memory_id=target_id,
+        relational_deleted=False,
+        vector_deleted=False,
+        cache_deleted=False,
+        graph_deleted=False,
+        turso_deleted=False,
+        status="PENDING",
+    )
+    incident = MemoryRelationship(
+        source_memory_id=target_id,
+        target_memory_id=unrelated_source_id,
+        relationship_type="relates_to",
+        weight=1.0,
+    )
+    unrelated = MemoryRelationship(
+        source_memory_id=unrelated_source_id,
+        target_memory_id=unrelated_target_id,
+        relationship_type="relates_to",
+        weight=1.0,
+    )
+    db.add_all([tombstone, incident, unrelated])
+    db.commit()
+    return tombstone, target_id, incident.id, unrelated.id
+
+
+def _set_local_deletion_stores(monkeypatch):
+    monkeypatch.setattr(vector_adapter, "delete_embedding", lambda *args, **kwargs: True)
+    worker_module = importlib.import_module("storage.convergence.tombstone_worker")
+    monkeypatch.setattr(worker_module, "turso_replica_enabled", lambda: False)
+
+
+def _install_sql_delete_failure_trigger(db, trigger_name, table_name, condition):
+    db.execute(
+        text(
+            f"""
+            CREATE TRIGGER {trigger_name}
+            BEFORE DELETE ON {table_name}
+            WHEN {condition}
+            BEGIN
+                SELECT RAISE(ABORT, 'injected SQL delete failure');
+            END
+            """
+        )
+    )
+    db.commit()
 
 
 def test_tombstone_worker_single_convergence(test_db):
@@ -109,6 +190,83 @@ def test_tombstone_worker_single_convergence(test_db):
     assert test_db.query(MemoryRelationship).filter_by(source_memory_id=mem_id).first() is None
 
 
+def test_tombstone_with_wrong_tenant_does_not_delete_foreign_memory_or_edges(
+    test_db, monkeypatch
+):
+    foreign_tenant = "tenant_foreign_memory"
+    tombstone_tenant = "tenant_wrong_tombstone"
+    agent = IdentityService.register_agent(
+        test_db, name="foreign_memory_agent", tenant_id=foreign_tenant
+    )
+    namespace = IdentityService.resolve_namespace(
+        test_db,
+        path=f"memora://{foreign_tenant}/wrong-tenant-tombstone",
+        owner_agent_id=agent.id,
+        tenant_id=foreign_tenant,
+    )
+    foreign_record = MemoryRecord(
+        tenant_id=foreign_tenant,
+        user_id="foreign_user",
+        agent_id=agent.name,
+        workspace_id="foreign_workspace",
+        namespace_id=namespace.id,
+        owner_id=agent.id,
+        memory_type=MemoryType.EPISODIC,
+        content_text="Foreign tenant memory must survive",
+        content_hash="foreign_memory_wrong_tenant",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    other_record = MemoryRecord(
+        tenant_id=foreign_tenant,
+        user_id="foreign_user",
+        agent_id=agent.name,
+        workspace_id="foreign_workspace",
+        namespace_id=namespace.id,
+        owner_id=agent.id,
+        memory_type=MemoryType.EPISODIC,
+        content_text="Unrelated foreign tenant memory",
+        content_hash="unrelated_foreign_memory_wrong_tenant",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    test_db.add_all([foreign_record, other_record])
+    test_db.flush()
+    incident = MemoryRelationship(
+        source_memory_id=foreign_record.id,
+        target_memory_id=other_record.id,
+        relationship_type="relates_to",
+        weight=1.0,
+    )
+    tombstone = DeletionTombstone(
+        tenant_id=tombstone_tenant,
+        memory_id=foreign_record.id,
+        relational_deleted=False,
+        vector_deleted=False,
+        cache_deleted=False,
+        graph_deleted=False,
+        turso_deleted=False,
+        status="PENDING",
+    )
+    test_db.add_all([incident, tombstone])
+    test_db.commit()
+    _set_local_deletion_stores(monkeypatch)
+
+    worker = TombstoneConvergenceWorker(batch_size=10, max_retries=3)
+    for expected_status in ("PENDING_RETRY", "PENDING_RETRY", "FAILED"):
+        receipt = worker.run_convergence_pass(test_db, tenant_id=tombstone_tenant)
+        assert receipt["processed"] == 1
+        assert receipt["converged"] == 0
+        assert tombstone.status == expected_status
+    assert receipt["failed"] == 1
+    assert tombstone.retry_count == 3
+    assert tombstone.vector_deleted is False
+    assert tombstone.cache_deleted is False
+    assert tombstone.turso_deleted is False
+    assert tombstone.graph_deleted is False
+    assert tombstone.relational_deleted is False
+    assert test_db.query(MemoryRecord).filter_by(id=foreign_record.id).one() == foreign_record
+    assert test_db.query(MemoryRelationship).filter_by(id=incident.id).one() == incident
+
+
 def test_run_convergence_pass_batch(test_db):
     """Test running a convergence pass over a batch of multiple unconverged tombstones."""
     tenant = "tenant_conv_batch"
@@ -175,6 +333,324 @@ def test_tombstone_exhausts_retries_and_fails(test_db, monkeypatch):
     assert t.retry_count == 3
     assert t.status == "FAILED"
     assert t.is_converged() is False
+
+
+def test_graph_cleanup_failure_retries_without_losing_unrelated_edges(test_db, monkeypatch):
+    tenant = "tenant_graph_retry"
+    tombstone, memory_id, incident_id, unrelated_id = _make_retry_case(test_db, tenant)
+    _set_local_deletion_stores(monkeypatch)
+    original_delete = Query.delete
+    failures_remaining = 1
+
+    def fail_graph_delete_once(query, *args, **kwargs):
+        nonlocal failures_remaining
+        if (
+            query.column_descriptions[0]["entity"] is MemoryRelationship
+            and failures_remaining
+        ):
+            failures_remaining -= 1
+            raise RuntimeError("Injected graph cleanup failure")
+        return original_delete(query, *args, **kwargs)
+
+    monkeypatch.setattr(Query, "delete", fail_graph_delete_once)
+    worker = TombstoneConvergenceWorker(batch_size=10, max_retries=3)
+
+    first_pass = worker.run_convergence_pass(test_db, tenant_id=tenant)
+
+    assert first_pass["converged"] == 0
+    assert first_pass["pending"] == 1
+    assert tombstone.status == "PENDING_RETRY"
+    assert tombstone.graph_deleted is False
+    assert tombstone.relational_deleted is True
+    assert tombstone.is_converged() is False
+    assert test_db.query(MemoryRecord).filter_by(id=memory_id).first() is None
+
+    second_pass = worker.run_convergence_pass(test_db, tenant_id=tenant)
+
+    assert second_pass["converged"] == 1
+    assert tombstone.status == "CONVERGED"
+    assert tombstone.graph_deleted is True
+    assert test_db.query(MemoryRelationship).filter_by(id=incident_id).first() is None
+    assert test_db.query(MemoryRelationship).filter_by(id=unrelated_id).first() is not None
+
+
+def test_relational_delete_failure_retries_without_marking_converged(test_db, monkeypatch):
+    tenant = "tenant_relational_retry"
+    tombstone, memory_id, incident_id, unrelated_id = _make_retry_case(test_db, tenant)
+    _set_local_deletion_stores(monkeypatch)
+    original_delete = test_db.delete
+    failures_remaining = 1
+
+    def fail_memory_delete_once(instance):
+        nonlocal failures_remaining
+        if isinstance(instance, MemoryRecord) and instance.id == memory_id and failures_remaining:
+            failures_remaining -= 1
+            raise RuntimeError("Injected relational deletion failure")
+        return original_delete(instance)
+
+    monkeypatch.setattr(test_db, "delete", fail_memory_delete_once)
+    worker = TombstoneConvergenceWorker(batch_size=10, max_retries=3)
+
+    first_pass = worker.run_convergence_pass(test_db, tenant_id=tenant)
+
+    assert first_pass["converged"] == 0
+    assert first_pass["pending"] == 1
+    assert tombstone.status == "PENDING_RETRY"
+    assert tombstone.graph_deleted is True
+    assert tombstone.relational_deleted is False
+    assert tombstone.is_converged() is False
+    assert test_db.query(MemoryRecord).filter_by(id=memory_id).first() is not None
+
+    second_pass = worker.run_convergence_pass(test_db, tenant_id=tenant)
+
+    assert second_pass["converged"] == 1
+    assert tombstone.status == "CONVERGED"
+    assert tombstone.relational_deleted is True
+    assert test_db.query(MemoryRelationship).filter_by(id=incident_id).first() is None
+    assert test_db.query(MemoryRelationship).filter_by(id=unrelated_id).first() is not None
+
+
+def test_failed_tombstone_is_not_retried_after_retry_limit(test_db):
+    tombstone = DeletionTombstone(
+        tenant_id="tenant_terminal",
+        memory_id="mem_terminal",
+        relational_deleted=False,
+        vector_deleted=False,
+        cache_deleted=False,
+        graph_deleted=False,
+        turso_deleted=False,
+        status="FAILED",
+        retry_count=5,
+    )
+    test_db.add(tombstone)
+    test_db.commit()
+
+    receipt = TombstoneConvergenceWorker(max_retries=5).run_convergence_pass(test_db)
+
+    assert receipt["processed"] == 0
+    assert tombstone.retry_count == 5
+    assert tombstone.status == "FAILED"
+
+
+def test_graph_sql_failure_rolls_back_savepoint_and_retries(test_db, monkeypatch, caplog):
+    tenant = "tenant_graph_sql_retry"
+    tombstone, memory_id, incident_id, unrelated_id = _make_retry_case(test_db, tenant)
+    _set_local_deletion_stores(monkeypatch)
+    unrelated_target_id = (
+        test_db.query(MemoryRelationship.target_memory_id)
+        .filter_by(id=unrelated_id)
+        .scalar()
+    )
+    incoming = MemoryRelationship(
+        source_memory_id=unrelated_target_id,
+        target_memory_id=memory_id,
+        relationship_type="relates_to",
+        weight=1.0,
+    )
+    test_db.add(incoming)
+    test_db.commit()
+    incoming_id = incoming.id
+    graph_failure_remaining = 1
+
+    def fail_graph_cleanup_once(source_memory_id, target_memory_id):
+        nonlocal graph_failure_remaining
+        if (
+            memory_id in (source_memory_id, target_memory_id)
+            and graph_failure_remaining
+        ):
+            graph_failure_remaining -= 1
+            return 1
+        return 0
+
+    test_db.connection().connection.driver_connection.create_function(
+        "fail_graph_cleanup_once", 2, fail_graph_cleanup_once
+    )
+    _install_sql_delete_failure_trigger(
+        test_db,
+        "fail_incident_relationship_delete",
+        "memory_relationships",
+        "fail_graph_cleanup_once(OLD.source_memory_id, OLD.target_memory_id)",
+    )
+    record_failure_remaining = 1
+
+    def fail_memory_delete_once():
+        nonlocal record_failure_remaining
+        if record_failure_remaining:
+            record_failure_remaining -= 1
+            return 1
+        return 0
+
+    test_db.connection().connection.driver_connection.create_function(
+        "fail_memory_delete_once", 0, fail_memory_delete_once
+    )
+    _install_sql_delete_failure_trigger(
+        test_db,
+        "fail_tombstoned_memory_delete",
+        "memory_records",
+        "fail_memory_delete_once() AND "
+        "EXISTS (SELECT 1 FROM deletion_tombstones WHERE memory_id = OLD.id)",
+    )
+    worker = TombstoneConvergenceWorker(batch_size=10, max_retries=3)
+
+    first_pass = worker.run_convergence_pass(test_db, tenant_id=tenant)
+
+    assert first_pass["converged"] == 0
+    assert first_pass["pending"] == 1
+    assert tombstone.status == "PENDING_RETRY"
+    assert tombstone.graph_deleted is False
+    assert tombstone.relational_deleted is False
+    assert "graph deletion retry failed" in caplog.text
+    assert "relational deletion retry failed" in caplog.text
+    assert test_db.query(MemoryRecord).filter_by(id=memory_id).first() is not None
+    assert test_db.query(MemoryRelationship).filter_by(id=incident_id).first() is not None
+    assert test_db.query(MemoryRelationship).filter_by(id=incoming_id).first() is not None
+    assert test_db.query(MemoryRelationship).filter_by(id=unrelated_id).first() is not None
+
+    test_db.execute(text("DROP TRIGGER fail_incident_relationship_delete"))
+    test_db.execute(text("DROP TRIGGER fail_tombstoned_memory_delete"))
+    test_db.commit()
+    second_pass = worker.run_convergence_pass(test_db, tenant_id=tenant)
+
+    assert second_pass["converged"] == 1
+    assert tombstone.status == "CONVERGED"
+    assert tombstone.graph_deleted is True
+    assert tombstone.relational_deleted is True
+    assert test_db.query(MemoryRecord).filter_by(id=memory_id).first() is None
+    assert test_db.query(MemoryRelationship).filter_by(id=incident_id).first() is None
+    assert test_db.query(MemoryRelationship).filter_by(id=incoming_id).first() is None
+    assert test_db.query(MemoryRelationship).filter_by(id=unrelated_id).first() is not None
+
+
+def test_relational_sql_failure_rolls_back_savepoint_and_retries(
+    test_db, monkeypatch, caplog
+):
+    tenant = "tenant_record_sql_retry"
+    tombstone, memory_id, incident_id, unrelated_id = _make_retry_case(test_db, tenant)
+    _set_local_deletion_stores(monkeypatch)
+    unrelated_target_id = (
+        test_db.query(MemoryRelationship.target_memory_id)
+        .filter_by(id=unrelated_id)
+        .scalar()
+    )
+    incoming = MemoryRelationship(
+        source_memory_id=unrelated_target_id,
+        target_memory_id=memory_id,
+        relationship_type="relates_to",
+        weight=1.0,
+    )
+    test_db.add(incoming)
+    test_db.commit()
+    incoming_id = incoming.id
+    _install_sql_delete_failure_trigger(
+        test_db,
+        "fail_tombstoned_memory_delete",
+        "memory_records",
+        "EXISTS (SELECT 1 FROM deletion_tombstones WHERE memory_id = OLD.id)",
+    )
+    worker = TombstoneConvergenceWorker(batch_size=10, max_retries=3)
+
+    first_pass = worker.run_convergence_pass(test_db, tenant_id=tenant)
+
+    assert first_pass["converged"] == 0
+    assert first_pass["pending"] == 1
+    assert tombstone.status == "PENDING_RETRY"
+    assert tombstone.graph_deleted is True
+    assert tombstone.relational_deleted is False
+    assert "relational deletion retry failed" in caplog.text
+    assert test_db.query(MemoryRecord).filter_by(id=memory_id).first() is not None
+    assert test_db.query(MemoryRelationship).filter_by(id=incident_id).first() is None
+    assert test_db.query(MemoryRelationship).filter_by(id=incoming_id).first() is None
+    assert test_db.query(MemoryRelationship).filter_by(id=unrelated_id).first() is not None
+    test_db.commit()
+
+    test_db.execute(text("DROP TRIGGER fail_tombstoned_memory_delete"))
+    test_db.commit()
+    second_pass = worker.run_convergence_pass(test_db, tenant_id=tenant)
+
+    assert second_pass["converged"] == 1
+    assert tombstone.status == "CONVERGED"
+    assert tombstone.relational_deleted is True
+    assert test_db.query(MemoryRecord).filter_by(id=memory_id).first() is None
+    assert test_db.query(MemoryRelationship).filter_by(id=incident_id).first() is None
+    assert test_db.query(MemoryRelationship).filter_by(id=incoming_id).first() is None
+    assert test_db.query(MemoryRelationship).filter_by(id=unrelated_id).first() is not None
+
+
+def test_sql_delete_failure_does_not_block_other_batch_tombstones(test_db, monkeypatch):
+    tenant = "tenant_batch_sql_retry"
+    tombstone, memory_id, incident_id, unrelated_id = _make_retry_case(test_db, tenant)
+    _set_local_deletion_stores(monkeypatch)
+    failed_delete_remaining = 1
+
+    def fail_target_memory_delete(record_id):
+        nonlocal failed_delete_remaining
+        if record_id == memory_id and failed_delete_remaining:
+            failed_delete_remaining -= 1
+            return 1
+        return 0
+
+    test_db.connection().connection.driver_connection.create_function(
+        "fail_target_memory_delete", 1, fail_target_memory_delete
+    )
+    _install_sql_delete_failure_trigger(
+        test_db,
+        "fail_one_batch_memory_delete",
+        "memory_records",
+        "fail_target_memory_delete(OLD.id)",
+    )
+
+    target_record = test_db.query(MemoryRecord).filter_by(id=memory_id).one()
+    other_record = MemoryRecord(
+        tenant_id=tenant,
+        user_id=target_record.user_id,
+        agent_id=target_record.agent_id,
+        workspace_id=target_record.workspace_id,
+        namespace_id=target_record.namespace_id,
+        owner_id=target_record.owner_id,
+        memory_type=target_record.memory_type,
+        content_text="Independent batch retry record",
+        content_hash=f"{tenant}_independent_hash",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    test_db.add(other_record)
+    test_db.flush()
+    other_tombstone = DeletionTombstone(
+        tenant_id=tenant,
+        memory_id=other_record.id,
+        relational_deleted=False,
+        vector_deleted=False,
+        cache_deleted=False,
+        graph_deleted=False,
+        turso_deleted=False,
+        status="PENDING",
+    )
+    test_db.add(other_tombstone)
+    test_db.commit()
+
+    worker = TombstoneConvergenceWorker(batch_size=10, max_retries=3)
+    first_pass = worker.run_convergence_pass(test_db, tenant_id=tenant)
+
+    assert first_pass["processed"] == 2
+    assert first_pass["converged"] == 1
+    assert first_pass["pending"] == 1
+    assert tombstone.status == "PENDING_RETRY"
+    assert tombstone.graph_deleted is True
+    assert tombstone.relational_deleted is False
+    assert other_tombstone.status == "CONVERGED"
+    assert test_db.query(MemoryRecord).filter_by(id=memory_id).first() is not None
+    assert test_db.query(MemoryRecord).filter_by(id=other_record.id).first() is None
+    assert test_db.query(MemoryRelationship).filter_by(id=incident_id).first() is None
+    assert test_db.query(MemoryRelationship).filter_by(id=unrelated_id).first() is not None
+
+    test_db.execute(text("DROP TRIGGER fail_one_batch_memory_delete"))
+    test_db.commit()
+    second_pass = worker.run_convergence_pass(test_db, tenant_id=tenant)
+
+    assert second_pass["processed"] == 1
+    assert second_pass["converged"] == 1
+    assert tombstone.status == "CONVERGED"
+    assert test_db.query(MemoryRecord).filter_by(id=memory_id).first() is None
+    assert test_db.query(MemoryRelationship).filter_by(id=unrelated_id).first() is not None
 
 
 def test_tombstone_background_worker_lifecycle():

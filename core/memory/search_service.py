@@ -2,7 +2,7 @@
 Hybrid Multi-Modal Search Service for Memora
 Combines Dense Semantic Vector Search, Keyword Full-Text Search, Graph Traversal, and Reciprocal Rank Fusion (RRF).
 """
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Callable
 from datetime import datetime, timezone
 import time
 from sqlalchemy.orm import Session
@@ -100,7 +100,8 @@ class SearchService:
         graph_weight: Optional[float] = None,
         entity_boost_weight: Optional[float] = None,
         purpose: Optional[str] = None,
-        rrf_k: Optional[int] = None
+        rrf_k: Optional[int] = None,
+        on_vector_unavailable: Optional[Callable[[], None]] = None,
     ) -> List[SearchResultItem]:
         started_at = time.perf_counter()
         retrieval_cfg = get_retrieval_config()
@@ -121,10 +122,9 @@ class SearchService:
             if actor_name
             else None
         )
-        if actor_name and actor is None:
-            # A named caller without a tenant-bound identity must not fall through
-            # to an unfiltered corpus query. API credentials are not tenant claims,
-            # so resolve failure is a closed denial, not an administrative search.
+        if actor is None:
+            # Retrieval without a tenant-bound actor would skip namespace policy
+            # checks below and expose private records to an unscoped caller.
             return []
         resolved_tenant: str = str(tenant_id or (getattr(actor, "tenant_id", "default") if actor else "default"))
 
@@ -144,6 +144,8 @@ class SearchService:
         except Exception as exc:
             import logging
             logging.getLogger(__name__).warning("Vector search unavailable (%s); failing soft to relational search.", exc)
+            if on_vector_unavailable is not None:
+                on_vector_unavailable()
             vector_hits = []
 
         vector_ranks = {hit.memory_id: (rank + 1, hit.score) for rank, hit in enumerate(vector_hits)}
@@ -193,7 +195,11 @@ class SearchService:
         # 3. GRAPH RELATIONSHIP EXPANSION
         # -------------------------------------------------------------
         candidate_seed_ids = list(set(list(vector_ranks.keys())[:5] + list(keyword_ranks.keys())[:5]))
-        graph_boosts = GraphService.get_graph_neighbors(db, candidate_seed_ids)
+        graph_boosts = GraphService.get_graph_neighbors(
+            db,
+            candidate_seed_ids,
+            tenant_id=resolved_tenant,
+        )
 
         # -------------------------------------------------------------
         # 4. RECIPROCAL RANK FUSION (RRF) & SCORE MERGE
@@ -265,7 +271,7 @@ class SearchService:
                     db,
                     actor=actor,
                     namespace=record.namespace,
-                    action="read",
+                    action="query",
                     purpose=purpose,
                     memory_id=record.id,
                     log_audit=False,

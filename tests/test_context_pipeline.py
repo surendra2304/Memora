@@ -4,10 +4,13 @@ Tests ContextBuilderService, ContextReranker, Token Budgeting, Policy Filtering,
 """
 from datetime import datetime, timezone, timedelta
 from fastapi.testclient import TestClient
+import pytest
+from sqlalchemy import event
 
 from storage.relational.models import (
     NamespaceType,
     MemoryRecord,
+    MemoryRelationship,
     MemoryType,
     LifecycleState
 )
@@ -15,10 +18,66 @@ from storage.vector.embedding import EmbeddingGenerator
 from storage.vector.qdrant_adapter import vector_adapter
 from core.identity.service import IdentityService
 from core.memory.graph_service import GraphService
-from core.memory.search_service import SearchResultItem
+from core.memory.search_service import SearchResultItem, SearchService
 from core.memory.context.reranker import ContextReranker
-from core.memory.context.budgeter import ContextBudgeter
+from core.memory.context.budgeter import BudgetedMemoryItem, ContextBudgeter
 from core.memory.context.builder import ContextBuilderService
+
+
+def test_context_degrades_to_keyword_retrieval_when_vector_search_fails(
+    test_db, monkeypatch
+):
+    agent = IdentityService.register_agent(test_db, "vector-fallback-agent")
+    namespace = IdentityService.get_namespace_by_path(
+        test_db, "memora://vector-fallback-agent/private"
+    )
+    record = MemoryRecord(
+        namespace_id=namespace.id,
+        owner_id=agent.id,
+        memory_type=MemoryType.SEMANTIC,
+        content_text="distinctive relational fallback calibration",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    test_db.add(record)
+    test_db.commit()
+
+    def unavailable(**_kwargs):
+        raise RuntimeError("vector backend unavailable")
+
+    monkeypatch.setattr(vector_adapter, "search_similarity", unavailable)
+
+    bundle = ContextBuilderService.build_context_bundle(
+        db=test_db,
+        agent_id_or_name=agent.id,
+        task_query="distinctive relational fallback calibration",
+    )
+
+    assert record.id in {memory["id"] for memory in bundle.memories}
+    assert bundle.is_degraded
+    assert "degraded vector store fallback" in bundle.summary
+
+
+def test_context_propagates_non_vector_search_failures_without_retry(
+    test_db, monkeypatch
+):
+    agent = IdentityService.register_agent(test_db, "search-error-agent")
+    calls = []
+
+    def fail_search(cls, **_kwargs):
+        calls.append(True)
+        raise RuntimeError("relational query failed")
+
+    monkeypatch.setattr(SearchService, "hybrid_search", classmethod(fail_search))
+
+    with pytest.raises(RuntimeError, match="relational query failed"):
+        ContextBuilderService.build_context_bundle(
+            db=test_db,
+            agent_id_or_name=agent.id,
+            task_query="query",
+        )
+
+    assert len(calls) == 1
+
 
 def test_reranker_multi_factor_scoring(test_db):
     """
@@ -135,6 +194,124 @@ def test_fail_closed_policy_isolation_in_context_bundle(test_db):
     assert priv_mem.id not in included_ids
     # Global memory should be present
     assert glob_mem.id in included_ids
+
+
+def test_context_graph_edges_exclude_cross_tenant_relationships(test_db, monkeypatch):
+    actor = IdentityService.register_agent(test_db, "context-graph-agent", tenant_id="acme")
+    foreign_agent = IdentityService.register_agent(
+        test_db, "context-graph-agent", tenant_id="globex"
+    )
+    local_namespace = IdentityService.get_namespace_by_path(
+        test_db, "memora://context-graph-agent/private", tenant_id="acme"
+    )
+    foreign_namespace = IdentityService.get_namespace_by_path(
+        test_db, "memora://context-graph-agent/private", tenant_id="globex"
+    )
+    local_source = MemoryRecord(
+        tenant_id="acme",
+        namespace_id=local_namespace.id,
+        owner_id=actor.id,
+        memory_type=MemoryType.SEMANTIC,
+        content_text="local source memory",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    local_target = MemoryRecord(
+        tenant_id="acme",
+        namespace_id=local_namespace.id,
+        owner_id=actor.id,
+        memory_type=MemoryType.SEMANTIC,
+        content_text="local target memory",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    foreign_target = MemoryRecord(
+        tenant_id="globex",
+        namespace_id=foreign_namespace.id,
+        owner_id=foreign_agent.id,
+        memory_type=MemoryType.SEMANTIC,
+        content_text="foreign target memory",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    test_db.add_all([local_source, local_target, foreign_target])
+    test_db.flush()
+
+    valid_edge = MemoryRelationship(
+        source_memory_id=local_source.id,
+        target_memory_id=local_target.id,
+        relationship_type="depends_on",
+        weight=0.9,
+    )
+    corrupt_edge = MemoryRelationship(
+        source_memory_id=local_source.id,
+        target_memory_id=foreign_target.id,
+        relationship_type="leaks_to",
+        weight=1.0,
+    )
+    test_db.add_all([valid_edge, corrupt_edge])
+    test_db.commit()
+
+    monkeypatch.setattr(
+        SearchService,
+        "hybrid_search",
+        classmethod(
+            lambda cls, **_kwargs: [
+                SearchResultItem(local_source, final_score=0.9),
+                SearchResultItem(local_target, final_score=0.8),
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        ContextBudgeter,
+        "fit_to_budget",
+        classmethod(
+            lambda cls, _memories, **_kwargs: (
+                [
+                    BudgetedMemoryItem(
+                        record=local_source,
+                        content_text=local_source.content_text,
+                        token_count=1,
+                        score=0.9,
+                        source_memory_ids=[
+                            local_source.id,
+                            local_target.id,
+                            foreign_target.id,
+                        ],
+                    )
+                ],
+                1,
+                "none",
+            )
+        ),
+    )
+    relationship_queries = []
+
+    def capture_relationship_query(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if "FROM memory_relationships" in statement:
+            relationship_queries.append(statement)
+
+    event.listen(test_db.get_bind(), "before_cursor_execute", capture_relationship_query)
+    try:
+        bundle = ContextBuilderService.build_context_bundle(
+            db=test_db,
+            agent_id_or_name=actor.id,
+            task_query="local source and target",
+            tenant_id="acme",
+        )
+    finally:
+        event.remove(test_db.get_bind(), "before_cursor_execute", capture_relationship_query)
+
+    assert bundle.graph_edges == [
+        {
+            "source_id": local_source.id,
+            "target_id": local_target.id,
+            "relationship_type": "depends_on",
+            "weight": 0.9,
+        }
+    ]
+    assert foreign_target.id not in bundle.memories[0]["source_memory_ids"]
+    assert len(relationship_queries) == 1
+    query = relationship_queries[0].lower()
+    assert query.count("tenant_id") >= 2
+
 
 def test_api_v1_context_post_endpoint(client: TestClient, test_db):
     """
