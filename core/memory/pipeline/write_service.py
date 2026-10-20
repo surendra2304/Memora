@@ -22,6 +22,7 @@ from core.memory.pipeline.secret_scanner import SecretScanner
 from core.memory.pipeline.entity_extractor import EntityExtractor
 from core.memory.pipeline.deduplication import DeduplicationEngine
 from core.memory.service import PermissionDeniedError
+from core.security.provenance import compute_memory_signature
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +264,20 @@ class MemoryWriteService:
             norm_trust = str(canonical_trust_level).lower()
 
             untrusted_sources = {"ocr", "web_scrape", "web_text", "web", "tool_output", "tool", "model_output", "untrusted"}
+
+            # Prompt Injection Quarantine for untrusted web facts (Safety Invariant 3)
+            is_untrusted_web_source = (
+                norm_source in untrusted_sources
+                or norm_source_type in untrusted_sources
+                or bool(caller_name and caller_name.lower() in {"intelx", "cortex"})
+                or bool(actor_name and actor_name.lower() in {"intelx", "cortex"})
+                or bool(actor and actor.name.lower() in {"intelx", "cortex"})
+            )
+            if is_untrusted_web_source and resolved_type == MemoryType.SYSTEM:
+                raise PermissionDeniedError(
+                    "Prompt Injection Quarantine: Untrusted external web facts cannot be stored as SYSTEM directives."
+                )
+
             if resolved_type in evidence_required_types:
                 if resolved_type in trusted_tier_types and not trusted_writer:
                     raise PermissionDeniedError(
@@ -292,7 +307,8 @@ class MemoryWriteService:
                 "memory_type": resolved_type.value,
                 "sensitivity": "CONFIDENTIAL" if namespace.type == NamespaceType.AGENT_PRIVATE else "INTERNAL",
                 "secrets_detected": False,
-                "poison_detected": False
+                "poison_detected": False,
+                "is_tainted": is_untrusted_web_source
             }
 
             # -------------------------------------------------------------
@@ -496,6 +512,10 @@ class MemoryWriteService:
                 "retention_tier": retention_tier,
                 "pipeline_version": "2.0.0"
             }
+            if is_untrusted_web_source:
+                combined_provenance["is_tainted"] = True
+                combined_provenance["taint"] = "untrusted_web_fact"
+                combined_provenance["quarantine"] = True
 
             record = MemoryRecord(
                 tenant_id=resolved_tenant,
@@ -523,6 +543,21 @@ class MemoryWriteService:
             db.add(record)
             try:
                 db.flush()
+                # Safety Invariant 2: Cryptographic Provenance (HMAC-SHA256 signature)
+                sig = compute_memory_signature(
+                    record_or_dict={
+                        "id": record.id,
+                        "tenant_id": resolved_tenant,
+                        "owner_id": actor.id,
+                        "content_hash": content_hash,
+                        "memory_type": resolved_type.value,
+                    }
+                )
+                record.provenance = {
+                    **record.provenance,
+                    "hmac_signature": sig,
+                    "signature_version": "v1",
+                }
             except IntegrityError:
                 # The unique idempotency index is the final arbiter when two
                 # identical requests race past the pre-insert lookup. Roll back

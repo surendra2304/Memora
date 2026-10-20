@@ -279,23 +279,27 @@ class QdrantVectorAdapter:
         query_vector: List[float],
         tenant_id: str = "default",
         limit: int = 10,
-        score_threshold: float = 0.50
+        score_threshold: float = 0.50,
+        fail_soft: bool = True,
     ) -> List[VectorSearchResult]:
         if self._initialized:
-            try:
+            def _do_search():
                 from qdrant_client.http.models import Filter, FieldCondition, MatchValue
                 query_filter = Filter(
                     must=[
                         FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id))
                     ]
                 )
-                results = self._client.search(
+                return self._client.search(
                     collection_name=self.collection_name,
                     query_vector=query_vector,
                     query_filter=query_filter,
                     limit=limit,
                     score_threshold=score_threshold
                 )
+
+            try:
+                results = self._breaker.call(_do_search)
                 return [
                     VectorSearchResult(
                         memory_id=str(hit.id),
@@ -305,9 +309,11 @@ class QdrantVectorAdapter:
                     for hit in results
                 ]
             except Exception as e:
-                logger.error(f"Vector search failed on client: {e}")
+                logger.warning(f"Vector search failed on Qdrant client ({e}); fail_soft={fail_soft}")
+                if self.is_production() and not fail_soft:
+                    raise VectorUnavailableError(f"VECTOR_UNAVAILABLE: {e}") from e
 
-        if self.is_production():
+        if self.is_production() and not fail_soft:
             raise VectorUnavailableError("VECTOR_UNAVAILABLE: Qdrant vector store is offline in production.")
 
         # In-memory cosine search fallback (strictly filtered by tenant_id)

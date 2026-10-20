@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import json
+import logging
 import math
 import os
 import re
@@ -13,6 +14,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from apps.api.dependencies import AGENT_API_KEY_ENV_VARS, authenticate_agent
 from storage.relational.models import EventConsumerCursor, EventLog
@@ -249,6 +252,117 @@ def read_events(
         "agent": agent,
         "events": events,
         "next_after_id": events[-1]["id"] if events else after_id,
+        "has_more": len(events) == limit,
+    }
+
+
+
+@router.get("/poll")
+def poll_events(
+    after_id: int | None = Query(default=None, ge=0),
+    consumer_id: str = Query(default="default", min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._:-]+$"),
+    limit: int = Query(default=100, ge=1, le=500),
+    event_type: str | None = Query(default=None, min_length=1, max_length=128),
+    auto_ack: bool = Query(default=False),
+    agent: str = Depends(authenticate_agent),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Monotonic Event Feed Poller for downstream agents (Cortex, Sentinel, Futuris).
+    If after_id is omitted, polls from the agent's current consumer cursor.
+    Optionally advances cursor automatically when auto_ack=True.
+    """
+    tenant_id = "default"
+    effective_after_id = after_id
+    if effective_after_id is None:
+        if turso_events_configured():
+            try:
+                effective_after_id = read_turso_cursor(tenant_id=tenant_id, agent=agent, consumer_id=consumer_id)
+            except Exception:
+                effective_after_id = 0
+        else:
+            cursor_row = db.query(EventConsumerCursor).filter_by(
+                tenant_id=tenant_id, agent=agent, consumer_id=consumer_id
+            ).first()
+            effective_after_id = cursor_row.last_event_id if cursor_row else 0
+
+    query = db.query(EventLog).filter(
+        EventLog.id > effective_after_id,
+        EventLog.tenant_id == tenant_id,
+        (EventLog.target_agent.is_(None) | (EventLog.target_agent == agent)),
+    )
+    if event_type:
+        query = query.filter(EventLog.event_type == event_type)
+
+    if turso_events_configured():
+        try:
+            remote_rows = read_turso_events(
+                after_id=effective_after_id,
+                limit=limit,
+                tenant_id=tenant_id,
+                agent=agent,
+                event_type=event_type,
+            )
+            rows = remote_rows
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Durable event store is temporarily unavailable") from exc
+    elif turso_required():
+        raise HTTPException(status_code=503, detail="Durable event store is not configured")
+    else:
+        rows = query.order_by(EventLog.id.asc()).limit(limit).all()
+
+    events = []
+    for row in rows:
+        allowed = _VISIBLE_FIELDS.get(row["event_type"] if isinstance(row, dict) else row.event_type, ())
+        raw_payload = row["payload"] if isinstance(row, dict) else row.payload
+        payload = {key: raw_payload[key] for key in allowed if key in raw_payload}
+        events.append({
+            "id": row["id"] if isinstance(row, dict) else row.id,
+            "event_id": row["event_id"] if isinstance(row, dict) else row.event_id,
+            "event_type": row["event_type"] if isinstance(row, dict) else row.event_type,
+            "tenant_id": row["tenant_id"] if isinstance(row, dict) else row.tenant_id,
+            "created_at": row["created_at"] if isinstance(row, dict) else (row.created_at.isoformat() if row.created_at else None),
+            "payload": payload,
+        })
+
+    next_cursor = effective_after_id
+    if auto_ack and events:
+        max_event_id = events[-1]["id"]
+        if turso_events_configured():
+            try:
+                acknowledge_turso_event(
+                    tenant_id=tenant_id,
+                    agent=agent,
+                    consumer_id=consumer_id,
+                    event_id=max_event_id,
+                )
+                next_cursor = max_event_id
+            except Exception as exc:
+                logger.warning("Turso auto-ack failed: %s", exc)
+        else:
+            cursor_row = db.query(EventConsumerCursor).filter_by(
+                tenant_id=tenant_id, agent=agent, consumer_id=consumer_id
+            ).first()
+            if cursor_row is None:
+                cursor_row = EventConsumerCursor(
+                    tenant_id=tenant_id,
+                    agent=agent,
+                    consumer_id=consumer_id,
+                    last_event_id=max_event_id,
+                )
+                db.add(cursor_row)
+            else:
+                cursor_row.last_event_id = max(cursor_row.last_event_id, max_event_id)
+            db.commit()
+            next_cursor = cursor_row.last_event_id
+
+    return {
+        "agent": agent,
+        "consumer_id": consumer_id,
+        "after_id": effective_after_id,
+        "cursor": next_cursor,
+        "events": events,
+        "next_after_id": events[-1]["id"] if events else effective_after_id,
         "has_more": len(events) == limit,
     }
 
