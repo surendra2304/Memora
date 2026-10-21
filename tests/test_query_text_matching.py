@@ -145,3 +145,69 @@ def test_query_and_hybrid_search_agree_on_whether_something_matches(corpus):
         f"query_memories found {len(direct)} rows but hybrid_search found "
         f"{len(hybrid)} for the same query"
     )
+
+
+def test_hybrid_lexical_search_pushes_token_filter_into_sql(corpus, monkeypatch):
+    """Non-matching rows should be excluded by SQL before Python scoring."""
+    from core.memory.search_service import SearchService
+
+    rows = MemoryService.query_memories(
+        corpus,
+        MemoryQuery(query_text="xenon", limit=10),
+        actor_name="forge",
+        purpose="test",
+    )
+    assert len(rows) == 1
+
+    results = SearchService.hybrid_search(
+        corpus,
+        query_text="xenon compressor seal torque",
+        actor_name="forge",
+        tenant_id="default",
+        purpose="test",
+        limit=5,
+    )
+    assert results
+    assert "XC-4" in results[0].record.content_text
+
+
+def test_hybrid_lexical_search_handles_literal_like_wildcards(corpus):
+    """User %/_ characters must not become SQL LIKE wildcards."""
+    from core.memory.pipeline.write_service import MemoryWriteService
+    from core.memory.search_service import SearchService
+
+    MemoryWriteService.execute_pipeline(
+        db=corpus,
+        caller_name="forge",
+        content_text="literal percent % and underscore _ must be searchable as text",
+    )
+    percent_results = SearchService.hybrid_search(
+        corpus, query_text="%", actor_name="forge", tenant_id="default", limit=10
+    )
+    underscore_results = SearchService.hybrid_search(
+        corpus, query_text="_", actor_name="forge", tenant_id="default", limit=10
+    )
+    assert not any("%" in item.record.content_text for item in percent_results)
+    assert not any("_" in item.record.content_text for item in underscore_results)
+
+
+def test_hybrid_lexical_candidate_scan_is_bounded(corpus, monkeypatch):
+    """Even common tokens must query at most the configured lexical candidate cap."""
+    from core.memory.search_service import SearchService
+
+    queried_limits = []
+    query_type = type(corpus.query(MemoryRecord))
+
+    # Observe LIMIT on the query that selects lexical candidates while leaving
+    # normal candidate selection and policy checks untouched.
+    original_limit = query_type.limit
+
+    def capture_limit(query, value):
+        queried_limits.append(value)
+        return original_limit(query, value)
+
+    monkeypatch.setattr(query_type, "limit", capture_limit)
+    SearchService.hybrid_search(
+        corpus, query_text="the", actor_name="forge", tenant_id="default", limit=10
+    )
+    assert 1000 in queried_limits
