@@ -2,7 +2,7 @@
   "task": 1,
   "repository": "Memora",
   "updated_at": "2026-10-22",
-  "status": "pr15_green_pr16_green_current_head_recheck_needed",
+  "status": "pr15_pr16_green_main_check_running",
   "merged": false,
   "changes": [
     {
@@ -33,48 +33,53 @@
       "files": [
         "apps/api/routers/v1_events.py"
       ],
-      "summary": "Allowlist reviewed vyralx.custom_render fields; fix KeyError from default-deny filter",
+      "summary": "Explicit allowlist for vyralx.custom_render payload",
+      "tested_head": "1b22f91aadcea7be0e44e6eeb577e7cd3e4689e1",
       "ci": {
-        "id": 39672966835,
-        "url": "https://github.com/surendra2304/Memora/actions/runs/39672966835",
+        "id": 39673599696,
+        "url": "https://github.com/surendra2304/Memora/actions/runs/39673599696",
         "status": "success",
         "checks": [
           "Ruff",
-          "Alembic round-trip",
+          "Alembic",
           "pytest",
           "PostgreSQL 18 integration",
           "app health",
           "Docker"
         ]
-      },
-      "latest_pr_head_observed": "436147652856a9ecb385d3233b83a591137aaaf7",
-      "verify_head_matches_run": true
+      }
     }
   ],
+  "main": {
+    "sha": "a239bc93188aba5a2c10d831aa75bdd6f8e0e90b",
+    "ci_run": 39674007513,
+    "url": "https://github.com/surendra2304/Memora/actions/runs/39674007513",
+    "status": "in_progress_at_last_check"
+  },
   "PR14": {
-    "commit": "72cb7bf3150e64edba84785e2da6d5446eb1b792",
-    "prior_success_run": 39551432656,
-    "latest_known_run": 39671891785,
-    "latest_known_status": "failure_due_to_stale_event_payload_assertion_fixed_by_PR15; needs updated-base verification"
+    "sha": "72cb7bf3150e64edba84785e2da6d5446eb1b792",
+    "prior_success": 39551432656,
+    "latest_known_failure": 39671891785,
+    "reason": "stale event payload assertion fixed by PR15; verify against updated main"
   },
   "PR7": {
-    "head": "da7ef4fe514e8a0f511572dc917bfa59fdcd1250",
-    "known_previous_failure": 39548261200,
+    "sha": "da7ef4fe514e8a0f511572dc917bfa59fdcd1250",
+    "previous_failure": 39548261200,
     "status": "divergent_do_not_merge_blindly"
   },
   "endpoint_idempotency": {
     "branch": "fix/task1-idempotent-task-write-20261021",
-    "commit": "4f0fac92082eac989b3f8e2f6eee02077a1d2372",
+    "sha": "4f0fac92082eac989b3f8e2f6eee02077a1d2372",
     "files": [
       "apps/api/routers/v1_task.py",
       "tests/test_task_idempotency.py"
     ],
-    "test_status": "not_newly_verified"
+    "status": "not_fresh_CI_verified"
   },
   "local_tests_run": false,
   "blockers": [
     "Laptop MCP HTTP 404"
   ],
   "active_duration_seconds": "not_measured",
-  "next": "Recheck PR16 matching CI to latest head; then continue endpoint idempotency coverage."
+  "next": "Poll Memora main CI, reassess PR14 and continue endpoint idempotency."
 }
