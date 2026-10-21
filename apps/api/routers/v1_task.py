@@ -37,7 +37,9 @@ class TaskEnvelopeModel(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     priority: str = Field(default="normal", min_length=1, max_length=32)
     created_at: str | None = Field(default=None, max_length=64)
-    trace_id: str | None = Field(default=None, max_length=128)
+    trace_id: str | None = Field(default=None, min_length=1, max_length=128)
+    request_id: str | None = Field(default=None, min_length=1, max_length=128)
+    parent_task_id: str | None = Field(default=None, min_length=1, max_length=64)
 
     @field_validator("payload")
     @classmethod
@@ -76,6 +78,9 @@ class TaskResultModel(BaseModel):
     summary: str = ""
     error: str | None = None
     execution_time_ms: int = 0
+    trace_id: str | None = None
+    request_id: str | None = None
+    parent_task_id: str | None = None
 
 
 def _elapsed_ms(t0: float) -> int:
@@ -137,6 +142,10 @@ def execute_task(
                   f"{sorted(_STORE_ACTIONS | _QUERY_ACTIONS)}.",
             execution_time_ms=_elapsed_ms(t0),
         )
+
+    result.trace_id = envelope.trace_id
+    result.request_id = envelope.request_id or envelope.task_id
+    result.parent_task_id = envelope.parent_task_id
 
     response.status_code = _http_status_for(result.status)
     return result
