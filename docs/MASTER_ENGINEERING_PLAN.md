@@ -107,7 +107,7 @@ Make Memora dependable as a multi-tenant memory service: preserve tenant and nam
 | P0 | Rotate the credential exposed in historical Git data | Blocked on service/credential owner | Rotate/revoke first, verify new secret injection, then coordinate history remediation |
 | P1 | Reconcile tombstone-convergence PR #7 | Planned | Branch is conflicted and behind; re-implement useful changes against current `main`, then run fault-injection suite |
 | P1 | Re-evaluate idempotency test PR #14 | Planned | Inspect per-file diff; avoid duplicating tests already present on `main` |
-| P1 | Audit graph endpoint tenant/policy boundaries | Planned | Build adversarial API regression matrix |
+| P1 | Enforce tenant boundary in graph traversal | In progress | Branch `fix/graph-traversal-tenant-boundary-main`; query-level endpoint joins and cross-tenant public-namespace regression added |
 | P1 | Verify hosted Turso/Qdrant/PostgreSQL behavior | Not yet verified | Requires authorized target environment and non-production fixtures |
 | P2 | Benchmark search and duplicate candidate scaling | Planned | Capture baseline then introduce bounded/query-side candidate selection where needed |
 | P2 | Resolve `memora_upgrade/` architecture | Planned | Dependency/call-graph and behavior-parity review before promotion/quarantine |
