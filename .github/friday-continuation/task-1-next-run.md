@@ -1,8 +1,7 @@
 # Task 1 next-run — Memora — 2026-10-22
 
-1. Poll main CI run https://github.com/surendra2304/Memora/actions/runs/39674007513 at `a239bc93188aba5a2c10d831aa75bdd6f8e0e90b`. It was in progress at the last inventory check.
-2. PR #16 https://github.com/surendra2304/Memora/pull/16: latest observed head `1b22f91aadcea7be0e44e6eeb577e7cd3e4689e1` passed full CI run `39673599696`: Ruff, migrations, pytest, PostgreSQL 18 integration, app health, Docker. `apps/api/routers/v1_events.py` allowlists only `source_agent`, `correlation_id`, `video_title`, and `render_quality` for `vyralx.custom_render`; confirm latest head before review.
-3. PR #15 commit `593a81d0e2c64a7b5e5962ca29a47d64f35c2d03` is green in run `39672447315`, all gates; it corrects `tests/test_final_infra.py` to assert the payload that was actually published.
-4. PR #14's earlier head `72cb7bf3150e64edba84785e2da6d5446eb1b792` was green on old run `39551432656`; later `39671891785` failed due the now-fixed stale payload assertion. Verify current head/base and run a fresh CI check before declaring green.
-5. Continue task endpoint idempotency on branch `fix/task1-idempotent-task-write-20261021` (SHA `4f0fac92082eac989b3f8e2f6eee02077a1d2372`, files `apps/api/routers/v1_task.py`, `tests/test_task_idempotency.py`): prove same key returns same memory ID, duplicate=true, one row. Avoid duplicate PR. PR #7 remains divergent and needs separate review.
-6. Local tests did not run because laptop MCP returns HTTP 404. No auto-merge/force-push or claims of unmeasured work duration.
+1. PR #16 latest observed head `1b22f91aadcea7be0e44e6eeb577e7cd3e4689e1` passed full CI run `39673599696`; refresh head and check run association.
+2. PR #15 `593a81d0e2c64a7b5e5962ca29a47d64f35c2d03` passed run `39672447315` on all gates.
+3. PR #14 head `72cb7bf3150e64edba84785e2da6d5446eb1b792` had prior green run `39551432656` but a later failure `39671891785` due to the old payload assertion. Main run `39674007513` passed. Inspect branch and create fresh CI evidence on the updated base before declaring current PR #14 green.
+4. Continue endpoint idempotency on `fix/task1-idempotent-task-write-20261021`, head `4f0fac92082eac989b3f8e2f6eee02077a1d2372`, files `apps/api/routers/v1_task.py`, `tests/test_task_idempotency.py`. Verify same-key replay returns same memory ID, duplicate=true, and one stored record. Check open PRs before creating any.
+5. PR #7 remains divergent; review separately. Laptop MCP is HTTP 404; no local tests. No auto-merge.
