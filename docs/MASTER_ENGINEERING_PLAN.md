@@ -23,14 +23,14 @@ Make Memora dependable as a multi-tenant memory service: preserve tenant and nam
 ### Phase 0 — Restore a trustworthy green baseline (P0)
 
 **Scope**
-1. Fix the unknown-event payload regression with default-deny behavior.
+1. Fix the stale event payload assertion, preserve authenticated custom mesh fields, and recursively sanitize sensitive payload keys in the read and poll paths.
 2. Add a focused regression proving arbitrary fields on an unregistered event type never reach API consumers.
 3. Re-run all checks on the feature PR and again on the resulting `main` commit.
 4. Reconcile duplicate/stale open PRs and record why each is merged, reworked, or closed.
 
 **Acceptance**
 - All GitHub Actions stages are green on `main`: Ruff, all pytest tests, migration round trip, PostgreSQL integration, boot/readiness, Docker build.
-- No unknown event type can leak payload fields by adding a new field name that is absent from a denylist.
+- Registered system events expose only reviewed fields; custom events preserve domain-specific fields while recursively removing normalized query/prompt/credential keys.
 
 ### Phase 1 — Security and tenant isolation (P0/P1)
 
@@ -103,7 +103,7 @@ Make Memora dependable as a multi-tenant memory service: preserve tenant and nam
 
 | Priority | Work item | Status | Evidence / next action |
 |---|---|---|---|
-| P0 | Fix event payload default-deny and restore main CI | In progress | Branch `fix/events-default-deny-master-plan`; regression test and full CI required |
+| P0 | Fix event payload sanitization and restore main CI | In progress | Branch `fix/events-default-deny-master-plan`; recursive sanitization and custom-field compatibility added; full CI required |
 | P0 | Rotate the credential exposed in historical Git data | Blocked on service/credential owner | Rotate/revoke first, verify new secret injection, then coordinate history remediation |
 | P1 | Reconcile tombstone-convergence PR #7 | Planned | Branch is conflicted and behind; re-implement useful changes against current `main`, then run fault-injection suite |
 | P1 | Re-evaluate idempotency test PR #14 | Planned | Inspect per-file diff; avoid duplicating tests already present on `main` |
