@@ -184,10 +184,12 @@ class SearchService:
         tokens = list(dict.fromkeys(token for token in query_text.lower().split() if token))
         lexical_matches = []
         if tokens and limit > 0:
-            token_predicates = [
-                MemoryRecord.content_text.ilike(f"%{token.replace('%', r'\\%').replace('_', r'\\_')}%", escape="\\")
-                for token in tokens
-            ]
+            token_predicates = []
+            for token in tokens:
+                escaped_token = token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                token_predicates.append(
+                    MemoryRecord.content_text.ilike(f"%{escaped_token}%", escape="\\")
+                )
             lexical_candidates = (
                 kw_query.filter(or_(*token_predicates))
                 .order_by(
