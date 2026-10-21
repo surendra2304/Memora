@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     QDRANT_COLLECTION: str = "memora_embeddings"
     VECTOR_DIMENSION: int = 1536
 
+    # Gemini Embedding Model
+    GEMINI_API_KEY: Optional[str] = None
+    GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-2" 
+
     # Security & Policy
     MEMORA_API_KEY: Optional[str] = None
     MEMORA_MASTER_KEY: Optional[str] = None

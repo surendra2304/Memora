@@ -80,6 +80,7 @@ class EventEmitter:
                     event_id=event.event_id,
                     event_type=event.event_type,
                     tenant_id=str(payload.get("tenant_id") or "default"),
+                    target_agent=payload.get("target_agent"),
                     payload=payload,
                 )
                 db.add(row)

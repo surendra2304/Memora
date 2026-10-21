@@ -40,7 +40,7 @@ UNRELATED = "The quarterly budget review is scheduled for Thursday afternoon."
 
 
 def emb(text, dimension=EmbeddingGenerator.DEFAULT_DIMENSION):
-    return EmbeddingGenerator.generate_embedding(text, dimension)
+    return EmbeddingGenerator.generate_deterministic_embedding(text, dimension)
 
 
 # ---------------------------------------------------------------------------

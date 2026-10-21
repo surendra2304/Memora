@@ -74,8 +74,77 @@ _VISIBLE_FIELDS = {
         "source_agent", "decision_id", "forecast_id", "correlation_id", "action",
         "paper_only", "policy_reason", "gates_summary", "headline", "summary", "decided_at",
     ),
+    "vyralx.custom_render": ("source_agent", "correlation_id", "video_title", "render_quality"),
+    "vyralx.published": (
+        "source_agent", "project_id", "video_id", "title", "status", "platform",
+        "published_at", "correlation_id",
+    ),
+    "vyralx.project": (
+        "source_agent", "project_id", "title", "status", "correlation_id",
+    ),
+    "forge.build": (
+        "source_agent", "build_id", "repo_name", "commit_hash", "status", "summary", "correlation_id",
+    ),
+    "sentinel.alert": (
+        "source_agent", "alert_id", "severity", "category", "target", "summary", "correlation_id",
+    ),
+    "cortex.research": (
+        "source_agent", "research_id", "topic", "summary", "sources", "correlation_id",
+    ),
+    "inference.deliberation": (
+        "source_agent", "deliberation_id", "task_id", "summary", "confidence", "correlation_id",
+    ),
 }
 
+
+
+
+# Field-name policy for arbitrary mesh payloads. Registered event types still
+# use the stricter _VISIBLE_FIELDS allowlist; custom types retain their fields
+# but cannot forward query, prompt, or credential metadata.
+_FORBIDDEN_EVENT_PAYLOAD_KEYS = frozenset({
+    "query", "query_text", "internal_memory_metadata", "prompt", "system_prompt",
+    "developer_prompt", "auth_token", "authorization", "signature", "api_key",
+    "access_token", "refresh_token", "client_secret", "password", "secret",
+    "credential", "credentials", "private_key", "cookie", "session_cookie",
+})
+
+
+def _sanitize_event_payload(value: Any) -> Any:
+    """Copy a JSON-like payload while removing sensitive keys recursively."""
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                continue
+            normalized_key = re.sub(r"[^a-z0-9]+", "_", key.casefold()).strip("_")
+            # This explicit advisory flag is a public safety contract, not a
+            # credential: consumers must receive it to avoid treating forecasts
+            # as authorization to execute an action.
+            if normalized_key == "prediction_is_not_authorization":
+                cleaned[key] = _sanitize_event_payload(item)
+                continue
+            key_parts = normalized_key.split("_")
+            sensitive_components = {
+                "query", "prompt", "password", "secret", "credential",
+                "credentials", "authorization", "signature", "cookie", "auth",
+            }
+            if normalized_key in _FORBIDDEN_EVENT_PAYLOAD_KEYS or any(
+                part in sensitive_components for part in key_parts
+            ) or any(
+                "_".join(key_parts[index:index + len(compound.split("_"))]) == compound
+                for compound in _FORBIDDEN_EVENT_PAYLOAD_KEYS
+                if "_" in compound
+                for index in range(max(0, len(key_parts) - len(compound.split("_")) + 1))
+            ):
+                continue
+            cleaned[key] = _sanitize_event_payload(item)
+        return cleaned
+    if isinstance(value, list):
+        return [_sanitize_event_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return [_sanitize_event_payload(item) for item in value]
+    return value
 
 def _validate_intelx_news(payload: dict[str, Any]) -> None:
     """Bound externally authored news metadata before it enters the durable feed."""
@@ -237,9 +306,20 @@ def read_events(
         rows = query.order_by(EventLog.id.asc()).limit(limit).all()
     events = []
     for row in rows:
-        allowed = _VISIBLE_FIELDS.get(row["event_type"] if isinstance(row, dict) else row.event_type, ())
+        row_event_type = row["event_type"] if isinstance(row, dict) else row.event_type
         raw_payload = row["payload"] if isinstance(row, dict) else row.payload
-        payload = {key: raw_payload[key] for key in allowed if key in raw_payload}
+        safe_payload = _sanitize_event_payload(raw_payload)
+        if row_event_type in _VISIBLE_FIELDS:
+            allowed = _VISIBLE_FIELDS[row_event_type]
+            payload = {
+                key: safe_payload[key]
+                for key in allowed
+                if isinstance(safe_payload, dict) and key in safe_payload
+            }
+        else:
+            # Custom authenticated mesh event types keep domain-specific fields,
+            # after recursive removal of sensitive metadata.
+            payload = safe_payload if isinstance(safe_payload, dict) else {}
         events.append({
             "id": row["id"] if isinstance(row, dict) else row.id,
             "event_id": row["event_id"] if isinstance(row, dict) else row.event_id,
@@ -273,16 +353,21 @@ def poll_events(
     Optionally advances cursor automatically when auto_ack=True.
     """
     tenant_id = "default"
-    effective_after_id = after_id
+    effective_after_id = after_id if isinstance(after_id, int) else None
+    norm_consumer_id = str(consumer_id) if isinstance(consumer_id, str) else "default"
+    norm_limit = int(limit) if isinstance(limit, int) else 100
+    norm_event_type = event_type if isinstance(event_type, str) else None
+    norm_auto_ack = bool(auto_ack) if isinstance(auto_ack, bool) else False
+
     if effective_after_id is None:
         if turso_events_configured():
             try:
-                effective_after_id = read_turso_cursor(tenant_id=tenant_id, agent=agent, consumer_id=consumer_id)
+                effective_after_id = read_turso_cursor(tenant_id=tenant_id, agent=agent, consumer_id=norm_consumer_id)
             except Exception:
                 effective_after_id = 0
         else:
             cursor_row = db.query(EventConsumerCursor).filter_by(
-                tenant_id=tenant_id, agent=agent, consumer_id=consumer_id
+                tenant_id=tenant_id, agent=agent, consumer_id=norm_consumer_id
             ).first()
             effective_after_id = cursor_row.last_event_id if cursor_row else 0
 
@@ -291,17 +376,17 @@ def poll_events(
         EventLog.tenant_id == tenant_id,
         (EventLog.target_agent.is_(None) | (EventLog.target_agent == agent)),
     )
-    if event_type:
-        query = query.filter(EventLog.event_type == event_type)
+    if norm_event_type:
+        query = query.filter(EventLog.event_type == norm_event_type)
 
     if turso_events_configured():
         try:
             remote_rows = read_turso_events(
                 after_id=effective_after_id,
-                limit=limit,
+                limit=norm_limit,
                 tenant_id=tenant_id,
                 agent=agent,
-                event_type=event_type,
+                event_type=norm_event_type,
             )
             rows = remote_rows
         except Exception as exc:
@@ -309,13 +394,24 @@ def poll_events(
     elif turso_required():
         raise HTTPException(status_code=503, detail="Durable event store is not configured")
     else:
-        rows = query.order_by(EventLog.id.asc()).limit(limit).all()
+        rows = query.order_by(EventLog.id.asc()).limit(norm_limit).all()
 
     events = []
     for row in rows:
-        allowed = _VISIBLE_FIELDS.get(row["event_type"] if isinstance(row, dict) else row.event_type, ())
+        row_event_type = row["event_type"] if isinstance(row, dict) else row.event_type
         raw_payload = row["payload"] if isinstance(row, dict) else row.payload
-        payload = {key: raw_payload[key] for key in allowed if key in raw_payload}
+        safe_payload = _sanitize_event_payload(raw_payload)
+        if row_event_type in _VISIBLE_FIELDS:
+            allowed = _VISIBLE_FIELDS[row_event_type]
+            payload = {
+                key: safe_payload[key]
+                for key in allowed
+                if isinstance(safe_payload, dict) and key in safe_payload
+            }
+        else:
+            # Custom authenticated mesh event types keep domain-specific fields,
+            # after recursive removal of sensitive metadata.
+            payload = safe_payload if isinstance(safe_payload, dict) else {}
         events.append({
             "id": row["id"] if isinstance(row, dict) else row.id,
             "event_id": row["event_id"] if isinstance(row, dict) else row.event_id,
@@ -326,14 +422,14 @@ def poll_events(
         })
 
     next_cursor = effective_after_id
-    if auto_ack and events:
+    if norm_auto_ack and events:
         max_event_id = events[-1]["id"]
         if turso_events_configured():
             try:
                 acknowledge_turso_event(
                     tenant_id=tenant_id,
                     agent=agent,
-                    consumer_id=consumer_id,
+                    consumer_id=norm_consumer_id,
                     event_id=max_event_id,
                 )
                 next_cursor = max_event_id
@@ -341,13 +437,13 @@ def poll_events(
                 logger.warning("Turso auto-ack failed: %s", exc)
         else:
             cursor_row = db.query(EventConsumerCursor).filter_by(
-                tenant_id=tenant_id, agent=agent, consumer_id=consumer_id
+                tenant_id=tenant_id, agent=agent, consumer_id=norm_consumer_id
             ).first()
             if cursor_row is None:
                 cursor_row = EventConsumerCursor(
                     tenant_id=tenant_id,
                     agent=agent,
-                    consumer_id=consumer_id,
+                    consumer_id=norm_consumer_id,
                     last_event_id=max_event_id,
                 )
                 db.add(cursor_row)
@@ -358,12 +454,12 @@ def poll_events(
 
     return {
         "agent": agent,
-        "consumer_id": consumer_id,
+        "consumer_id": norm_consumer_id,
         "after_id": effective_after_id,
         "cursor": next_cursor,
         "events": events,
         "next_after_id": events[-1]["id"] if events else effective_after_id,
-        "has_more": len(events) == limit,
+        "has_more": len(events) == norm_limit,
     }
 
 

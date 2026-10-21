@@ -303,6 +303,14 @@ class SearchService:
                 if v_until and now_utc > v_until:
                     continue
 
+            # Cryptographic Provenance Verification (Safety Invariant 2)
+            if record.provenance and isinstance(record.provenance, dict) and "hmac_signature" in record.provenance:
+                from core.security.provenance import verify_memory_signature
+                if not verify_memory_signature(record):
+                    import logging
+                    logging.getLogger(__name__).warning("MemoryRecord %s failed cryptographic provenance verification; discarding tampered record.", record.id)
+                    continue
+
             # Policy Gate Check
             if actor:
                 decision = PolicyEngine.evaluate_access(

@@ -25,7 +25,14 @@ from .store import MemoryStore, StoreStats
 from .security import SecretScanner, SecretRedactor
 from .graph import MemoryGraph, Edge
 from .forgetting import ForgettingEngine, ForgettingPolicy
-from .consolidation import Consolidator, ConsolidationConfig, TemporalResolver
+from .consolidation import (
+    Consolidator,
+    ConsolidationConfig,
+    ConsolidationDecision,
+    MilestoneSummary,
+    MilestoneCondenser,
+    TemporalResolver,
+)
 from .context import ContextAssembler, ContextBundle, ContextItem
 from .cache import TenantScopedCache
 from .observability import Metrics
@@ -62,6 +69,9 @@ __all__ = [
     "ForgettingPolicy",
     "Consolidator",
     "ConsolidationConfig",
+    "ConsolidationDecision",
+    "MilestoneSummary",
+    "MilestoneCondenser",
     "TemporalResolver",
     "ContextAssembler",
     "ContextBundle",

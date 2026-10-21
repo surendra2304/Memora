@@ -87,6 +87,52 @@ class MemoraClient:
             logger.debug("Memora event feed unavailable (%s)", type(exc).__name__)
             return {"status": "error", "error": type(exc).__name__}
 
+    def poll_stream(
+        self,
+        agent_name: str,
+        consumer_id: str = "default",
+        after_id: Optional[int] = None,
+        limit: int = 100,
+        event_type: Optional[str] = None,
+        auto_ack: bool = False,
+    ) -> Dict[str, Any]:
+        """Fetch durable monotonic Memora notifications via GET /v1/events/poll.
+
+        Supports server-side cursor tracking per (tenant, agent, consumer_id).
+        When after_id is omitted, polling resumes from the last acknowledged cursor.
+        When auto_ack=True, acknowledges received events up to the highest event id.
+        """
+        if after_id is not None and after_id < 0:
+            return {"status": "error", "error": "after_id must be non-negative"}
+        if not 1 <= limit <= 500:
+            return {"status": "error", "error": "limit must be 1..500"}
+        params: Dict[str, Any] = {
+            "consumer_id": consumer_id,
+            "limit": limit,
+            "auto_ack": "true" if auto_ack else "false",
+        }
+        if after_id is not None:
+            params["after_id"] = after_id
+        if event_type:
+            params["event_type"] = event_type
+        url = f"{self.base_url}/v1/events/poll?{urllib.parse.urlencode(params)}"
+        agent_key = os.getenv(f"{agent_name.upper()}_API_KEY")
+        if not agent_key:
+            return {"status": "error", "error": f"{agent_name.upper()}_API_KEY is not configured"}
+        headers = self._headers(agent_name, api_key=agent_key)
+        try:
+            req = urllib.request.Request(url, headers=headers, method="GET")
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                if response.status != 200:
+                    return {"status": "error", "error": f"Memora returned HTTP {response.status}"}
+                result = json.loads(response.read().decode("utf-8"))
+                if not isinstance(result, dict) or not isinstance(result.get("events"), list):
+                    return {"status": "error", "error": "Memora returned an invalid event feed"}
+                return {"status": "ok", **result}
+        except Exception as exc:
+            logger.debug("Memora event poll stream unavailable (%s)", type(exc).__name__)
+            return {"status": "error", "error": type(exc).__name__}
+
     def read_event_cursor(self, agent_name: str, consumer_id: str = "default") -> Dict[str, Any]:
         """Read the server-persisted cursor owned only by this agent."""
         agent = agent_name.lower().strip()

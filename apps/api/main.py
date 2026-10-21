@@ -81,7 +81,7 @@ def sync_from_turso():
         if len(results) < 3:
             return {"status": "invalid_response", "agents_imported": 0, "namespaces_imported": 0, "memories_imported": 0}
 
-        VALID_AGENTS = {"friday", "forge", "sentinel", "inference", "cortex", "intelx", "futuris", "stratex", "memora"}
+        VALID_AGENTS = {"friday", "forge", "sentinel", "inference", "cortex", "intelx", "futuris", "stratex", "memora", "vyralx"}
         valid_agent_ids = set()
 
         agents_imported = 0
@@ -171,10 +171,29 @@ async def lifespan(app: FastAPI):
         from storage.relational.turso_events import production_mode, configured
         if production_mode() and not configured():
             logger.error("Production durable event feed is unavailable: Turso event storage is not configured.")
+
+    if storage_ready():
+        from storage.convergence.tombstone_worker import tombstone_worker
+        tombstone_worker.start_background_worker(interval_seconds=15.0)
+
+    vyralx_key = os.getenv("VYRALX_API_KEY", "").strip()
+    if len(vyralx_key) >= 32 and storage_ready():
+        try:
+            from scripts.register_vyralx_identity import register_vyralx_identity
+            agent_id, ns_path = register_vyralx_identity()
+            logger.info("VyralX identity verified/provisioned (%s, %s)", agent_id, ns_path)
+        except Exception as exc:
+            logger.warning("VyralX bootstrap skipped or failed: %s", exc)
+
     try:
         yield
     finally:
         logger.info("Initiating graceful shutdown sequence for Memora...")
+        try:
+            from storage.convergence.tombstone_worker import tombstone_worker
+            tombstone_worker.stop_background_worker()
+        except Exception as exc:
+            logger.warning("Tombstone worker shutdown encountered exception: %s", exc)
         event_emitter.stop_cloud_sync()
         try:
             from core.resilience.http_client import close_async_client
