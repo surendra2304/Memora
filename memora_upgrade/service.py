@@ -58,6 +58,9 @@ class MemoraEngine:
         if not memory:
             raise KeyError(memory_id)
         decision = self.consolidator.decide(memory)
+        if decision.action == "SUMMARIZE_AND_PROMOTE":
+            _, deleted = self.consolidator.promote_and_prune_memory_item(memory, self.store)
+            return deleted
         if decision.action == "ARCHIVE":
             return self.store.transition(memory_id, Lifecycle.ARCHIVED)
         if decision.action == "DELETE":
