@@ -2,7 +2,6 @@
 import importlib
 import logging
 
-import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Query
 
