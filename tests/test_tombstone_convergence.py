@@ -286,6 +286,7 @@ def test_graph_sql_failure_rolls_back_savepoint_and_retries(test_db, monkeypatch
     tenant = "tenant_graph_sql_retry"
     tombstone, memory_id, incident_id, unrelated_id = _make_retry_case(test_db, tenant)
     _set_local_deletion_stores(monkeypatch)
+    monkeypatch.setattr(vector_adapter, "delete_embedding", lambda *args, **kwargs: True)
     caplog.set_level("WARNING")
     original_delete = Query.delete
     failures_remaining = 1
@@ -311,6 +312,7 @@ def test_relational_sql_failure_rolls_back_savepoint_and_retries(test_db, monkey
     tenant = "tenant_record_sql_retry"
     tombstone, memory_id, incident_id, unrelated_id = _make_retry_case(test_db, tenant)
     _set_local_deletion_stores(monkeypatch)
+    monkeypatch.setattr(vector_adapter, "delete_embedding", lambda *args, **kwargs: True)
     caplog.set_level("WARNING")
     _install_sql_delete_failure_trigger(
         test_db, "fail_tombstoned_memory_delete", "memory_records",
