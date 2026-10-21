@@ -1,27 +1,29 @@
 """
-Comprehensive Storage Verification for All 9 FRIDAY Universe Agents
-Tests write ingestion pipeline, namespace resolution, policy gating, 
-and retrieval across every agent in the ecosystem.
+Tenant-aware end-to-end storage verification for the ten FRIDAY Universe agents.
+
+The verifier creates uniquely marked probe memories, validates owner access,
+peer denial, tenant-scoped search, and audit records, then removes only those
+probe memories through Memora's own hard-delete service so deletion tombstones
+and secondary-store convergence are preserved. It never clears or reseeds data.
 """
+from __future__ import annotations
+
 import sys
+import uuid
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from storage.relational.session import SessionLocal
-from storage.relational.models import (
-    MemoryRecord,
-    MemoryType,
-    AuditLog
-)
+from storage.relational.models import AuditLog, MemoryType
 from core.identity.service import IdentityService
 from core.memory.pipeline.write_service import MemoryWriteService
 from core.memory.service import MemoryService
 from core.memory.search_service import SearchService
 
-# The 10 official FRIDAY Universe subsystems
 ECOSYSTEM_AGENTS = [
     {"name": "friday", "role": "supervisor", "desc": "Central desktop OS & master orchestrator"},
     {"name": "forge", "role": "worker", "desc": "Autonomous software engineering & code synthesis"},
@@ -35,107 +37,140 @@ ECOSYSTEM_AGENTS = [
     {"name": "vyralx", "role": "worker", "desc": "Autonomous video production & distribution"},
 ]
 
-def verify_all_agents():
+
+def _ensure_identity_and_namespace(db: Any, name: str, role: str, description: str):
+    """Resolve identity and namespace only within the selected tenant."""
+    tenant_id = "default"
+    agent = IdentityService.get_agent_by_name(db, name, tenant_id=tenant_id)
+    if agent is None:
+        agent = IdentityService.register_agent(
+            db, name=name, role=role, description=description, tenant_id=tenant_id
+        )
+
+    namespace_path = f"memora://{name}/private"
+    namespace = IdentityService.get_namespace_by_path(
+        db, namespace_path, tenant_id=tenant_id
+    )
+    if namespace is None:
+        namespace = IdentityService.resolve_namespace(
+            db, namespace_path, owner_agent_id=agent.id, tenant_id=tenant_id
+        )
+    if getattr(namespace, "tenant_id", tenant_id) != tenant_id:
+        raise RuntimeError(f"Namespace {namespace_path} belongs to an unexpected tenant")
+    return agent, namespace_path
+
+
+def verify_all_agents() -> bool:
     print("=" * 80)
-    print(">>> VERIFYING MEMORY STORAGE ACROSS ALL 10 AGENTS")
+    print("VERIFYING MEMORA STORAGE CONTRACTS ACROSS ALL 10 AGENTS")
     print("=" * 80)
-    
+
     db = SessionLocal()
-    results = {}
-    
+    marker = f"memora-e2e-verification:{uuid.uuid4()}"
+    created: list[tuple[str, str]] = []
+    results: dict[str, dict[str, Any]] = {}
+    failed = False
+
     try:
-        for agent_info in ECOSYSTEM_AGENTS:
-            name = agent_info["name"]
-            role = agent_info["role"]
-            desc = agent_info["desc"]
-            
-            print(f"\n[+] Testing Agent: {name.upper()} ({role}) - {desc}")
-            
-            # 1. Identity & Namespace Resolution
-            agent = IdentityService.get_agent_by_name(db, name)
-            if not agent:
-                agent = IdentityService.register_agent(db, name=name, role=role, description=desc, tenant_id="default")
-            
-            private_ns_path = f"memora://{name}/private"
-            private_ns = IdentityService.get_namespace_by_path(db, private_ns_path)
-            if not private_ns:
-                private_ns = IdentityService.resolve_namespace(db, private_ns_path, owner_agent_id=agent.id, tenant_id="default")
-                
-            # 2. Ingest Memory via 10-Step Write Pipeline
-            test_content = f"Official ecosystem capability verified for {name.upper()}: operational protocol online."
-            write_res = MemoryWriteService.execute_pipeline(
+        for info in ECOSYSTEM_AGENTS:
+            name, role, description = info["name"], info["role"], info["desc"]
+            print(f"\n[+] {name.upper()} — resolving tenant-scoped identity and namespace")
+            _agent, namespace_path = _ensure_identity_and_namespace(
+                db, name, role, description
+            )
+            content = f"{marker} Agent {name} verification payload."
+            write_result = MemoryWriteService.execute_pipeline(
                 db=db,
-                content_text=test_content,
+                content_text=content,
                 caller_name=name,
-                target_namespace_path=private_ns_path,
+                target_namespace_path=namespace_path,
                 memory_type=MemoryType.PROCEDURAL,
-                source=f"{name}_runtime",
+                source=f"{name}_e2e_verification",
                 confidence=1.0,
                 importance=0.90,
-                purpose=f"Verification test for {name}"
+                purpose=f"Isolated Memora storage verification for {name}",
             )
-            
-            mem_id = write_res.record.id
-            print(f"    - Ingested Memory ID: {mem_id[:8]}... (Step trace: {list(write_res.step_outputs.keys())})")
-            
-            # 3. Read Verification: Owner MUST be able to read own private memory
-            read_rec = MemoryService.get_memory_by_id(db, memory_id=mem_id, actor_name=name)
-            assert read_rec is not None
-            assert read_rec.content_text == test_content
-            print("    - Owner Read Check: SUCCESS")
-            
-            # 4. Isolation Verification: Another agent CANNOT read private memory without grant
-            other_agent_name = "sentinel" if name != "sentinel" else "forge"
+            memory_id = write_result.record.id
+            created.append((name, memory_id))
+
+            read_record = MemoryService.get_memory_by_id(
+                db, memory_id=memory_id, actor_name=name
+            )
+            if read_record.content_text != content or read_record.tenant_id != "default":
+                raise AssertionError(f"{name} could not read its own default-tenant probe")
+
+            peer_name = "sentinel" if name != "sentinel" else "forge"
             denied = False
             try:
-                MemoryService.get_memory_by_id(db, memory_id=mem_id, actor_name=other_agent_name)
+                MemoryService.get_memory_by_id(
+                    db, memory_id=memory_id, actor_name=peer_name
+                )
             except Exception:
                 denied = True
-            assert denied, f"Security Violation: {other_agent_name} accessed private memory of {name}!"
-            print("    - Cross-Agent Isolation: ENFORCED (Blocked unauthorized peer read)")
-            
-            # 5. Hybrid Search Verification: Owner can search and find memory
+            if not denied:
+                raise AssertionError(
+                    f"Isolation failure: {peer_name} read {name}'s private probe memory"
+                )
+
             hits = SearchService.hybrid_search(
                 db=db,
-                query_text=f"operational protocol {name}",
+                query_text=f"{marker} {name} verification payload",
                 actor_name=name,
-                limit=3
+                tenant_id="default",
+                limit=5,
+                namespace_path=namespace_path,
             )
-            assert len(hits) >= 1
-            print(f"    - Hybrid Search Retrieval: SUCCESS (Top match score: {hits[0].final_score:.4f})")
-            
-            # 6. Audit Trail Check
-            recent_audit = db.query(AuditLog).filter(AuditLog.memory_id == mem_id).first()
-            print(f"    - Audit Log: CAPTURED (Action: {recent_audit.action if recent_audit else 'None'})")
-            
+            if not any(hit.record.id == memory_id for hit in hits):
+                raise AssertionError(f"{name}'s probe was not found by tenant-scoped search")
+
+            audit_row = db.query(AuditLog).filter(AuditLog.memory_id == memory_id).first()
+            if audit_row is None:
+                raise AssertionError(f"{name}'s probe has no audit record")
+
             results[name] = {
                 "status": "PASS",
-                "memory_id": mem_id,
-                "private_namespace": private_ns_path,
-                "confidence": read_rec.confidence,
-                "importance": read_rec.importance
+                "memory_id": memory_id,
+                "private_namespace": namespace_path,
+                "tenant_id": "default",
+                "audit_recorded": True,
             }
+            print("    identity, owner read, peer denial, scoped search, and audit: PASS")
 
         print("\n" + "=" * 80)
-        print(">>> SUMMARY REPORT: ALL 10 AGENTS STORED AND STORING CORRECTLY")
-        print("=" * 80)
-        for agent_name, r in results.items():
-            print(f"  [OK] {agent_name.upper():<12} | Status: {r['status']} | NS: {r['private_namespace']:<30} | Memory: {r['memory_id'][:8]}...")
+        print(f"RESULT: {len(results)}/10 agents passed Memora storage verification")
+        for name, result in results.items():
+            print(f"  [PASS] {name:<12} | tenant={result['tenant_id']} | {result['private_namespace']}")
+        return len(results) == len(ECOSYSTEM_AGENTS)
 
-        # Count total in DB now
-        total = db.query(MemoryRecord).count()
-        print(f"\n[+] Total Active Memories in Database: {total}")
-        return True
-
-    except Exception as e:
+    except Exception as exc:
+        failed = True
         db.rollback()
-        print(f"\n[!] Verification Error: {e}")
+        print(f"\n[FAIL] Memora storage verification: {exc}")
         import traceback
         traceback.print_exc()
         return False
+
     finally:
+        # Do not issue raw DELETE statements. Route probe cleanup through Memora's
+        # deletion contract so audit, vectors, cache and tombstones stay coherent.
+        cleanup_failed = False
+        for agent_name, memory_id in reversed(created):
+            try:
+                MemoryService.delete_memory(
+                    db, memory_id=memory_id, actor_name=agent_name,
+                    hard_delete=True, tenant_id="default",
+                )
+            except Exception as exc:
+                cleanup_failed = True
+                db.rollback()
+                print(
+                    f"[WARN] Probe cleanup did not complete for {memory_id}; "
+                    f"inspect its deletion tombstone. Error: {exc}"
+                )
         db.close()
+        if cleanup_failed or failed:
+            print("[WARN] Verification failed or cleanup needs inspection; review the run output.")
+
 
 if __name__ == "__main__":
-    success = verify_all_agents()
-    sys.exit(0 if success else 1)
+    sys.exit(0 if verify_all_agents() else 1)
