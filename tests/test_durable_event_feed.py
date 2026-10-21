@@ -989,6 +989,8 @@ def test_custom_event_payload_preserves_safe_fields_and_sanitizes_recursively(te
         "nested": {
             "safe_label": "keep me",
             "auth_token": "do not expose",
+            "private_prompt": "do not expose",
+            "openai_api_key": "do not expose",
             "context": [{"result": "safe", "system_prompt": "do not expose"}],
         },
     }
