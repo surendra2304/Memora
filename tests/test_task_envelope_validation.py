@@ -10,6 +10,7 @@ def test_task_id_cannot_exceed_persisted_memory_record_limit():
     with pytest.raises(ValidationError):
         TaskEnvelopeModel(task_id="t" * 65)
 
+
 def test_task_execute_persists_task_id_on_memory_record(client, test_db):
     from storage.relational.models import MemoryRecord
 
