@@ -101,9 +101,15 @@ class SearchService:
         graph_weight: Optional[float] = None,
         entity_boost_weight: Optional[float] = None,
         purpose: Optional[str] = None,
-        rrf_k: Optional[int] = None
+        rrf_k: Optional[int] = None,
+        degradation_signals: Optional[List[str]] = None,
     ) -> List[SearchResultItem]:
         started_at = time.perf_counter()
+        # Preserve caller-selected weights; switch to the documented lexical
+        # fallback blend only when all three retrieval weights are implicit.
+        use_default_blend = (
+            vector_weight is None and keyword_weight is None and graph_weight is None
+        )
         retrieval_cfg = get_retrieval_config()
         vector_weight = retrieval_cfg["vector_weight"] if vector_weight is None else vector_weight
         keyword_weight = retrieval_cfg["keyword_weight"] if keyword_weight is None else keyword_weight
@@ -140,11 +146,21 @@ class SearchService:
                 tenant_id=resolved_tenant,
                 limit=limit * 3,
                 score_threshold=0.30,
-                fail_soft=True
+                # In production this must raise on an unavailable Qdrant backend
+                # instead of silently returning an empty vector list. The
+                # exception is caught here so relational retrieval still works.
+                fail_soft=False,
             )
         except Exception as exc:
             import logging
-            logging.getLogger(__name__).warning("Vector search unavailable (%s); failing soft to relational search.", exc)
+            logging.getLogger(__name__).warning(
+                "Vector search unavailable (%s); falling back to relational retrieval.",
+                exc,
+            )
+            if degradation_signals is not None:
+                degradation_signals.append("vector_search_unavailable")
+            if use_default_blend:
+                vector_weight, keyword_weight, graph_weight = 0.0, 0.85, 0.15
             vector_hits = []
 
         vector_ranks = {hit.memory_id: (rank + 1, hit.score) for rank, hit in enumerate(vector_hits)}
