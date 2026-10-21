@@ -187,8 +187,8 @@ def test_hybrid_lexical_search_handles_literal_like_wildcards(corpus):
     underscore_results = SearchService.hybrid_search(
         corpus, query_text="_", actor_name="forge", tenant_id="default", limit=10
     )
-    assert not any("%" in item.record.content_text for item in percent_results)
-    assert not any("_" in item.record.content_text for item in underscore_results)
+    assert not percent_results
+    assert not underscore_results
 
 
 def test_hybrid_lexical_candidate_scan_is_bounded(corpus, monkeypatch):
