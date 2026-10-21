@@ -394,3 +394,68 @@ def test_tombstone_background_worker_lifecycle():
     assert not worker._running
     worker.stop_background_worker()
     assert not worker._running
+
+
+def test_enabled_turso_replica_failure_keeps_tombstone_pending(test_db, monkeypatch):
+    """A failed replica delete must not be mistaken for successful convergence."""
+    worker_module = importlib.import_module("storage.convergence.tombstone_worker")
+    tenant = "tenant_turso_retry"
+    agent = IdentityService.register_agent(test_db, name="turso_retry_agent", tenant_id=tenant)
+    namespace = IdentityService.resolve_namespace(
+        test_db,
+        path=f"memora://{tenant}/turso-retry",
+        owner_agent_id=agent.id,
+        tenant_id=tenant,
+    )
+    record = MemoryRecord(
+        tenant_id=tenant,
+        user_id="user",
+        agent_id=agent.name,
+        workspace_id="workspace",
+        namespace_id=namespace.id,
+        owner_id=agent.id,
+        memory_type=MemoryType.EPISODIC,
+        content_text="Replica deletion must be retried after a transient outage.",
+        content_hash="turso_retry_memory",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    test_db.add(record)
+    test_db.flush()
+    tombstone = DeletionTombstone(
+        tenant_id=tenant,
+        memory_id=record.id,
+        relational_deleted=False,
+        vector_deleted=False,
+        cache_deleted=False,
+        graph_deleted=False,
+        turso_deleted=False,
+        status="PENDING",
+    )
+    test_db.add(tombstone)
+    test_db.commit()
+
+    monkeypatch.setattr(vector_adapter, "delete_embedding", lambda *args, **kwargs: True)
+    monkeypatch.setattr(memory_cache, "delete", lambda **_kwargs: True)
+    monkeypatch.setattr(worker_module, "turso_replica_enabled", lambda: True)
+    monkeypatch.setattr(worker_module, "delete_memory_from_turso", lambda *args, **kwargs: False)
+
+    worker = TombstoneConvergenceWorker(batch_size=10, max_retries=3)
+    converged = worker.process_single_tombstone(test_db, tombstone)
+    test_db.commit()
+
+    assert converged is False
+    assert tombstone.turso_deleted is False
+    assert tombstone.status == "PENDING_RETRY"
+    assert tombstone.is_converged() is False
+    # A Turso outage does not prevent independent primary/graph cleanup.
+    assert tombstone.relational_deleted is True
+    assert tombstone.graph_deleted is True
+    assert test_db.query(MemoryRecord).filter_by(id=record.id).first() is None
+
+    monkeypatch.setattr(worker_module, "delete_memory_from_turso", lambda *args, **kwargs: True)
+    converged = worker.process_single_tombstone(test_db, tombstone)
+    test_db.commit()
+    assert converged is True
+    assert tombstone.turso_deleted is True
+    assert tombstone.status == "CONVERGED"
+    assert tombstone.is_converged() is True
