@@ -69,7 +69,7 @@ class ContradictionDetector:
         "quota", "percentage", "percent", "days", "hours", "seconds",
         "minutes", "milliseconds", "kb", "mb", "gb", "tb", "ocpu", "ram",
         "storage", "replica", "replicas", "connections", "connection",
-        "concurrency", "threads", "processes", "attempts", "retries",
+        "concurrency", "threads", "processes", "attempts",
     })
 
     @classmethod
