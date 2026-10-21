@@ -193,7 +193,9 @@ class SearchService:
         # 3. GRAPH RELATIONSHIP EXPANSION
         # -------------------------------------------------------------
         candidate_seed_ids = list(set(list(vector_ranks.keys())[:5] + list(keyword_ranks.keys())[:5]))
-        graph_boosts = GraphService.get_graph_neighbors(db, candidate_seed_ids)
+        graph_boosts = GraphService.get_graph_neighbors(
+            db, candidate_seed_ids, tenant_id=resolved_tenant
+        )
 
         # -------------------------------------------------------------
         # 4. RECIPROCAL RANK FUSION (RRF) & SCORE MERGE

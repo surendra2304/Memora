@@ -255,3 +255,69 @@ def test_regrant_without_a_ttl_preserves_the_existing_expiry(test_db):
     if stored.tzinfo is None:
         stored = stored.replace(tzinfo=timezone.utc)
     assert abs((stored - new_expiry).total_seconds()) < 5
+
+
+
+# ---------------------------------------------------------------------------
+# Tenant isolation in graph-assisted search
+# ---------------------------------------------------------------------------
+
+def test_graph_neighbor_boost_ignores_cross_tenant_relationships(test_db):
+    """Foreign edges must not contribute graph boost to a tenant's search."""
+    from storage.relational.models import MemoryRecord, MemoryRelationship, MemoryType, LifecycleState
+    from core.memory.graph_service import GraphService
+
+    friday = IdentityService.register_agent(test_db, "friday", tenant_id="tenant-a")
+    intelx = IdentityService.register_agent(test_db, "intelx", tenant_id="tenant-b")
+    friday_ns = IdentityService.resolve_namespace(
+        test_db, "memora://tenant-a/friday/private", owner_agent_id=friday.id,
+        tenant_id="tenant-a",
+    )
+    intelx_ns = IdentityService.resolve_namespace(
+        test_db, "memora://tenant-b/intelx/private", owner_agent_id=intelx.id,
+        tenant_id="tenant-b",
+    )
+
+    seed = MemoryRecord(
+        tenant_id="tenant-a", user_id="u-a", agent_id=friday.name,
+        workspace_id="w-a", namespace_id=friday_ns.id, owner_id=friday.id,
+        memory_type=MemoryType.SEMANTIC, content_text="tenant A seed memory",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    foreign_neighbor = MemoryRecord(
+        tenant_id="tenant-b", user_id="u-b", agent_id=intelx.name,
+        workspace_id="w-b", namespace_id=intelx_ns.id, owner_id=intelx.id,
+        memory_type=MemoryType.SEMANTIC, content_text="tenant B private neighbor",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    same_tenant_neighbor = MemoryRecord(
+        tenant_id="tenant-a", user_id="u-a", agent_id=friday.name,
+        workspace_id="w-a", namespace_id=friday_ns.id, owner_id=friday.id,
+        memory_type=MemoryType.SEMANTIC, content_text="tenant A neighbor memory",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    test_db.add_all([seed, foreign_neighbor, same_tenant_neighbor])
+    test_db.flush()
+    test_db.add_all([
+        MemoryRelationship(
+            source_memory_id=seed.id, target_memory_id=foreign_neighbor.id,
+            relationship_type="relates_to", weight=1.0,
+        ),
+        MemoryRelationship(
+            source_memory_id=seed.id, target_memory_id=same_tenant_neighbor.id,
+            relationship_type="relates_to", weight=0.5,
+        ),
+    ])
+    test_db.commit()
+
+    tenant_scoped = GraphService.get_graph_neighbors(
+        test_db, [seed.id], tenant_id="tenant-a"
+    )
+    assert same_tenant_neighbor.id in tenant_scoped
+    assert foreign_neighbor.id not in tenant_scoped
+    assert tenant_scoped[same_tenant_neighbor.id] == 0.5 * 0.15
+
+    # Omitting tenant_id remains available only for compatibility with trusted
+    # non-request callers that intentionally need the unscoped neighborhood.
+    legacy = GraphService.get_graph_neighbors(test_db, [seed.id])
+    assert foreign_neighbor.id in legacy
