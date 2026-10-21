@@ -65,7 +65,7 @@ def test_events_emitter_and_durable_query_endpoint(client: TestClient, test_db, 
     events = body["events"]
     assert len(events) >= 1
     assert any(e["event_id"] == event.event_id and e["event_type"] == "test.event" for e in events)
-    assert events[-1]["payload"] == {}
+    assert events[-1]["payload"] == {"action": "heartbeat", "status": "ok"}
 
 def test_namespace_policy_inspection_endpoint(client: TestClient, test_db):
     """
