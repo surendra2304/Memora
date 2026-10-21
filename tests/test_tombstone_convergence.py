@@ -120,6 +120,7 @@ def test_tombstone_worker_single_convergence(test_db, monkeypatch):
         tombstone.graph_deleted,
         tombstone.turso_deleted,
     ))
+    assert vector_adapter.delete_embedding(mem_id, tenant_id=tenant) is True
     assert mem_id not in vector_adapter._mock_store
     assert memory_cache.get(tenant_id=tenant, key=mem_id) is None
     assert test_db.query(MemoryRecord).filter_by(id=mem_id).first() is None
