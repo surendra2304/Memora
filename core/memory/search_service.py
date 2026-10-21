@@ -186,6 +186,11 @@ class SearchService:
         if tokens and limit > 0:
             token_predicates = []
             for token in tokens:
+                # A token made only of LIKE metacharacters is literal input, not
+                # a useful wildcard search term. Skip it instead of allowing a
+                # wildcard-only query to retrieve the entire tenant corpus.
+                if token and all(character in {"%", "_"} for character in token):
+                    continue
                 escaped_token = token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
                 token_predicates.append(
                     MemoryRecord.content_text.ilike(f"%{escaped_token}%", escape="\\")
