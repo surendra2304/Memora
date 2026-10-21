@@ -19,6 +19,7 @@ import pytest
 from core.identity.service import IdentityService
 from core.memory.schemas import MemoryQuery
 from core.memory.service import MemoryService
+from storage.relational.models import MemoryRecord
 
 
 @pytest.fixture
