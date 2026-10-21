@@ -196,7 +196,13 @@ def _execute_store(
             target_namespace_path=ns_path,
             memory_type=mtype,
             source=f"agent:{actor}",
-            provenance={"task_id": envelope.task_id, "trace_id": envelope.trace_id},
+            task_id=envelope.task_id,
+            provenance={
+                "task_id": envelope.task_id,
+                "trace_id": envelope.trace_id,
+                "request_id": envelope.request_id or envelope.task_id,
+                "parent_task_id": envelope.parent_task_id,
+            },
             allow_duplicates=True,
         )
     except (SecretDetectedSecurityViolation, PoisonMemoryViolation) as exc:
