@@ -41,7 +41,7 @@
     "merged": false,
     "head": "72cb7bf3150e64edba84785e2da6d5446eb1b792",
     "closed_at": "2026-10-21T20:54:30Z",
-    "comment": "Codex review failed due usage limit",
+    "comment": "Automated Codex review could not complete due usage limit",
     "prior_ci": 39551432656,
     "later_failure": 39671891785
   },
@@ -60,5 +60,5 @@
     "Laptop MCP HTTP 404"
   ],
   "active_duration_seconds": "not measured",
-  "next": "Recheck PR15/16 and inspect endpoint idempotency branch for duplicate PRs."
+  "next": "Recheck PR15/16 current heads; inspect endpoint idempotency branch for safe focused PR."
 }
