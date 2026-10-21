@@ -259,22 +259,51 @@ class GraphService:
     @staticmethod
     def get_graph_neighbors(
         db: Session,
-        memory_ids: List[str]
+        memory_ids: List[str],
+        tenant_id: Optional[str] = None,
     ) -> Dict[str, float]:
+        """
+        Return graph boosts for neighbors of seed memories.
+
+        When tenant_id is supplied, only edges whose two endpoints belong to
+        that tenant are considered. A final candidate filter alone is not
+        enough: foreign graph edges must not affect retrieval scoring.
+        tenant_id=None preserves trusted legacy callers; request/search paths
+        should pass their resolved tenant.
+        """
         if not memory_ids:
             return {}
 
-        rels = db.query(MemoryRelationship).filter(
+        query = db.query(
+            MemoryRelationship.source_memory_id,
+            MemoryRelationship.target_memory_id,
+            MemoryRelationship.weight,
+        ).filter(
             or_(
                 MemoryRelationship.source_memory_id.in_(memory_ids),
                 MemoryRelationship.target_memory_id.in_(memory_ids)
             )
-        ).all()
+        )
 
+        if tenant_id is not None:
+            # Both endpoints must belong to the request tenant. A source-only
+            # join would miss cross-tenant incoming edges.
+            source_in_tenant = db.query(MemoryRecord.id).filter(
+                MemoryRecord.id == MemoryRelationship.source_memory_id,
+                MemoryRecord.tenant_id == tenant_id,
+            ).exists()
+            target_in_tenant = db.query(MemoryRecord.id).filter(
+                MemoryRecord.id == MemoryRelationship.target_memory_id,
+                MemoryRecord.tenant_id == tenant_id,
+            ).exists()
+            query = query.filter(source_in_tenant, target_in_tenant)
+
+        rels = query.all()
+        seed_ids = set(memory_ids)
         neighbor_weights: Dict[str, float] = {}
-        for r in rels:
-            for node_id in [r.source_memory_id, r.target_memory_id]:
-                if node_id not in memory_ids:
-                    neighbor_weights[node_id] = neighbor_weights.get(node_id, 0.0) + (r.weight * 0.15)
+        for source_id, target_id, weight in rels:
+            for node_id in (source_id, target_id):
+                if node_id not in seed_ids:
+                    neighbor_weights[node_id] = neighbor_weights.get(node_id, 0.0) + (weight * 0.15)
 
         return neighbor_weights
