@@ -118,6 +118,12 @@ def _sanitize_event_payload(value: Any) -> Any:
             if not isinstance(key, str):
                 continue
             normalized_key = re.sub(r"[^a-z0-9]+", "_", key.casefold()).strip("_")
+            # This explicit advisory flag is a public safety contract, not a
+            # credential: consumers must receive it to avoid treating forecasts
+            # as authorization to execute an action.
+            if normalized_key == "prediction_is_not_authorization":
+                cleaned[key] = _sanitize_event_payload(item)
+                continue
             key_parts = normalized_key.split("_")
             sensitive_components = {
                 "query", "prompt", "password", "secret", "credential",
