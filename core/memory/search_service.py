@@ -185,32 +185,37 @@ class SearchService:
         lexical_matches = []
         if tokens and limit > 0:
             token_predicates = []
+            scorable_tokens = []
             for token in tokens:
                 # A token made only of LIKE metacharacters is literal input, not
-                # a useful wildcard search term. Skip it instead of allowing a
-                # wildcard-only query to retrieve the entire tenant corpus.
+                # a useful wildcard search term. Ignore it for candidate
+                # selection and scoring to prevent wildcard-only corpus scans.
                 if token and all(character in {"%", "_"} for character in token):
                     continue
                 escaped_token = token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
                 token_predicates.append(
                     MemoryRecord.content_text.ilike(f"%{escaped_token}%", escape="\\")
                 )
-            lexical_candidates = (
-                kw_query.filter(or_(*token_predicates))
-                .order_by(
-                    MemoryRecord.importance.desc(),
-                    MemoryRecord.confidence.desc(),
-                    MemoryRecord.created_at.desc(),
-                    MemoryRecord.id.asc(),
+                scorable_tokens.append(token)
+
+            lexical_candidates = []
+            if token_predicates:
+                lexical_candidates = (
+                    kw_query.filter(or_(*token_predicates))
+                    .order_by(
+                        MemoryRecord.importance.desc(),
+                        MemoryRecord.confidence.desc(),
+                        MemoryRecord.created_at.desc(),
+                        MemoryRecord.id.asc(),
+                    )
+                    .limit(min(max(limit * 100, 500), 5000))
+                    .all()
                 )
-                .limit(min(max(limit * 100, 500), 5000))
-                .all()
-            )
             for record in lexical_candidates:
                 text_lower = record.content_text.lower()
-                matched_count = sum(1 for token in tokens if token in text_lower)
+                matched_count = sum(1 for token in scorable_tokens if token in text_lower)
                 if matched_count:
-                    lexical_matches.append((record.id, matched_count / len(tokens)))
+                    lexical_matches.append((record.id, matched_count / len(scorable_tokens)))
 
         lexical_matches.sort(key=lambda item: (-item[1], item[0]))
         keyword_ranks = {
