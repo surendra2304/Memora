@@ -433,6 +433,7 @@ def test_failed_tombstone_is_not_retried_after_retry_limit(test_db):
 
 
 def test_graph_sql_failure_rolls_back_savepoint_and_retries(test_db, monkeypatch, caplog):
+    caplog.set_level("WARNING", logger="storage.convergence.tombstone_worker")
     tenant = "tenant_graph_sql_retry"
     tombstone, memory_id, incident_id, unrelated_id = _make_retry_case(test_db, tenant)
     _set_local_deletion_stores(monkeypatch)
@@ -524,6 +525,7 @@ def test_graph_sql_failure_rolls_back_savepoint_and_retries(test_db, monkeypatch
 def test_relational_sql_failure_rolls_back_savepoint_and_retries(
     test_db, monkeypatch, caplog
 ):
+    caplog.set_level("WARNING", logger="storage.convergence.tombstone_worker")
     tenant = "tenant_record_sql_retry"
     tombstone, memory_id, incident_id, unrelated_id = _make_retry_case(test_db, tenant)
     _set_local_deletion_stores(monkeypatch)
