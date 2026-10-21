@@ -76,6 +76,18 @@ class QdrantVectorAdapter:
             logger.info(f"Qdrant vector database operating in internal fallback mode: {e}")
             self._initialized = False
 
+    def disconnect(self) -> None:
+        """Close Qdrant client connection cleanly during service shutdown."""
+        if self._client is not None:
+            try:
+                if hasattr(self._client, "close"):
+                    self._client.close()
+            except Exception as exc:
+                logger.debug("Qdrant client close exception: %s", exc)
+            finally:
+                self._client = None
+                self._initialized = False
+
     def is_production(self) -> bool:
         # Render and other deployment manifests configure ENVIRONMENT. Keep
         # vector durability decisions aligned with relational storage, which
