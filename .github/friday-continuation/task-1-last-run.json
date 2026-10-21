@@ -2,52 +2,74 @@
   "task": 1,
   "repository": "Memora",
   "updated_at": "2026-10-22",
-  "status": "partial_fix_committed_ci_queued",
+  "status": "partial_pr15_green_pr16_ci_queued",
   "merged": false,
+  "changes": [
+    {
+      "commit": "593a81d0e2c64a7b5e5962ca29a47d64f35c2d03",
+      "branch": "fix/task1-event-payload-assertion-20261022",
+      "pr": 15,
+      "files": [
+        "tests/test_final_infra.py"
+      ],
+      "ci_run": 39672447315,
+      "ci_url": "https://github.com/surendra2304/Memora/actions/runs/39672447315",
+      "ci_status": "success",
+      "checks": [
+        "Ruff",
+        "Alembic migration round-trip",
+        "pytest",
+        "PostgreSQL 18 integration",
+        "app boot/health",
+        "Docker build"
+      ]
+    },
+    {
+      "commit": "9cf0404fd85b94d5c2406623ee56c80648530b41",
+      "branch": "fix/events-default-deny-master-plan",
+      "pr": 16,
+      "files": [
+        "apps/api/routers/v1_events.py"
+      ],
+      "change": "Explicitly allow reviewed fields for vyralx.custom_render under default-deny event filter",
+      "ci_run": 39672966835,
+      "ci_url": "https://github.com/surendra2304/Memora/actions/runs/39672966835",
+      "ci_status": "queued_at_last_check"
+    }
+  ],
+  "previous_pr16_run": {
+    "id": 39672720955,
+    "status": "failure",
+    "failing_test": "tests/test_downstream_event_streams_and_hardening.py::test_custom_mesh_envelope_payload_and_sanitization",
+    "summary": "625 passed, 2 skipped, 1 failure: KeyError video_title"
+  },
   "PR14": {
     "url": "https://github.com/surendra2304/Memora/pull/14",
-    "branch": "test/idempotency-isolation-regressions-20261021",
     "commit": "72cb7bf3150e64edba84785e2da6d5446eb1b792",
-    "files_changed": [
-      "tests/test_write_service.py"
-    ],
-    "prior_ci_run": 39551432656,
+    "prior_ci": 39551432656,
     "prior_ci_status": "success",
-    "new_ci_run": 39671891785,
-    "new_ci_url": "https://github.com/surendra2304/Memora/actions/runs/39671891785",
-    "new_ci_status": "failure",
-    "failure": "tests/test_final_infra.py::test_events_emitter_and_durable_query_endpoint; 624 passed, 2 skipped, 1 failed"
-  },
-  "PR15": {
-    "url": "https://github.com/surendra2304/Memora/pull/15",
-    "branch": "fix/task1-event-payload-assertion-20261022",
-    "commit": "593a81d0e2c64a7b5e5962ca29a47d64f35c2d03",
-    "files_changed": [
-      "tests/test_final_infra.py"
-    ],
-    "current_ci_run": 39672447315,
-    "current_ci_url": "https://github.com/surendra2304/Memora/actions/runs/39672447315",
-    "current_ci_status": "queued_at_last_check",
-    "mergeable": true
+    "new_ci": 39671891785,
+    "new_ci_status": "failure_due_to_stale_event_payload_assertion_fixed_by_PR15"
   },
   "PR7": {
     "url": "https://github.com/surendra2304/Memora/pull/7",
+    "head": "da7ef4fe514e8a0f511572dc917bfa59fdcd1250",
     "known_previous_ci_failure": 39548261200,
-    "mergeable": false
+    "mergeability": "divergent; do not merge blindly"
   },
   "endpoint_idempotency_branch": {
     "branch": "fix/task1-idempotent-task-write-20261021",
     "commit": "4f0fac92082eac989b3f8e2f6eee02077a1d2372",
-    "files_changed": [
+    "files": [
       "apps/api/routers/v1_task.py",
       "tests/test_task_idempotency.py"
     ],
-    "test_status": "not_verified"
+    "status": "not verified in fresh PR CI"
   },
   "local_tests_run": false,
   "blockers": [
-    "Laptop MCP returned HTTP 404"
+    "Laptop MCP returns HTTP 404"
   ],
   "active_duration_seconds": "not measured",
-  "next": "Poll PR15 CI then continue endpoint idempotency branch; review PR7 divergence without auto-merging."
+  "next": "Poll PR16 run 39672966835; then continue endpoint idempotency branch after CI results."
 }
