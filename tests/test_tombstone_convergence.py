@@ -102,7 +102,11 @@ def test_tombstone_worker_single_convergence(test_db, monkeypatch):
         ),
     ])
     test_db.commit()
-    _set_local_deletion_stores(monkeypatch)
+
+    # Don't replace the real adapter deletion path in this test: the mock store
+    # honors tenant metadata and is part of the behavior under test.
+    worker_module = importlib.import_module("storage.convergence.tombstone_worker")
+    monkeypatch.setattr(worker_module, "turso_replica_enabled", lambda: False)
     tombstone = test_db.query(DeletionTombstone).filter_by(memory_id=mem_id).one()
 
     assert TombstoneConvergenceWorker(batch_size=10, max_retries=3).process_single_tombstone(
@@ -110,12 +114,16 @@ def test_tombstone_worker_single_convergence(test_db, monkeypatch):
     )
     test_db.commit()
     assert tombstone.status == "CONVERGED"
-    assert all((tombstone.relational_deleted, tombstone.vector_deleted,
-                tombstone.cache_deleted, tombstone.graph_deleted, tombstone.turso_deleted))
+    assert all((
+        tombstone.relational_deleted,
+        tombstone.vector_deleted,
+        tombstone.cache_deleted,
+        tombstone.graph_deleted,
+        tombstone.turso_deleted,
+    ))
     assert mem_id not in vector_adapter._mock_store
     assert memory_cache.get(tenant_id=tenant, key=mem_id) is None
     assert test_db.query(MemoryRecord).filter_by(id=mem_id).first() is None
-
 
 def test_tombstone_with_wrong_tenant_does_not_delete_foreign_memory_or_edges(test_db, monkeypatch):
     foreign_tenant, tombstone_tenant = "tenant_foreign_memory", "tenant_wrong_tombstone"
