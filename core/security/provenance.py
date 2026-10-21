@@ -58,12 +58,16 @@ def compute_memory_signature(
         owner_id = record_or_dict.get("owner_id") or record_or_dict.get("owner", "")
         content_hash = record_or_dict.get("content_hash", "")
         mem_type = record_or_dict.get("memory_type", "")
+        if not content_hash and record_or_dict.get("content_text"):
+            content_hash = hashlib.sha256(str(record_or_dict["content_text"]).strip().encode("utf-8")).hexdigest()
     else:
         memory_id = getattr(record_or_dict, "id", "")
         tenant_id = getattr(record_or_dict, "tenant_id", "default")
         owner_id = getattr(record_or_dict, "owner_id", "")
         content_hash = getattr(record_or_dict, "content_hash", "")
         mem_type = getattr(record_or_dict, "memory_type", "")
+        if not content_hash and getattr(record_or_dict, "content_text", None):
+            content_hash = hashlib.sha256(str(record_or_dict.content_text).strip().encode("utf-8")).hexdigest()
 
     if hasattr(mem_type, "value"):
         mem_type = mem_type.value
@@ -97,6 +101,14 @@ def verify_memory_signature(
 
     if not signature or not isinstance(signature, str):
         return False
+
+    # Check for direct database content_text tampering against content_hash
+    content_text = record_or_dict.get("content_text") if isinstance(record_or_dict, dict) else getattr(record_or_dict, "content_text", None)
+    record_content_hash = record_or_dict.get("content_hash") if isinstance(record_or_dict, dict) else getattr(record_or_dict, "content_hash", None)
+    if content_text is not None and record_content_hash:
+        actual_hash = hashlib.sha256(str(content_text).strip().encode("utf-8")).hexdigest()
+        if not hmac.compare_digest(actual_hash, str(record_content_hash).strip()):
+            return False
 
     expected_sig = compute_memory_signature(record_or_dict, secret=secret)
     return hmac.compare_digest(expected_sig, signature)

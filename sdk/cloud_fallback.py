@@ -103,5 +103,26 @@ class MemoraClient:
     def record_consultation(self, topic: str, outcome_summary: str, providers_used: list[str]):
         return self.record_interaction("inference", topic, outcome_summary, event_type="model_consultation", tags=providers_used)
 
+    def poll_stream(
+        self,
+        agent_name: str,
+        consumer_id: str = "default",
+        after_id: int | None = None,
+        limit: int = 100,
+        event_type: str | None = None,
+        auto_ack: bool = False,
+    ) -> dict[str, Any]:
+        """Fetch monotonic notifications via GET /v1/events/poll."""
+        params: dict[str, Any] = {
+            "consumer_id": consumer_id,
+            "limit": limit,
+            "auto_ack": "true" if auto_ack else "false",
+        }
+        if after_id is not None:
+            params["after_id"] = after_id
+        if event_type:
+            params["event_type"] = event_type
+        return self._request(agent_name, f"/v1/events/poll?{urllib.parse.urlencode(params)}")
+
 
 memora_client = MemoraClient()

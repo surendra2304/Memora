@@ -93,6 +93,13 @@ def hybrid_vector_relational_search(
                 combined_score = round(lexical_score, 4)
 
             prov = rec.provenance or {}
+            # Verify cryptographic provenance if signed (Safety Invariant 2)
+            if isinstance(prov, dict) and "hmac_signature" in prov:
+                from core.security.provenance import verify_memory_signature
+                if not verify_memory_signature(rec):
+                    logger.warning("MemoryRecord %s failed HMAC provenance check in hybrid retrieval; discarding.", rec.id)
+                    continue
+
             is_tainted = bool(prov.get("is_tainted") or prov.get("taint") == "untrusted_web_fact")
             content = rec.content_text
             mem_type = rec.memory_type.value
