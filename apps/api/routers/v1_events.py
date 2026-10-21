@@ -74,6 +74,7 @@ _VISIBLE_FIELDS = {
         "source_agent", "decision_id", "forecast_id", "correlation_id", "action",
         "paper_only", "policy_reason", "gates_summary", "headline", "summary", "decided_at",
     ),
+    "vyralx.custom_render": ("source_agent", "correlation_id", "video_title", "render_quality"),
     "vyralx.published": (
         "source_agent", "project_id", "video_id", "title", "status", "platform",
         "published_at", "correlation_id",
