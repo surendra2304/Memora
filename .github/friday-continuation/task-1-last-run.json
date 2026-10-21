@@ -6,14 +6,16 @@
   "local_tests_run": false,
   "merged": false,
   "PR7": {
+    "url": "https://github.com/surendra2304/Memora/pull/7",
     "branch": "automation/friday-universe-task-1",
     "commit": "da7ef4fe514e8a0f511572dc917bfa59fdcd1250",
     "previous_ci_run": 39548261200,
     "previous_ci_status": "failure",
     "new_head_ci": "not_visible",
-    "changed_files": [
-      "tests/test_tombstone_convergence.py"
-    ]
+    "mergeable": false,
+    "ahead_of_main": 5,
+    "behind_main": 9,
+    "changed_files": 16
   },
   "idempotency": {
     "branch": "fix/task1-idempotent-task-write-20261021",
@@ -27,8 +29,8 @@
   },
   "blockers": [
     "Laptop MCP HTTP 404",
-    "Remote command execution blocked",
+    "Remote command execution unavailable",
     "PR creation blocked"
   ],
-  "next": "Verify PR7 CI and open/run the idempotency regression PR if allowed."
+  "next": "Review PR7 divergence and get CI evidence; open/run idempotency regression PR if permitted."
 }
