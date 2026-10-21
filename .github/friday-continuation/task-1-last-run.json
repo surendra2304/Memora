@@ -37,23 +37,22 @@
     "status": "success"
   },
   "pr14": {
-    "url": "https://github.com/surendra2304/Memora/pull/14",
     "state": "closed",
     "merged": false,
     "head": "72cb7bf3150e64edba84785e2da6d5446eb1b792",
     "closed_at": "2026-10-21T20:54:30Z",
-    "comments": "Codex review failed due usage limit",
+    "comment": "Codex review failed due usage limit",
     "prior_ci": 39551432656,
-    "subsequent_failure": 39671891785
+    "later_failure": 39671891785
   },
   "pr7": {
-    "url": "https://github.com/surendra2304/Memora/pull/7",
-    "status": "divergent_do_not_merge_blindly"
+    "state": "open",
+    "status": "divergent"
   },
   "endpoint_idempotency": {
     "branch": "fix/task1-idempotent-task-write-20261021",
     "head": "4f0fac92082eac989b3f8e2f6eee02077a1d2372",
-    "status": "not_fresh_CI_verified"
+    "fresh_ci": false
   },
   "local_tests_run": false,
   "merged": false,
@@ -61,5 +60,5 @@
     "Laptop MCP HTTP 404"
   ],
   "active_duration_seconds": "not measured",
-  "next": "Recheck PR15/16; inspect endpoint idempotency branch; avoid duplicate PR."
+  "next": "Recheck PR15/16 and inspect endpoint idempotency branch for duplicate PRs."
 }
