@@ -8,7 +8,7 @@ import uuid
 import re
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from storage.relational.models import (
     LifecycleState,
@@ -108,46 +108,26 @@ class ContextBuilderService:
         # -------------------------------------------------------------
         # 2. HYBRID RETRIEVAL WITH GRACEFUL DEGRADATION
         # -------------------------------------------------------------
-        try:
-            search_results = SearchService.hybrid_search(
-                db=db,
-                query_text=task_query,
-                actor_name=actor.name,
-                # Pass the resolved tenant down. Without it hybrid_search
-                # re-resolved actor_name unscoped, which — now that agent names
-                # are unique per tenant rather than globally — could bind the
-                # request to a same-named agent in another tenant and return
-                # that tenant's memories.
-                tenant_id=getattr(actor, "tenant_id", "default"),
-                user_id=user_id,
-                workspace_id=workspace_id,
-                task_id=task_id,
-                namespace_path=namespace_path,
-                purpose=purpose,
-                limit=max_candidates
-            )
-        except Exception:
-            is_degraded = True
-            search_results = SearchService.hybrid_search(
-                db=db,
-                query_text=task_query,
-                actor_name=actor.name,
-                # Pass the resolved tenant down. Without it hybrid_search
-                # re-resolved actor_name unscoped, which — now that agent names
-                # are unique per tenant rather than globally — could bind the
-                # request to a same-named agent in another tenant and return
-                # that tenant's memories.
-                tenant_id=getattr(actor, "tenant_id", "default"),
-                user_id=user_id,
-                workspace_id=workspace_id,
-                task_id=task_id,
-                namespace_path=namespace_path,
-                purpose=purpose,
-                limit=max_candidates,
-                vector_weight=0.0,
-                keyword_weight=0.85,
-                graph_weight=0.15
-            )
+        degradation_signals: List[str] = []
+        search_results = SearchService.hybrid_search(
+            db=db,
+            query_text=task_query,
+            actor_name=actor.name,
+            # Pass the resolved tenant down. Without it hybrid_search
+            # re-resolved actor_name unscoped, which — now that agent names
+            # are unique per tenant rather than globally — could bind the
+            # request to a same-named agent in another tenant and return
+            # that tenant's memories.
+            tenant_id=getattr(actor, "tenant_id", "default"),
+            user_id=user_id,
+            workspace_id=workspace_id,
+            task_id=task_id,
+            namespace_path=namespace_path,
+            purpose=purpose,
+            limit=max_candidates,
+            degradation_signals=degradation_signals,
+        )
+        is_degraded = bool(degradation_signals)
 
         # -------------------------------------------------------------
         # 2b. PREDICTIVE CONTEXT PRE-FETCHING (Experience & Procedural Stores)
@@ -244,19 +224,39 @@ class ContextBuilderService:
             tokens_saved = max(0, raw_tokens - total_tokens)
             metrics_collector.record_compaction(tokens_saved)
 
+        # Budget compaction can carry source ids from multiple input memories.
+        # Trust only IDs that were already returned by the fail-closed policy
+        # stage above; never accept source metadata that introduces an unqueried
+        # or foreign-tenant record into the graph/context response.
+        allowed_source_ids = {item.record.id for item in policy_filtered}
         included_memory_ids = []
-        for m in budgeted_memories:
-            included_memory_ids.extend(m.source_memory_ids)
-        included_memory_ids = list(set(included_memory_ids))
+        for memory in budgeted_memories:
+            source_ids = getattr(memory, "source_memory_ids", [])
+            memory.source_memory_ids = [
+                source_id for source_id in source_ids
+                if source_id in allowed_source_ids
+            ]
+            included_memory_ids.extend(memory.source_memory_ids)
+        included_memory_ids = list(dict.fromkeys(included_memory_ids))
 
         # -------------------------------------------------------------
         # 6. GRAPH RELATIONSHIP EDGES EXTRACTION
         # -------------------------------------------------------------
         graph_edges = []
         if len(included_memory_ids) > 1:
-            rels = db.query(MemoryRelationship).filter(
+            source_record = aliased(MemoryRecord)
+            target_record = aliased(MemoryRecord)
+            rels = db.query(MemoryRelationship).join(
+                source_record,
+                MemoryRelationship.source_memory_id == source_record.id,
+            ).join(
+                target_record,
+                MemoryRelationship.target_memory_id == target_record.id,
+            ).filter(
                 MemoryRelationship.source_memory_id.in_(included_memory_ids),
-                MemoryRelationship.target_memory_id.in_(included_memory_ids)
+                MemoryRelationship.target_memory_id.in_(included_memory_ids),
+                source_record.tenant_id == getattr(actor, "tenant_id", "default"),
+                target_record.tenant_id == getattr(actor, "tenant_id", "default"),
             ).all()
 
             for r in rels:
