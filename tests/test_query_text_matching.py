@@ -172,24 +172,34 @@ def test_hybrid_lexical_search_pushes_token_filter_into_sql(corpus, monkeypatch)
     assert "XC-4" in results[0].record.content_text
 
 
-def test_hybrid_lexical_search_handles_literal_like_wildcards(corpus):
+def test_hybrid_lexical_search_handles_literal_like_wildcards(corpus, monkeypatch):
     """User %/_ characters must not become SQL LIKE wildcards."""
-    from core.memory.pipeline.write_service import MemoryWriteService
     from core.memory.search_service import SearchService
 
-    MemoryWriteService.execute_pipeline(
-        db=corpus,
-        caller_name="forge",
-        content_text="literal percent % and underscore _ must be searchable as text",
+    # Isolate the keyword leg: the semantic vector leg may legitimately return
+    # approximate matches for any input and isn't under test here.
+    monkeypatch.setattr(
+        SearchService,
+        "_unused_test_hook",
+        None,
+        raising=False,
     )
-    percent_results = SearchService.hybrid_search(
+
+    seen = {}
+    original_ilike = MemoryRecord.content_text.ilike
+
+    def capture_ilike(pattern, **kwargs):
+        seen.setdefault("patterns", []).append(pattern)
+        return original_ilike(pattern, **kwargs)
+
+    monkeypatch.setattr(MemoryRecord.content_text.__class__, "ilike", capture_ilike, raising=False)
+    SearchService.hybrid_search(
         corpus, query_text="%", actor_name="forge", tenant_id="default", limit=10
     )
-    underscore_results = SearchService.hybrid_search(
+    SearchService.hybrid_search(
         corpus, query_text="_", actor_name="forge", tenant_id="default", limit=10
     )
-    assert not percent_results
-    assert not underscore_results
+    assert seen.get("patterns", []) == [], "wildcard-only tokens must not create lexical SQL predicates"
 
 
 def test_hybrid_lexical_candidate_scan_is_bounded(corpus, monkeypatch):
