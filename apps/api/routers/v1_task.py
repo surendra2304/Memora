@@ -30,7 +30,7 @@ _QUERY_ACTIONS = {"query", "search", "recall", "retrieve", "find", "ask"}
 
 
 class TaskEnvelopeModel(BaseModel):
-    task_id: str = Field(default_factory=lambda: f"task_{uuid.uuid4().hex[:12]}", min_length=1, max_length=128)
+    task_id: str = Field(default_factory=lambda: f"task_{uuid.uuid4().hex[:12]}", min_length=1, max_length=64)
     source_agent: str = Field(default="friday", min_length=1, max_length=128)
     target_agent: str = Field(default="memora", min_length=1, max_length=128)
     action: str = Field(default="store", min_length=1, max_length=64)
