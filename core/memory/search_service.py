@@ -6,6 +6,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 import time
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 
 from storage.relational.models import MemoryRecord, Namespace, LifecycleState, MemoryType
 from storage.vector.qdrant_adapter import vector_adapter
@@ -176,18 +177,39 @@ class SearchService:
         if memory_types:
             kw_query = kw_query.filter(MemoryRecord.memory_type.in_(memory_types))
 
-        # Query token matching
-        tokens = query_text.lower().split()
+        # Query token matching. Push the coarse token predicate into SQL so we
+        # never materialize every active row for a tenant just to reject most of
+        # them in Python. Keep the historical substring/OR semantics, but cap
+        # the candidate scan and score only this bounded candidate set.
+        tokens = list(dict.fromkeys(token for token in query_text.lower().split() if token))
         lexical_matches = []
-        for r in kw_query.all():
-            text_lower = r.content_text.lower()
-            matched_count = sum(1 for t in tokens if t in text_lower)
-            if matched_count > 0:
-                lexical_score = matched_count / len(tokens)
-                lexical_matches.append((r.id, lexical_score))
+        if tokens and limit > 0:
+            token_predicates = [
+                MemoryRecord.content_text.ilike(f"%{token.replace('%', r'\\%').replace('_', r'\\_')}%", escape="\\")
+                for token in tokens
+            ]
+            lexical_candidates = (
+                kw_query.filter(or_(*token_predicates))
+                .order_by(
+                    MemoryRecord.importance.desc(),
+                    MemoryRecord.confidence.desc(),
+                    MemoryRecord.created_at.desc(),
+                    MemoryRecord.id.asc(),
+                )
+                .limit(min(max(limit * 100, 500), 5000))
+                .all()
+            )
+            for record in lexical_candidates:
+                text_lower = record.content_text.lower()
+                matched_count = sum(1 for token in tokens if token in text_lower)
+                if matched_count:
+                    lexical_matches.append((record.id, matched_count / len(tokens)))
 
-        lexical_matches.sort(key=lambda x: x[1], reverse=True)
-        keyword_ranks = {item[0]: (rank + 1, item[1]) for rank, item in enumerate(lexical_matches[:limit * 3])}
+        lexical_matches.sort(key=lambda item: (-item[1], item[0]))
+        keyword_ranks = {
+            item[0]: (rank + 1, item[1])
+            for rank, item in enumerate(lexical_matches[:limit * 3])
+        }
 
         # -------------------------------------------------------------
         # 3. GRAPH RELATIONSHIP EXPANSION
