@@ -36,7 +36,7 @@ def test_hybrid_search_records_relevance_and_age_metrics(test_db, monkeypatch):
         staticmethod(lambda _text: [0.0]),
     )
     monkeypatch.setattr(search_service.vector_adapter, "search_similarity", lambda **_kwargs: [])
-    monkeypatch.setattr(search_service.GraphService, "get_graph_neighbors", lambda _db, _ids: {})
+    monkeypatch.setattr(search_service.GraphService, "get_graph_neighbors", lambda _db, _ids, **_kwargs: {})
 
     results = SearchService.hybrid_search(test_db, "telemetry calibration needle")
 
