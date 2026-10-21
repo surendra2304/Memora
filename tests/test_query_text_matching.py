@@ -19,6 +19,7 @@ import pytest
 from core.identity.service import IdentityService
 from core.memory.schemas import MemoryQuery
 from core.memory.service import MemoryService
+from storage.relational.models import MemoryRecord
 
 
 @pytest.fixture
@@ -145,3 +146,89 @@ def test_query_and_hybrid_search_agree_on_whether_something_matches(corpus):
         f"query_memories found {len(direct)} rows but hybrid_search found "
         f"{len(hybrid)} for the same query"
     )
+
+
+def test_hybrid_lexical_search_pushes_token_filter_into_sql(corpus, monkeypatch):
+    """Non-matching rows should be excluded by SQL before Python scoring."""
+    from core.memory.search_service import SearchService
+
+    rows = MemoryService.query_memories(
+        corpus,
+        MemoryQuery(query_text="xenon", limit=10),
+        actor_name="forge",
+        purpose="test",
+    )
+    assert len(rows) == 1
+
+    results = SearchService.hybrid_search(
+        corpus,
+        query_text="xenon compressor seal torque",
+        actor_name="forge",
+        tenant_id="default",
+        purpose="test",
+        limit=5,
+    )
+    assert results
+    assert "XC-4" in results[0].record.content_text
+
+
+def test_hybrid_lexical_search_handles_literal_like_wildcards(corpus, monkeypatch):
+    """A query composed only of LIKE metacharacters skips lexical SQL retrieval."""
+    from core.memory.search_service import SearchService
+
+    # Semantic search is allowed to produce approximate results for arbitrary
+    # input, so isolate the SQL/keyword leg when testing wildcard handling.
+    monkeypatch.setattr(
+        "core.memory.search_service.EmbeddingGenerator.generate_embedding",
+        lambda _query: [],
+    )
+    monkeypatch.setattr(
+        "core.memory.search_service.vector_adapter.search_similarity",
+        lambda **_kwargs: [],
+    )
+    queried_limits = []
+    query_type = type(corpus.query(MemoryRecord))
+    original_all = query_type.all
+
+    def capture_all(query, *args, **kwargs):
+        # Only record queries for MemoryRecord; Namespace/metadata queries are
+        # used elsewhere in the search pipeline.
+        entity = None
+        try:
+            entity = query.column_descriptions[0].get("entity")
+        except Exception:
+            pass
+        if entity is MemoryRecord:
+            queried_limits.append(query._limit_clause)
+        return original_all(query, *args, **kwargs)
+
+    monkeypatch.setattr(query_type, "all", capture_all)
+    for wildcard in ("%", "_"):
+        result = SearchService.hybrid_search(
+            corpus, query_text=wildcard, actor_name="forge", tenant_id="default", limit=10
+        )
+        assert not result
+    assert all(limit is None for limit in queried_limits), (
+        "wildcard-only queries should skip the lexical candidate query"
+    )
+
+def test_hybrid_lexical_candidate_scan_is_bounded(corpus, monkeypatch):
+    """Even common tokens must query at most the configured lexical candidate cap."""
+    from core.memory.search_service import SearchService
+
+    queried_limits = []
+    query_type = type(corpus.query(MemoryRecord))
+
+    # Observe LIMIT on the query that selects lexical candidates while leaving
+    # normal candidate selection and policy checks untouched.
+    original_limit = query_type.limit
+
+    def capture_limit(query, value):
+        queried_limits.append(value)
+        return original_limit(query, value)
+
+    monkeypatch.setattr(query_type, "limit", capture_limit)
+    SearchService.hybrid_search(
+        corpus, query_text="the", actor_name="forge", tenant_id="default", limit=10
+    )
+    assert 1000 in queried_limits
