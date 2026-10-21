@@ -321,3 +321,114 @@ def test_graph_neighbor_boost_ignores_cross_tenant_relationships(test_db):
     # non-request callers that intentionally need the unscoped neighborhood.
     legacy = GraphService.get_graph_neighbors(test_db, [seed.id])
     assert foreign_neighbor.id in legacy
+
+
+def test_graph_traversal_enforces_tenant_boundary_even_for_public_namespaces(test_db, monkeypatch):
+    """Graph reads must never walk foreign-tenant edges, even if policy allows a public node."""
+    from types import SimpleNamespace
+
+    from core.memory.graph_service import GraphService
+    from storage.relational.models import (
+        LifecycleState,
+        MemoryRecord,
+        MemoryRelationship,
+        MemoryType,
+        NamespaceType,
+    )
+
+    friday = IdentityService.register_agent(test_db, "friday", tenant_id="tenant-graph-a")
+    intelx = IdentityService.register_agent(test_db, "intelx", tenant_id="tenant-graph-b")
+    root_namespace = IdentityService.resolve_namespace(
+        test_db,
+        "memora://friday/private",
+        owner_agent_id=friday.id,
+        tenant_id="tenant-graph-a",
+    )
+    same_tenant_namespace = IdentityService.resolve_namespace(
+        test_db,
+        "memora://friday/projects/graph",
+        owner_agent_id=friday.id,
+        tenant_id="tenant-graph-a",
+    )
+    foreign_public_namespace = IdentityService.resolve_namespace(
+        test_db,
+        "memora://public",
+        default_type=NamespaceType.PUBLIC,
+        owner_agent_id=intelx.id,
+        tenant_id="tenant-graph-b",
+    )
+
+    root = MemoryRecord(
+        tenant_id="tenant-graph-a",
+        user_id="friday-user",
+        agent_id="friday",
+        workspace_id="graph-test",
+        namespace_id=root_namespace.id,
+        owner_id=friday.id,
+        memory_type=MemoryType.EPISODIC,
+        content_text="Tenant A graph root",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    same_tenant_neighbor = MemoryRecord(
+        tenant_id="tenant-graph-a",
+        user_id="friday-user",
+        agent_id="friday",
+        workspace_id="graph-test",
+        namespace_id=same_tenant_namespace.id,
+        owner_id=friday.id,
+        memory_type=MemoryType.EPISODIC,
+        content_text="Tenant A graph neighbor",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    foreign_public_neighbor = MemoryRecord(
+        tenant_id="tenant-graph-b",
+        user_id="intelx-user",
+        agent_id="intelx",
+        workspace_id="graph-test",
+        namespace_id=foreign_public_namespace.id,
+        owner_id=intelx.id,
+        memory_type=MemoryType.EPISODIC,
+        content_text="Tenant B public memory",
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
+    test_db.add_all([root, same_tenant_neighbor, foreign_public_neighbor])
+    test_db.flush()
+    test_db.add_all([
+        MemoryRelationship(
+            source_memory_id=root.id,
+            target_memory_id=same_tenant_neighbor.id,
+            relationship_type="relates_to",
+            weight=0.5,
+        ),
+        # Simulate a legacy/corrupt cross-tenant edge. Runtime filtering must
+        # protect traversal even if one exists in storage.
+        MemoryRelationship(
+            source_memory_id=root.id,
+            target_memory_id=foreign_public_neighbor.id,
+            relationship_type="relates_to",
+            weight=1.0,
+        ),
+    ])
+    test_db.commit()
+
+    # Defense in depth: the graph service's tenant invariant must stand even if
+    # a policy evaluator accidentally marks a foreign public namespace readable.
+    monkeypatch.setattr(
+        "core.memory.graph_service.PolicyEngine.evaluate_access",
+        lambda *_args, **_kwargs: SimpleNamespace(allowed=True),
+    )
+
+    graph = GraphService.get_connected_memories(
+        test_db,
+        memory_id=root.id,
+        max_hops=2,
+        actor=friday,
+        purpose="tenant isolation regression",
+    )
+
+    assert same_tenant_neighbor.id in graph["connected_memory_ids"]
+    assert foreign_public_neighbor.id not in graph["connected_memory_ids"]
+    assert all(
+        foreign_public_neighbor.id not in {edge["source_id"], edge["target_id"]}
+        for edge in graph["edges"]
+    )
