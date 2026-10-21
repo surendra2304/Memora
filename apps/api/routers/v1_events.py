@@ -97,6 +97,37 @@ _VISIBLE_FIELDS = {
 }
 
 
+
+
+# Field-name policy for arbitrary mesh payloads. Registered event types still
+# use the stricter _VISIBLE_FIELDS allowlist; custom types retain their fields
+# but cannot forward query, prompt, or credential metadata.
+_FORBIDDEN_EVENT_PAYLOAD_KEYS = frozenset({
+    "query", "query_text", "internal_memory_metadata", "prompt", "system_prompt",
+    "developer_prompt", "auth_token", "authorization", "signature", "api_key",
+    "access_token", "refresh_token", "client_secret", "password", "secret",
+    "credential", "credentials", "private_key", "cookie", "session_cookie",
+})
+
+
+def _sanitize_event_payload(value: Any) -> Any:
+    """Copy a JSON-like payload while removing sensitive keys recursively."""
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                continue
+            normalized_key = re.sub(r"[^a-z0-9]+", "_", key.casefold()).strip("_")
+            if normalized_key in _FORBIDDEN_EVENT_PAYLOAD_KEYS:
+                continue
+            cleaned[key] = _sanitize_event_payload(item)
+        return cleaned
+    if isinstance(value, list):
+        return [_sanitize_event_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return [_sanitize_event_payload(item) for item in value]
+    return value
+
 def _validate_intelx_news(payload: dict[str, Any]) -> None:
     """Bound externally authored news metadata before it enters the durable feed."""
     headline = payload.get("headline")
@@ -259,15 +290,18 @@ def read_events(
     for row in rows:
         row_event_type = row["event_type"] if isinstance(row, dict) else row.event_type
         raw_payload = row["payload"] if isinstance(row, dict) else row.payload
+        safe_payload = _sanitize_event_payload(raw_payload)
         if row_event_type in _VISIBLE_FIELDS:
             allowed = _VISIBLE_FIELDS[row_event_type]
-            payload = {key: raw_payload[key] for key in allowed if key in raw_payload} if isinstance(raw_payload, dict) else {}
+            payload = {
+                key: safe_payload[key]
+                for key in allowed
+                if isinstance(safe_payload, dict) and key in safe_payload
+            }
         else:
-            # Unknown event types have no public payload contract. A blacklist
-            # cannot protect against future/internal fields added under new names,
-            # so only explicitly allowlisted event types may expose payload data.
-            # Register each new event type in _VISIBLE_FIELDS with a reviewed schema.
-            payload = {}
+            # Custom authenticated mesh event types keep domain-specific fields,
+            # after recursive removal of sensitive metadata.
+            payload = safe_payload if isinstance(safe_payload, dict) else {}
         events.append({
             "id": row["id"] if isinstance(row, dict) else row.id,
             "event_id": row["event_id"] if isinstance(row, dict) else row.event_id,
@@ -348,13 +382,18 @@ def poll_events(
     for row in rows:
         row_event_type = row["event_type"] if isinstance(row, dict) else row.event_type
         raw_payload = row["payload"] if isinstance(row, dict) else row.payload
+        safe_payload = _sanitize_event_payload(raw_payload)
         if row_event_type in _VISIBLE_FIELDS:
             allowed = _VISIBLE_FIELDS[row_event_type]
-            payload = {key: raw_payload[key] for key in allowed if key in raw_payload} if isinstance(raw_payload, dict) else {}
+            payload = {
+                key: safe_payload[key]
+                for key in allowed
+                if isinstance(safe_payload, dict) and key in safe_payload
+            }
         else:
-            # Unknown event types have no public payload contract. Do not rely
-            # on a denylist that can miss future/private field names.
-            payload = {}
+            # Custom authenticated mesh event types keep domain-specific fields,
+            # after recursive removal of sensitive metadata.
+            payload = safe_payload if isinstance(safe_payload, dict) else {}
         events.append({
             "id": row["id"] if isinstance(row, dict) else row.id,
             "event_id": row["event_id"] if isinstance(row, dict) else row.event_id,
