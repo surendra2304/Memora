@@ -2,7 +2,7 @@
   "task": 1,
   "repository": "Memora",
   "updated_at": "2026-10-22",
-  "status": "partial_pr_open_ci_running",
+  "status": "partial_fix_committed_ci_queued",
   "merged": false,
   "PR14": {
     "url": "https://github.com/surendra2304/Memora/pull/14",
@@ -13,15 +13,25 @@
     ],
     "prior_ci_run": 39551432656,
     "prior_ci_status": "success",
-    "current_ci_run": 39671891785,
-    "current_ci_url": "https://github.com/surendra2304/Memora/actions/runs/39671891785",
-    "current_ci_status": "in_progress_at_last_check",
-    "mergeable": false
+    "new_ci_run": 39671891785,
+    "new_ci_url": "https://github.com/surendra2304/Memora/actions/runs/39671891785",
+    "new_ci_status": "failure",
+    "failure": "tests/test_final_infra.py::test_events_emitter_and_durable_query_endpoint; 624 passed, 2 skipped, 1 failed"
+  },
+  "PR15": {
+    "url": "https://github.com/surendra2304/Memora/pull/15",
+    "branch": "fix/task1-event-payload-assertion-20261022",
+    "commit": "593a81d0e2c64a7b5e5962ca29a47d64f35c2d03",
+    "files_changed": [
+      "tests/test_final_infra.py"
+    ],
+    "current_ci_run": 39672447315,
+    "current_ci_url": "https://github.com/surendra2304/Memora/actions/runs/39672447315",
+    "current_ci_status": "queued_at_last_check",
+    "mergeable": true
   },
   "PR7": {
     "url": "https://github.com/surendra2304/Memora/pull/7",
-    "branch": "automation/friday-universe-task-1",
-    "commit": "da7ef4fe514e8a0f511572dc917bfa59fdcd1250",
     "known_previous_ci_failure": 39548261200,
     "mergeable": false
   },
@@ -36,8 +46,8 @@
   },
   "local_tests_run": false,
   "blockers": [
-    "Laptop execution tools return HTTP 404"
+    "Laptop MCP returned HTTP 404"
   ],
   "active_duration_seconds": "not measured",
-  "next": "Poll PR14 run; resume endpoint-specific idempotency tests; review PR7 divergence."
+  "next": "Poll PR15 CI then continue endpoint idempotency branch; review PR7 divergence without auto-merging."
 }
