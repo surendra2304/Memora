@@ -118,7 +118,19 @@ def _sanitize_event_payload(value: Any) -> Any:
             if not isinstance(key, str):
                 continue
             normalized_key = re.sub(r"[^a-z0-9]+", "_", key.casefold()).strip("_")
-            if normalized_key in _FORBIDDEN_EVENT_PAYLOAD_KEYS:
+            key_parts = normalized_key.split("_")
+            sensitive_components = {
+                "query", "prompt", "password", "secret", "credential",
+                "credentials", "authorization", "signature", "cookie", "auth",
+            }
+            if normalized_key in _FORBIDDEN_EVENT_PAYLOAD_KEYS or any(
+                part in sensitive_components for part in key_parts
+            ) or any(
+                "_".join(key_parts[index:index + len(compound.split("_"))]) == compound
+                for compound in _FORBIDDEN_EVENT_PAYLOAD_KEYS
+                if "_" in compound
+                for index in range(max(0, len(key_parts) - len(compound.split("_")) + 1))
+            ):
                 continue
             cleaned[key] = _sanitize_event_payload(item)
         return cleaned
