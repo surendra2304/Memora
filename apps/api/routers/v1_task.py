@@ -30,14 +30,17 @@ _QUERY_ACTIONS = {"query", "search", "recall", "retrieve", "find", "ask"}
 
 
 class TaskEnvelopeModel(BaseModel):
-    task_id: str = Field(default_factory=lambda: f"task_{uuid.uuid4().hex[:12]}", min_length=1, max_length=128)
+    task_id: str = Field(default_factory=lambda: f"task_{uuid.uuid4().hex[:12]}", min_length=1, max_length=64)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
     source_agent: str = Field(default="friday", min_length=1, max_length=128)
     target_agent: str = Field(default="memora", min_length=1, max_length=128)
     action: str = Field(default="store", min_length=1, max_length=64)
     payload: dict[str, Any] = Field(default_factory=dict)
     priority: str = Field(default="normal", min_length=1, max_length=32)
     created_at: str | None = Field(default=None, max_length=64)
-    trace_id: str | None = Field(default=None, max_length=128)
+    trace_id: str | None = Field(default=None, min_length=1, max_length=128)
+    request_id: str | None = Field(default=None, min_length=1, max_length=128)
+    parent_task_id: str | None = Field(default=None, min_length=1, max_length=64)
 
     @field_validator("payload")
     @classmethod
@@ -76,6 +79,9 @@ class TaskResultModel(BaseModel):
     summary: str = ""
     error: str | None = None
     execution_time_ms: int = 0
+    trace_id: str | None = None
+    request_id: str | None = None
+    parent_task_id: str | None = None
 
 
 def _elapsed_ms(t0: float) -> int:
@@ -138,6 +144,10 @@ def execute_task(
             execution_time_ms=_elapsed_ms(t0),
         )
 
+    result.trace_id = envelope.trace_id
+    result.request_id = envelope.request_id or envelope.task_id
+    result.parent_task_id = envelope.parent_task_id
+
     response.status_code = _http_status_for(result.status)
     return result
 
@@ -187,7 +197,15 @@ def _execute_store(
             target_namespace_path=ns_path,
             memory_type=mtype,
             source=f"agent:{actor}",
-            provenance={"task_id": envelope.task_id, "trace_id": envelope.trace_id},
+            task_id=envelope.task_id,
+            idempotency_key=envelope.idempotency_key or envelope.task_id,
+            provenance={
+                "task_id": envelope.task_id,
+                "idempotency_key": envelope.idempotency_key or envelope.task_id,
+                "trace_id": envelope.trace_id,
+                "request_id": envelope.request_id or envelope.task_id,
+                "parent_task_id": envelope.parent_task_id,
+            },
             allow_duplicates=True,
         )
     except (SecretDetectedSecurityViolation, PoisonMemoryViolation) as exc:
