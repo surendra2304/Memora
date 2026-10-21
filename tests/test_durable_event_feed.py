@@ -980,21 +980,35 @@ def test_intelx_news_ingest_exposes_correlation_id_to_consumers(test_db, monkeyp
     assert feed["events"][0]["payload"]["correlation_id"] == "corr-journey-intelx-1"
 
 
-def test_unknown_event_type_payload_is_default_denied(test_db):
-    """Undocumented event payloads must never cross the API boundary."""
+def test_custom_event_payload_preserves_safe_fields_and_sanitizes_recursively(test_db):
+    """Custom event fields remain usable, but sensitive keys never cross the feed."""
+    payload = {
+        "action": "heartbeat",
+        "status": "ok",
+        "query": "sensitive search",
+        "nested": {
+            "safe_label": "keep me",
+            "auth_token": "do not expose",
+            "context": [{"result": "safe", "system_prompt": "do not expose"}],
+        },
+    }
     test_db.add(EventLog(
-        event_id="unknown-payload-default-deny",
+        event_id="custom-payload-sanitization",
         event_type="custom.unregistered",
         tenant_id="default",
-        payload={
-            "action": "heartbeat",
-            "status": "ok",
-            "future_private_field": "must not leak",
-            "query": "sensitive search",
-        },
+        target_agent="friday",
+        payload=payload,
     ))
     test_db.commit()
 
+    expected_payload = {
+        "action": "heartbeat",
+        "status": "ok",
+        "nested": {
+            "safe_label": "keep me",
+            "context": [{"result": "safe"}],
+        },
+    }
     response = read_events(
         after_id=0,
         limit=10,
@@ -1002,10 +1016,9 @@ def test_unknown_event_type_payload_is_default_denied(test_db):
         agent="friday",
         db=test_db,
     )
-
     assert len(response["events"]) == 1
     assert response["events"][0]["event_type"] == "custom.unregistered"
-    assert response["events"][0]["payload"] == {}
+    assert response["events"][0]["payload"] == expected_payload
 
     polled = poll_events(
         after_id=0,
@@ -1017,4 +1030,4 @@ def test_unknown_event_type_payload_is_default_denied(test_db):
         db=test_db,
     )
     assert len(polled["events"]) == 1
-    assert polled["events"][0]["payload"] == {}
+    assert polled["events"][0]["payload"] == expected_payload
