@@ -4,7 +4,6 @@ Verifies that unconverged DeletionTombstones are polled and converged
 across relational SQL, vector store, cache, graph relationships, and Turso replicas.
 """
 import importlib
-import logging
 
 from sqlalchemy import text
 from storage.relational.models import (
@@ -80,6 +79,18 @@ def _set_local_deletion_stores(monkeypatch):
     monkeypatch.setattr(vector_adapter, "delete_embedding", lambda *args, **kwargs: True)
     worker_module = importlib.import_module("storage.convergence.tombstone_worker")
     monkeypatch.setattr(worker_module, "turso_replica_enabled", lambda: False)
+
+
+def _capture_worker_warnings(monkeypatch):
+    """Capture warning calls without depending on global logging configuration."""
+    messages = []
+    worker_module = importlib.import_module("storage.convergence.tombstone_worker")
+
+    def capture_warning(message, *args, **kwargs):
+        messages.append(message % args if args else message)
+
+    monkeypatch.setattr(worker_module.logger, "warning", capture_warning)
+    return messages
 
 
 def _install_sql_delete_failure_trigger(db, trigger_name, table_name, condition):
@@ -433,10 +444,8 @@ def test_failed_tombstone_is_not_retried_after_retry_limit(test_db):
     assert tombstone.status == "FAILED"
 
 
-def test_graph_sql_failure_rolls_back_savepoint_and_retries(test_db, monkeypatch, caplog):
-    worker_logger = logging.getLogger("storage.convergence.tombstone_worker")
-    monkeypatch.setattr(worker_logger, "propagate", True)
-    caplog.set_level("WARNING", logger=worker_logger.name)
+def test_graph_sql_failure_rolls_back_savepoint_and_retries(test_db, monkeypatch):
+    warning_messages = _capture_worker_warnings(monkeypatch)
     tenant = "tenant_graph_sql_retry"
     tombstone, memory_id, incident_id, unrelated_id = _make_retry_case(test_db, tenant)
     _set_local_deletion_stores(monkeypatch)
@@ -503,8 +512,8 @@ def test_graph_sql_failure_rolls_back_savepoint_and_retries(test_db, monkeypatch
     assert tombstone.status == "PENDING_RETRY"
     assert tombstone.graph_deleted is False
     assert tombstone.relational_deleted is False
-    assert "graph deletion retry failed" in caplog.text
-    assert "relational deletion retry failed" in caplog.text
+    assert any("graph deletion retry failed" in message for message in warning_messages)
+    assert any("relational deletion retry failed" in message for message in warning_messages)
     assert test_db.query(MemoryRecord).filter_by(id=memory_id).first() is not None
     assert test_db.query(MemoryRelationship).filter_by(id=incident_id).first() is not None
     assert test_db.query(MemoryRelationship).filter_by(id=incoming_id).first() is not None
@@ -525,12 +534,8 @@ def test_graph_sql_failure_rolls_back_savepoint_and_retries(test_db, monkeypatch
     assert test_db.query(MemoryRelationship).filter_by(id=unrelated_id).first() is not None
 
 
-def test_relational_sql_failure_rolls_back_savepoint_and_retries(
-    test_db, monkeypatch, caplog
-):
-    worker_logger = logging.getLogger("storage.convergence.tombstone_worker")
-    monkeypatch.setattr(worker_logger, "propagate", True)
-    caplog.set_level("WARNING", logger=worker_logger.name)
+def test_relational_sql_failure_rolls_back_savepoint_and_retries(test_db, monkeypatch):
+    warning_messages = _capture_worker_warnings(monkeypatch)
     tenant = "tenant_record_sql_retry"
     tombstone, memory_id, incident_id, unrelated_id = _make_retry_case(test_db, tenant)
     _set_local_deletion_stores(monkeypatch)
@@ -563,7 +568,7 @@ def test_relational_sql_failure_rolls_back_savepoint_and_retries(
     assert tombstone.status == "PENDING_RETRY"
     assert tombstone.graph_deleted is True
     assert tombstone.relational_deleted is False
-    assert "relational deletion retry failed" in caplog.text
+    assert any("relational deletion retry failed" in message for message in warning_messages)
     assert test_db.query(MemoryRecord).filter_by(id=memory_id).first() is not None
     assert test_db.query(MemoryRelationship).filter_by(id=incident_id).first() is None
     assert test_db.query(MemoryRelationship).filter_by(id=incoming_id).first() is None
