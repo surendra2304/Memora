@@ -2,7 +2,7 @@
   "task": 1,
   "repository": "Memora",
   "updated_at": "2026-10-22",
-  "status": "pr15_pr16_main_green_pr14_closed_unmerged",
+  "status": "pr18_ci_green_pr15_pr16_green_pr14_closed",
   "pr15": {
     "url": "https://github.com/surendra2304/Memora/pull/15",
     "head": "593a81d0e2c64a7b5e5962ca29a47d64f35c2d03",
@@ -32,27 +32,44 @@
     ]
   },
   "main": {
-    "sha": "a239bc93188aba5a2c10d831aa75bdd6f8e0e90b",
-    "ci_run": 39674007513,
+    "sha": "b23fcf9a26105920c7a9785a01773672746a4336",
+    "ci_run": 39674509591,
     "status": "success"
+  },
+  "pr18": {
+    "url": "https://github.com/surendra2304/Memora/pull/18",
+    "branch": "fix/task1-idempotent-task-write-20261021",
+    "head": "2748b3af5fb71a8288646823a82f70d9283b66c8",
+    "base": "b23fcf9a26105920c7a9785a01773672746a4336",
+    "ci": {
+      "id": 39676605211,
+      "url": "https://github.com/surendra2304/Memora/actions/runs/39676605211",
+      "status": "success",
+      "checks": [
+        "Ruff",
+        "Alembic",
+        "pytest",
+        "PostgreSQL 18 integration",
+        "app health",
+        "Docker"
+      ]
+    },
+    "state": "open",
+    "mergeable": true,
+    "merged": false
   },
   "pr14": {
     "state": "closed",
     "merged": false,
     "head": "72cb7bf3150e64edba84785e2da6d5446eb1b792",
     "closed_at": "2026-10-21T20:54:30Z",
-    "comment": "Automated Codex review could not complete due usage limit",
-    "prior_ci": 39551432656,
-    "later_failure": 39671891785
+    "reason": "automated Codex review hit usage limit",
+    "ci_prior": 39551432656,
+    "ci_later_failure": 39671891785
   },
   "pr7": {
     "state": "open",
     "status": "divergent"
-  },
-  "endpoint_idempotency": {
-    "branch": "fix/task1-idempotent-task-write-20261021",
-    "head": "4f0fac92082eac989b3f8e2f6eee02077a1d2372",
-    "fresh_ci": false
   },
   "local_tests_run": false,
   "merged": false,
@@ -60,5 +77,5 @@
     "Laptop MCP HTTP 404"
   ],
   "active_duration_seconds": "not measured",
-  "next": "Recheck PR15/16 current heads; inspect endpoint idempotency branch for safe focused PR."
+  "next": "Recheck PR18 current head/status; audit idempotency scope by tenant and agent; review PR7 divergence separately."
 }
