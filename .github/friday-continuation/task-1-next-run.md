@@ -1,7 +1,7 @@
 # Task 1 next-run — Memora — 2026-10-22
 
-1. PR #16 latest observed head `1b22f91aadcea7be0e44e6eeb577e7cd3e4689e1` passed full CI run `39673599696`; refresh head and check run association.
-2. PR #15 `593a81d0e2c64a7b5e5962ca29a47d64f35c2d03` passed run `39672447315` on all gates.
-3. PR #14 head `72cb7bf3150e64edba84785e2da6d5446eb1b792` had prior green run `39551432656` but a later failure `39671891785` due to the old payload assertion. Main run `39674007513` passed. Inspect branch and create fresh CI evidence on the updated base before declaring current PR #14 green.
-4. Continue endpoint idempotency on `fix/task1-idempotent-task-write-20261021`, head `4f0fac92082eac989b3f8e2f6eee02077a1d2372`, files `apps/api/routers/v1_task.py`, `tests/test_task_idempotency.py`. Verify same-key replay returns same memory ID, duplicate=true, and one stored record. Check open PRs before creating any.
-5. PR #7 remains divergent; review separately. Laptop MCP is HTTP 404; no local tests. No auto-merge.
+1. Recheck PR #16 latest head and matching CI. Head `1b22f91aadcea7be0e44e6eeb577e7cd3e4689e1` passed `39673599696` across Ruff, migrations, pytest, PostgreSQL 18 integration, health and Docker.
+2. PR #15 commit `593a81d0e2c64a7b5e5962ca29a47d64f35c2d03` passed run `39672447315` all gates; test file `tests/test_final_infra.py` now asserts the published event payload.
+3. PR #14 was closed without merge, apparently after Codex code-review workflow failed due usage limit. Do not reopen blindly. Branch `test/idempotency-isolation-regressions-20261021` at `72cb7bf3150e64edba84785e2da6d5446eb1b792` contains `tests/test_write_service.py` agent-scoped idempotency coverage; old CI `39551432656` passed, later `39671891785` failed on stale event payload test fixed by #15. If it remains important, inspect branch delta and create a new focused PR only after checking for duplicates and updated main.
+4. The separate endpoint branch `fix/task1-idempotent-task-write-20261021` at `4f0fac92082eac989b3f8e2f6eee02077a1d2372` has `apps/api/routers/v1_task.py` and `tests/test_task_idempotency.py`; verify same-key replay returns same memory ID, duplicate=true, one persisted record; check open PRs first.
+5. PR #7 remains divergent; review conflict/scope separately. Local tests unavailable (laptop MCP HTTP 404); no force-push/auto-merge or unmeasured work duration.
