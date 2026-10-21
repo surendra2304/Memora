@@ -90,3 +90,56 @@ def test_detector_does_not_mutate_or_rank_memory_state():
     )
     assert result.is_contradiction
     assert result.reason != "newer memory wins"
+
+
+def test_write_pipeline_surfaces_and_counts_scalar_conflict_without_superseding(
+    test_db, monkeypatch
+):
+    from core.memory.pipeline import write_service
+    from core.metrics.collector import MetricsCollector
+    from storage.relational.models import LifecycleState, MemoryType
+
+    collector = MetricsCollector()
+    monkeypatch.setattr(write_service, "metrics_collector", collector)
+    arguments = {
+        "db": test_db,
+        "tenant_id": "default",
+        "caller_name": "contradiction-review-agent",
+        "target_namespace_path": "memora://contradiction-review-agent/private",
+        "memory_type": MemoryType.EPISODIC,
+        "source": "operator_note",
+    }
+
+    established = write_service.MemoryWriteService.execute_pipeline(
+        content_text="PostgreSQL connection pool maximum is 50 connections.",
+        **arguments,
+    )
+    candidate = write_service.MemoryWriteService.execute_pipeline(
+        content_text="PostgreSQL connection pool maximum is 20 connections.",
+        **arguments,
+    )
+
+    assert candidate.record.id != established.record.id
+    assert candidate.is_duplicate is False
+    step = candidate.step_outputs["step_6_deduplication"]
+    assert step["is_duplicate"] is False
+    assert step["is_contradiction"] is True
+    assert step["contradiction_of_id"] == established.record.id
+    assert step["contradiction_kind"] == "conflicting_scalar_value"
+
+    review = candidate.record.provenance["contradiction_candidate"]
+    assert review["status"] == "needs_review"
+    assert review["review_required"] is True
+    assert review["conflicts_with_memory_id"] == established.record.id
+    assert review["detector_version"] == ContradictionDetector.VERSION
+
+    # Detection must never select a winner or modify either lifecycle state.
+    test_db.refresh(established.record)
+    test_db.refresh(candidate.record)
+    assert established.record.lifecycle_state == LifecycleState.ACTIVE
+    assert candidate.record.lifecycle_state == LifecycleState.ACTIVE
+
+    metrics = collector.get_metrics_summary()
+    assert metrics["total_writes"] == 2
+    assert metrics["contradiction_rate"] == 0.5
+    assert metrics["deduplication_hit_rate"] == 0.0
