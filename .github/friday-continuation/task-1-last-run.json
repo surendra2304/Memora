@@ -2,84 +2,57 @@
   "task": 1,
   "repository": "Memora",
   "updated_at": "2026-10-22",
-  "status": "pr15_pr16_green_main_check_running",
-  "merged": false,
-  "changes": [
-    {
-      "commit": "593a81d0e2c64a7b5e5962ca29a47d64f35c2d03",
-      "pr": 15,
-      "branch": "fix/task1-event-payload-assertion-20261022",
-      "files": [
-        "tests/test_final_infra.py"
-      ],
-      "ci": {
-        "id": 39672447315,
-        "url": "https://github.com/surendra2304/Memora/actions/runs/39672447315",
-        "status": "success",
-        "checks": [
-          "Ruff",
-          "Alembic round-trip",
-          "pytest",
-          "PostgreSQL 18 integration",
-          "app health",
-          "Docker"
-        ]
-      }
-    },
-    {
-      "commit": "9cf0404fd85b94d5c2406623ee56c80648530b41",
-      "pr": 16,
-      "branch": "fix/events-default-deny-master-plan",
-      "files": [
-        "apps/api/routers/v1_events.py"
-      ],
-      "summary": "Explicit allowlist for vyralx.custom_render payload",
-      "tested_head": "1b22f91aadcea7be0e44e6eeb577e7cd3e4689e1",
-      "ci": {
-        "id": 39673599696,
-        "url": "https://github.com/surendra2304/Memora/actions/runs/39673599696",
-        "status": "success",
-        "checks": [
-          "Ruff",
-          "Alembic",
-          "pytest",
-          "PostgreSQL 18 integration",
-          "app health",
-          "Docker"
-        ]
-      }
-    }
-  ],
+  "status": "pr15_pr16_green_main_green",
+  "pr15": {
+    "url": "https://github.com/surendra2304/Memora/pull/15",
+    "head": "593a81d0e2c64a7b5e5962ca29a47d64f35c2d03",
+    "ci_run": 39672447315,
+    "status": "success",
+    "checks": [
+      "Ruff",
+      "Alembic",
+      "pytest",
+      "PostgreSQL 18 integration",
+      "app health",
+      "Docker"
+    ]
+  },
+  "pr16": {
+    "url": "https://github.com/surendra2304/Memora/pull/16",
+    "head": "1b22f91aadcea7be0e44e6eeb577e7cd3e4689e1",
+    "ci_run": 39673599696,
+    "status": "success",
+    "checks": [
+      "Ruff",
+      "Alembic",
+      "pytest",
+      "PostgreSQL 18 integration",
+      "app health",
+      "Docker"
+    ]
+  },
   "main": {
     "sha": "a239bc93188aba5a2c10d831aa75bdd6f8e0e90b",
     "ci_run": 39674007513,
-    "url": "https://github.com/surendra2304/Memora/actions/runs/39674007513",
-    "status": "in_progress_at_last_check"
+    "status": "success"
   },
-  "PR14": {
-    "sha": "72cb7bf3150e64edba84785e2da6d5446eb1b792",
+  "pr14": {
+    "head": "72cb7bf3150e64edba84785e2da6d5446eb1b792",
     "prior_success": 39551432656,
-    "latest_known_failure": 39671891785,
-    "reason": "stale event payload assertion fixed by PR15; verify against updated main"
+    "later_failure": 39671891785,
+    "status": "needs_updated_base_CI"
   },
-  "PR7": {
-    "sha": "da7ef4fe514e8a0f511572dc917bfa59fdcd1250",
-    "previous_failure": 39548261200,
-    "status": "divergent_do_not_merge_blindly"
+  "pr7": {
+    "head": "da7ef4fe514e8a0f511572dc917bfa59fdcd1250",
+    "status": "divergent"
   },
   "endpoint_idempotency": {
     "branch": "fix/task1-idempotent-task-write-20261021",
-    "sha": "4f0fac92082eac989b3f8e2f6eee02077a1d2372",
-    "files": [
-      "apps/api/routers/v1_task.py",
-      "tests/test_task_idempotency.py"
-    ],
+    "head": "4f0fac92082eac989b3f8e2f6eee02077a1d2372",
     "status": "not_fresh_CI_verified"
   },
   "local_tests_run": false,
-  "blockers": [
-    "Laptop MCP HTTP 404"
-  ],
-  "active_duration_seconds": "not_measured",
-  "next": "Poll Memora main CI, reassess PR14 and continue endpoint idempotency."
+  "merged": false,
+  "active_duration_seconds": "not measured",
+  "next": "Check PR14 current base/CI, then resume task endpoint idempotency."
 }
