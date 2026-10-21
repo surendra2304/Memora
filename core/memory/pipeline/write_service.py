@@ -21,6 +21,7 @@ from core.events.emitter import event_emitter
 from core.memory.pipeline.secret_scanner import SecretScanner
 from core.memory.pipeline.entity_extractor import EntityExtractor
 from core.memory.pipeline.deduplication import DeduplicationEngine
+from core.memory.pipeline.contradiction_detector import ContradictionDetector
 from core.memory.service import PermissionDeniedError
 from core.security.provenance import compute_memory_signature
 
@@ -418,12 +419,18 @@ class MemoryWriteService:
             dedup_result = DeduplicationEngine.check_duplicates_and_contradictions(
                 db,
                 namespace_id=namespace.id,
-                content_text=normalized_content
+                content_text=normalized_content,
+                tenant_id=resolved_tenant,
             )
             step_trace["step_6_deduplication"] = {
                 "is_duplicate": dedup_result.is_duplicate,
                 "duplicate_of_id": dedup_result.duplicate_of_id,
-                "similarity_score": dedup_result.similarity_score
+                "similarity_score": dedup_result.similarity_score,
+                "is_contradiction": dedup_result.is_contradiction,
+                "contradiction_of_id": dedup_result.contradiction_of_id,
+                "contradiction_score": dedup_result.contradiction_score,
+                "contradiction_kind": dedup_result.contradiction_kind,
+                "contradiction_reason": dedup_result.contradiction_reason,
             }
 
             if dedup_result.is_duplicate and not allow_duplicates and dedup_result.duplicate_of_id:
@@ -516,6 +523,20 @@ class MemoryWriteService:
                 combined_provenance["is_tainted"] = True
                 combined_provenance["taint"] = "untrusted_web_fact"
                 combined_provenance["quarantine"] = True
+
+            # A contradiction is a review signal, not a verdict. Keep both
+            # memories intact until an authorized resolution workflow evaluates
+            # provenance and evidence; never silently supersede a candidate.
+            if dedup_result.is_contradiction:
+                combined_provenance["contradiction_candidate"] = {
+                    "status": "needs_review",
+                    "conflicts_with_memory_id": dedup_result.contradiction_of_id,
+                    "score": dedup_result.contradiction_score,
+                    "kind": dedup_result.contradiction_kind,
+                    "reason": dedup_result.contradiction_reason,
+                    "detector_version": ContradictionDetector.VERSION,
+                    "review_required": True,
+                }
 
             record = MemoryRecord(
                 tenant_id=resolved_tenant,
@@ -701,7 +722,7 @@ class MemoryWriteService:
 
             metrics_collector.record_write(
                 success=True,
-                is_contradiction=False,
+                is_contradiction=dedup_result.is_contradiction,
                 latency_ms=(time.time() - start_time) * 1000,
                 is_duplicate=dedup_result.is_duplicate,
             )
