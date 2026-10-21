@@ -294,3 +294,89 @@ def test_sqlalchemy_errors_are_never_treated_as_client_input():
 
     resp = _unexpected_write_error(IntegrityError("stmt", {}, Exception("boom")), "x")
     assert resp.status_code == 500
+
+
+
+def test_same_idempotency_key_is_isolated_between_agents_in_same_tenant(file_session_factory):
+    """One agent's retry token must never make another agent receive its record."""
+    setup = file_session_factory()
+    IdentityService.register_agent(setup, name="forge", role="worker", tenant_id="tenant-shared")
+    IdentityService.register_agent(setup, name="sentinel", role="worker", tenant_id="tenant-shared")
+    setup.close()
+
+    forge_db = file_session_factory()
+    sentinel_db = file_session_factory()
+    try:
+        forge_result = MemoryWriteService.execute_pipeline(
+            db=forge_db,
+            content_text="Forge's private deployment context.",
+            actor_name="forge",
+            tenant_id="tenant-shared",
+            idempotency_key="same-client-retry-key",
+            source="api",
+        )
+        sentinel_result = MemoryWriteService.execute_pipeline(
+            db=sentinel_db,
+            content_text="Sentinel's independent security context.",
+            actor_name="sentinel",
+            tenant_id="tenant-shared",
+            idempotency_key="same-client-retry-key",
+            source="api",
+        )
+
+        assert forge_result.record.id != sentinel_result.record.id
+        assert forge_result.record.content_text == "Forge's private deployment context."
+        assert sentinel_result.record.content_text == "Sentinel's independent security context."
+        assert forge_result.is_duplicate is False
+        assert sentinel_result.is_duplicate is False
+
+        check = file_session_factory()
+        try:
+            rows = check.query(MemoryRecord).filter(
+                MemoryRecord.tenant_id == "tenant-shared",
+                MemoryRecord.idempotency_key == "same-client-retry-key",
+            ).all()
+            assert {row.agent_id for row in rows} == {"forge", "sentinel"}
+            assert len(rows) == 2
+        finally:
+            check.close()
+    finally:
+        forge_db.close()
+        sentinel_db.close()
+
+
+def test_idempotent_replay_cannot_return_another_agents_record(file_session_factory):
+    """A replay is scoped to actor and tenant, even when another agent used its key."""
+    setup = file_session_factory()
+    IdentityService.register_agent(setup, name="forge", role="worker", tenant_id="tenant-replay")
+    IdentityService.register_agent(setup, name="sentinel", role="worker", tenant_id="tenant-replay")
+    forge = MemoryWriteService.execute_pipeline(
+        db=setup,
+        content_text="Forge-only memory; never disclose this to Sentinel.",
+        actor_name="forge",
+        tenant_id="tenant-replay",
+        idempotency_key="shared-looking-key",
+        source="api",
+    )
+    sentinel = MemoryWriteService.execute_pipeline(
+        db=setup,
+        content_text="Sentinel-owned record.",
+        actor_name="sentinel",
+        tenant_id="tenant-replay",
+        idempotency_key="shared-looking-key",
+        source="api",
+    )
+    replay = MemoryWriteService.execute_pipeline(
+        db=setup,
+        content_text="Sentinel retry body should not overwrite the winner.",
+        actor_name="sentinel",
+        tenant_id="tenant-replay",
+        idempotency_key="shared-looking-key",
+        source="api",
+    )
+    assert sentinel.record.id != forge.record.id
+    assert replay.record.id == sentinel.record.id
+    assert replay.record.id != forge.record.id
+    assert "Forge-only" not in replay.record.content_text
+    assert replay.is_duplicate is True
+    setup.close()
