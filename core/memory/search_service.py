@@ -182,6 +182,14 @@ class SearchService:
         # them in Python. Keep the historical substring/OR semantics, but cap
         # the candidate scan and score only this bounded candidate set.
         tokens = list(dict.fromkeys(token for token in query_text.lower().split() if token))
+        # Do not let punctuation-only LIKE metacharacters reach either the SQL
+        # candidate predicate or Python substring scoring. In particular, "_"
+        # is not a meaningful retrieval term, even though every word contains it
+        # when treated as a SQL LIKE pattern.
+        tokens = [
+            token for token in tokens
+            if not token or not all(character in {"%", "_"} for character in token)
+        ]
         lexical_matches = []
         if tokens and limit > 0:
             token_predicates = []
