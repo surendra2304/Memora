@@ -14,6 +14,7 @@ from apps.api.routers.v1_events import (
     ingest_envelope,
     read_consumer_cursor,
     read_events,
+    poll_events,
 )
 from core.events.emitter import EventEmitter
 from sdk.cloud_fallback import MemoraClient as CloudFallbackClient
@@ -1005,3 +1006,15 @@ def test_unknown_event_type_payload_is_default_denied(test_db):
     assert len(response["events"]) == 1
     assert response["events"][0]["event_type"] == "custom.unregistered"
     assert response["events"][0]["payload"] == {}
+
+    polled = poll_events(
+        after_id=0,
+        consumer_id="default",
+        limit=10,
+        event_type="custom.unregistered",
+        auto_ack=False,
+        agent="friday",
+        db=test_db,
+    )
+    assert len(polled["events"]) == 1
+    assert polled["events"][0]["payload"] == {}
