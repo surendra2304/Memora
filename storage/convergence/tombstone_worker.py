@@ -46,6 +46,23 @@ class TombstoneConvergenceWorker:
         Execute multi-store deletion convergence for a single tombstone.
         Returns True if the tombstone is fully converged across all stores.
         """
+        record_tenant_id = db.query(MemoryRecord.tenant_id).filter(
+            MemoryRecord.id == tombstone.memory_id
+        ).scalar()
+        if record_tenant_id is not None and record_tenant_id != tombstone.tenant_id:
+            logger.warning(
+                "Tombstone %s tenant %s does not own memory for tenant %s",
+                tombstone.memory_id,
+                tombstone.tenant_id,
+                record_tenant_id,
+            )
+            tombstone.retry_count += 1
+            if tombstone.retry_count >= self.max_retries:
+                tombstone.status = "FAILED"
+            else:
+                tombstone.status = "PENDING_RETRY"
+            return False
+
         # 1. Vector Store Deletion
         if not tombstone.vector_deleted:
             try:
@@ -64,12 +81,13 @@ class TombstoneConvergenceWorker:
         # 2. Knowledge Graph Relationship Deletion
         if not tombstone.graph_deleted:
             try:
-                db.query(MemoryRelationship).filter(
-                    or_(
-                        MemoryRelationship.source_memory_id == tombstone.memory_id,
-                        MemoryRelationship.target_memory_id == tombstone.memory_id,
-                    )
-                ).delete(synchronize_session=False)
+                with db.begin_nested():
+                    db.query(MemoryRelationship).filter(
+                        or_(
+                            MemoryRelationship.source_memory_id == tombstone.memory_id,
+                            MemoryRelationship.target_memory_id == tombstone.memory_id,
+                        )
+                    ).delete(synchronize_session=False)
                 tombstone.graph_deleted = True
             except Exception as exc:
                 logger.warning(
@@ -114,12 +132,14 @@ class TombstoneConvergenceWorker:
         # 5. Relational SQL Hard Deletion
         if not tombstone.relational_deleted:
             try:
-                record = db.query(MemoryRecord).filter(
-                    MemoryRecord.id == tombstone.memory_id,
-                    MemoryRecord.tenant_id == tombstone.tenant_id,
-                ).first()
-                if record is not None:
-                    db.delete(record)
+                with db.begin_nested():
+                    record = db.query(MemoryRecord).filter(
+                        MemoryRecord.id == tombstone.memory_id,
+                        MemoryRecord.tenant_id == tombstone.tenant_id,
+                    ).first()
+                    if record is not None:
+                        db.delete(record)
+                        db.flush()
                 tombstone.relational_deleted = True
             except Exception as exc:
                 logger.warning(
@@ -152,7 +172,6 @@ class TombstoneConvergenceWorker:
         max_items = limit or self.batch_size
         query = db.query(DeletionTombstone).filter(
             DeletionTombstone.status.in_(["PENDING", "PENDING_RETRY", "DELETE_REQUESTED"])
-            | (DeletionTombstone.status != "CONVERGED")
         )
         if tenant_id:
             query = query.filter(DeletionTombstone.tenant_id == tenant_id)
