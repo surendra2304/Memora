@@ -33,8 +33,8 @@ class ContradictionDetector:
 
     VERSION = "conservative-rules-v1"
 
-    _TOKEN_RE = re.compile(r"(?u)[^\\W_]+(?:['/-][^\\W_]+)*")
-    _NUMBER_RE = re.compile(r"(?<![A-Za-z_])[+-]?\\d+(?:\\.\\d+)*(?![A-Za-z_])")
+    _TOKEN_RE = re.compile(r"(?u)[^\W_]+(?:['/-][^\W_]+)*")
+    _NUMBER_RE = re.compile(r"(?<![A-Za-z_])[+-]?\d+(?:\.\d+)*(?![A-Za-z_])")
 
     _POSITIVE_MARKERS = frozenset({
         "enabled", "enable", "active", "available", "supported", "support",
