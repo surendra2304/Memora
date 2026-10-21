@@ -1,22 +1,23 @@
 # Task 1 next-run instructions — Memora
 
-Last updated: 2026-10-20T23:01:43Z
+Last updated: 2026-10-21T00:48:24Z
 
 Read .github/friday-continuation/task-1-checkpoint.md before coding. Resume branch automation/friday-universe-task-1; continue existing implementation rather than restarting repository review.
 
 ## Previous run evidence
 
-- Result: completed
-- Active coding seconds: 1937
-- Coding passes: 15
-- Source paths changed against main: 13
+- Result: failed
+- Active coding seconds: 3
+- Coding passes: 1
+- Source paths changed against main: 14
 
 ### Changed source paths
 
+- core/memory/context/builder.py
 - core/memory/graph_service.py
 - core/memory/search_service.py
 - core/memory/service.py
-- ore/memory/context/builder.py
+- github/friday-continuation/task-1-checkpoint.md
 - scripts/verify_all_agents_storage.py
 - storage/convergence/tombstone_worker.py
 - tests/test_context_pipeline.py
@@ -29,25 +30,28 @@ Read .github/friday-continuation/task-1-checkpoint.md before coding. Resume bran
 
 ### Runner failures or blockers
 
-- None recorded by the runner.
+- Pass 1 failed with exit 1. See log pass-1.log.
 
 ## Detailed continuation notes from the previous coding pass
 
 # Task 1 next-run instructions — Memora
 
-Read `.github/friday-continuation/task-1-checkpoint.md` and continue directly from its next concrete coding action. Work only in this repository; preserve all current uncommitted changes. Do not commit, push, or change Git configuration.
+Updated by the runner at 2026-10-21T00:48:23Z; pass 1 did not revise the prompt.
 
-The latest fix is in `storage/convergence/tombstone_worker.py`: before any storage deletion, `process_single_tombstone` checks the tenant of an existing relational memory. A tombstone referencing a foreign-tenant memory is logged, retried up to the configured limit, and never marked converged; missing records retain idempotent cleanup. `tests/test_tombstone_convergence.py::test_tombstone_with_wrong_tenant_does_not_delete_foreign_memory_or_edges` covers the foreign record, edge, untouched store flags, and the transition through `PENDING_RETRY` to `FAILED`.
+Read the checkpoint, inspect current diffs and logs, and continue implementation. Do not write a report instead of code.
 
-Validation completed:
+## Current changes
+- No working-tree changes detected; inspect failing tests, TODOs and incomplete product flows.
 
-- `.venv/bin/pytest -q tests/test_tombstone_convergence.py::test_tombstone_with_wrong_tenant_does_not_delete_foreign_memory_or_edges tests/test_tombstone_convergence.py::test_run_convergence_pass_batch` — **2 passed, 0 failed**.
-- `.venv/bin/pytest -q tests/test_prompt3_memora.py tests/test_lifecycle_manager.py tests/test_tombstone_convergence.py tests/test_graph_and_adapter_fixes.py tests/test_context_pipeline.py tests/test_hybrid_search.py tests/test_turso_replica_deletion.py` — **58 passed, 0 failed** in 4.03s.
-- `.venv/bin/ruff check core/memory/context/builder.py core/memory/graph_service.py core/memory/search_service.py core/memory/service.py scripts/verify_all_agents_storage.py storage/convergence/tombstone_worker.py tests/test_context_pipeline.py tests/test_graph_and_adapter_fixes.py tests/test_hybrid_search.py tests/test_lifecycle_manager.py tests/test_metrics_collector.py tests/test_prompt3_memora.py tests/test_tombstone_convergence.py tests/test_turso_replica_deletion.py && git diff --check` — **passed**.
-- Tests emit one existing Starlette `TestClient` deprecation warning recommending `httpx2`; live PostgreSQL/vector/Turso integrations were not exercised.
-- A pre-fix run intentionally failed and reproduced the bug; an intermediate command had an invalid pytest selector, and its corrected focused test run passed. See the checkpoint for exact outcomes.
+## Previous run log (tail)
 
-First coding action: add a `tests/test_tombstone_convergence.py` global-batch regression with one malformed tenant-A tombstone targeting a tenant-B memory and one valid tenant-B tombstone. Verify the foreign target and incident edges survive, the malformed tombstone is bounded/retryable, and the valid tombstone converges in the same unfiltered pass. Then run the convergence, graph, deletion, and retrieval tests plus Ruff and `git diff --check`; update both handoff files with exact results and the following action.
+
+
+You have exceeded your monthly quota (Request ID: 2C22:86629:82957C:982114:6AD80BD7)
+
+
+## First action
+Run the focused checks for current changes, repair failures, and implement the next highest-impact source/test improvement. Rewrite this prompt with exact paths and test commands.
 
 
 ## First action next run
