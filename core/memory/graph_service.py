@@ -4,7 +4,7 @@ Manages semantic knowledge graph edges, dependencies, entity resolution, and nei
 """
 from typing import List, Optional, Dict, Any
 import math
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 from sqlalchemy import or_
 import logging
 
@@ -181,13 +181,21 @@ class GraphService:
         #: Ids the caller may not see, cached so each record is checked once.
         readable: Dict[str, bool] = {}
 
+        actor_tenant = getattr(actor, "tenant_id", "default") if actor is not None else None
+
         def _may_read(candidate_id: str) -> bool:
-            """Fail closed: an unreadable neighbour is never revealed or traversed."""
+            """Fail closed on missing records, tenant boundaries, and policy denial."""
             if actor is None:
                 return True
             if candidate_id in readable:
                 return readable[candidate_id]
-            record = db.query(MemoryRecord).filter(MemoryRecord.id == candidate_id).first()
+            # Tenant isolation is independent of namespace policy: even a
+            # PUBLIC/UNIVERSE_GLOBAL namespace is readable only inside its own
+            # tenant. Do not ask the policy engine to decide a cross-tenant row.
+            record = db.query(MemoryRecord).filter(
+                MemoryRecord.id == candidate_id,
+                MemoryRecord.tenant_id == actor_tenant,
+            ).first()
             if record is None:
                 readable[candidate_id] = False
                 return False
@@ -215,12 +223,29 @@ class GraphService:
 
         for hop in range(1, max_hops + 1):
             next_layer = set()
-            rels = db.query(MemoryRelationship).filter(
+            # Filter both relationship endpoints in SQL before a cross-tenant
+            # edge can enter the candidate set; _may_read repeats the check
+            # before each endpoint can be returned.
+            source_memory = aliased(MemoryRecord)
+            target_memory = aliased(MemoryRecord)
+            relationship_query = db.query(MemoryRelationship).join(
+                source_memory,
+                MemoryRelationship.source_memory_id == source_memory.id,
+            ).join(
+                target_memory,
+                MemoryRelationship.target_memory_id == target_memory.id,
+            ).filter(
                 or_(
                     MemoryRelationship.source_memory_id.in_(current_layer),
-                    MemoryRelationship.target_memory_id.in_(current_layer)
+                    MemoryRelationship.target_memory_id.in_(current_layer),
                 )
-            ).all()
+            )
+            if actor is not None:
+                relationship_query = relationship_query.filter(
+                    source_memory.tenant_id == actor_tenant,
+                    target_memory.tenant_id == actor_tenant,
+                )
+            rels = relationship_query.all()
 
             for r in rels:
                 neighbor = r.target_memory_id if r.source_memory_id in current_layer else r.source_memory_id
