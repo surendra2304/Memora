@@ -1,36 +1,43 @@
 {
   "task": 1,
   "repository": "Memora",
-  "updated_at": "2026-10-21",
-  "status": "partial",
-  "local_tests_run": false,
+  "updated_at": "2026-10-22",
+  "status": "partial_pr_open_ci_running",
   "merged": false,
+  "PR14": {
+    "url": "https://github.com/surendra2304/Memora/pull/14",
+    "branch": "test/idempotency-isolation-regressions-20261021",
+    "commit": "72cb7bf3150e64edba84785e2da6d5446eb1b792",
+    "files_changed": [
+      "tests/test_write_service.py"
+    ],
+    "prior_ci_run": 39551432656,
+    "prior_ci_status": "success",
+    "current_ci_run": 39671891785,
+    "current_ci_url": "https://github.com/surendra2304/Memora/actions/runs/39671891785",
+    "current_ci_status": "in_progress_at_last_check",
+    "mergeable": false
+  },
   "PR7": {
     "url": "https://github.com/surendra2304/Memora/pull/7",
     "branch": "automation/friday-universe-task-1",
     "commit": "da7ef4fe514e8a0f511572dc917bfa59fdcd1250",
-    "previous_ci_run": 39548261200,
-    "previous_ci_status": "failure",
-    "new_head_ci": "not_visible",
-    "mergeable": false,
-    "ahead_of_main": 5,
-    "behind_main": 9,
-    "changed_files": 16
+    "known_previous_ci_failure": 39548261200,
+    "mergeable": false
   },
-  "idempotency": {
+  "endpoint_idempotency_branch": {
     "branch": "fix/task1-idempotent-task-write-20261021",
     "commit": "4f0fac92082eac989b3f8e2f6eee02077a1d2372",
-    "changed_files": [
+    "files_changed": [
       "apps/api/routers/v1_task.py",
       "tests/test_task_idempotency.py"
     ],
-    "pr_created": false,
-    "tests_verified": false
+    "test_status": "not_verified"
   },
+  "local_tests_run": false,
   "blockers": [
-    "Laptop MCP HTTP 404",
-    "Remote command execution unavailable",
-    "PR creation blocked"
+    "Laptop execution tools return HTTP 404"
   ],
-  "next": "Review PR7 divergence and get CI evidence; open/run idempotency regression PR if permitted."
+  "active_duration_seconds": "not measured",
+  "next": "Poll PR14 run; resume endpoint-specific idempotency tests; review PR7 divergence."
 }
