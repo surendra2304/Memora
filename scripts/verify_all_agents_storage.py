@@ -21,7 +21,7 @@ from core.memory.pipeline.write_service import MemoryWriteService
 from core.memory.service import MemoryService
 from core.memory.search_service import SearchService
 
-# The 9 official FRIDAY Universe subsystems
+# The 10 official FRIDAY Universe subsystems
 ECOSYSTEM_AGENTS = [
     {"name": "friday", "role": "supervisor", "desc": "Central desktop OS & master orchestrator"},
     {"name": "forge", "role": "worker", "desc": "Autonomous software engineering & code synthesis"},
@@ -31,12 +31,13 @@ ECOSYSTEM_AGENTS = [
     {"name": "intelx", "role": "worker", "desc": "Deep research & evidence extraction"},
     {"name": "futuris", "role": "worker", "desc": "Probabilistic forecasting & regime modeling"},
     {"name": "stratex", "role": "worker", "desc": "24/7 algorithmic trading & execution"},
-    {"name": "memora", "role": "worker", "desc": "Persistent memory fabric subsystem"}
+    {"name": "memora", "role": "worker", "desc": "Persistent memory fabric subsystem"},
+    {"name": "vyralx", "role": "worker", "desc": "Autonomous video production & distribution"},
 ]
 
 def verify_all_agents():
     print("=" * 80)
-    print(">>> VERIFYING MEMORY STORAGE ACROSS ALL 9 AGENTS")
+    print(">>> VERIFYING MEMORY STORAGE ACROSS ALL 10 AGENTS")
     print("=" * 80)
     
     db = SessionLocal()
@@ -116,7 +117,7 @@ def verify_all_agents():
             }
 
         print("\n" + "=" * 80)
-        print(">>> SUMMARY REPORT: ALL 9 AGENTS STORED AND STORING CORRECTLY")
+        print(">>> SUMMARY REPORT: ALL 10 AGENTS STORED AND STORING CORRECTLY")
         print("=" * 80)
         for agent_name, r in results.items():
             print(f"  [OK] {agent_name.upper():<12} | Status: {r['status']} | NS: {r['private_namespace']:<30} | Memory: {r['memory_id'][:8]}...")
