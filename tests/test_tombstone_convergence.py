@@ -286,8 +286,7 @@ def test_graph_sql_failure_rolls_back_savepoint_and_retries(test_db, monkeypatch
     tenant = "tenant_graph_sql_retry"
     tombstone, memory_id, incident_id, unrelated_id = _make_retry_case(test_db, tenant)
     _set_local_deletion_stores(monkeypatch)
-    original_logger = logging.getLogger("storage.convergence.tombstone_worker")
-    caplog.set_level("WARNING", logger=original_logger.name)
+    caplog.set_level("WARNING")
     original_delete = Query.delete
     failures_remaining = 1
 
@@ -302,7 +301,6 @@ def test_graph_sql_failure_rolls_back_savepoint_and_retries(test_db, monkeypatch
     worker = TombstoneConvergenceWorker(batch_size=10, max_retries=3)
     assert worker.run_convergence_pass(test_db, tenant_id=tenant)["pending"] == 1
     assert tombstone.status == "PENDING_RETRY" and not tombstone.graph_deleted
-    assert tombstone.status == "PENDING_RETRY" and not tombstone.graph_deleted
     assert test_db.query(MemoryRecord).filter_by(id=memory_id).first() is None
     assert worker.run_convergence_pass(test_db, tenant_id=tenant)["converged"] == 1
     assert test_db.query(MemoryRelationship).filter_by(id=incident_id).first() is None
@@ -313,8 +311,7 @@ def test_relational_sql_failure_rolls_back_savepoint_and_retries(test_db, monkey
     tenant = "tenant_record_sql_retry"
     tombstone, memory_id, incident_id, unrelated_id = _make_retry_case(test_db, tenant)
     _set_local_deletion_stores(monkeypatch)
-    logger_obj = logging.getLogger("storage.convergence.tombstone_worker")
-    caplog.set_level("WARNING", logger=logger_obj.name)
+    caplog.set_level("WARNING")
     _install_sql_delete_failure_trigger(
         test_db, "fail_tombstoned_memory_delete", "memory_records",
         "EXISTS (SELECT 1 FROM deletion_tombstones WHERE memory_id = OLD.id)",
