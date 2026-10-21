@@ -2,74 +2,79 @@
   "task": 1,
   "repository": "Memora",
   "updated_at": "2026-10-22",
-  "status": "partial_pr15_green_pr16_ci_queued",
+  "status": "pr15_green_pr16_green_current_head_recheck_needed",
   "merged": false,
   "changes": [
     {
       "commit": "593a81d0e2c64a7b5e5962ca29a47d64f35c2d03",
-      "branch": "fix/task1-event-payload-assertion-20261022",
       "pr": 15,
+      "branch": "fix/task1-event-payload-assertion-20261022",
       "files": [
         "tests/test_final_infra.py"
       ],
-      "ci_run": 39672447315,
-      "ci_url": "https://github.com/surendra2304/Memora/actions/runs/39672447315",
-      "ci_status": "success",
-      "checks": [
-        "Ruff",
-        "Alembic migration round-trip",
-        "pytest",
-        "PostgreSQL 18 integration",
-        "app boot/health",
-        "Docker build"
-      ]
+      "ci": {
+        "id": 39672447315,
+        "url": "https://github.com/surendra2304/Memora/actions/runs/39672447315",
+        "status": "success",
+        "checks": [
+          "Ruff",
+          "Alembic round-trip",
+          "pytest",
+          "PostgreSQL 18 integration",
+          "app health",
+          "Docker"
+        ]
+      }
     },
     {
       "commit": "9cf0404fd85b94d5c2406623ee56c80648530b41",
-      "branch": "fix/events-default-deny-master-plan",
       "pr": 16,
+      "branch": "fix/events-default-deny-master-plan",
       "files": [
         "apps/api/routers/v1_events.py"
       ],
-      "change": "Explicitly allow reviewed fields for vyralx.custom_render under default-deny event filter",
-      "ci_run": 39672966835,
-      "ci_url": "https://github.com/surendra2304/Memora/actions/runs/39672966835",
-      "ci_status": "queued_at_last_check"
+      "summary": "Allowlist reviewed vyralx.custom_render fields; fix KeyError from default-deny filter",
+      "ci": {
+        "id": 39672966835,
+        "url": "https://github.com/surendra2304/Memora/actions/runs/39672966835",
+        "status": "success",
+        "checks": [
+          "Ruff",
+          "Alembic round-trip",
+          "pytest",
+          "PostgreSQL 18 integration",
+          "app health",
+          "Docker"
+        ]
+      },
+      "latest_pr_head_observed": "436147652856a9ecb385d3233b83a591137aaaf7",
+      "verify_head_matches_run": true
     }
   ],
-  "previous_pr16_run": {
-    "id": 39672720955,
-    "status": "failure",
-    "failing_test": "tests/test_downstream_event_streams_and_hardening.py::test_custom_mesh_envelope_payload_and_sanitization",
-    "summary": "625 passed, 2 skipped, 1 failure: KeyError video_title"
-  },
   "PR14": {
-    "url": "https://github.com/surendra2304/Memora/pull/14",
     "commit": "72cb7bf3150e64edba84785e2da6d5446eb1b792",
-    "prior_ci": 39551432656,
-    "prior_ci_status": "success",
-    "new_ci": 39671891785,
-    "new_ci_status": "failure_due_to_stale_event_payload_assertion_fixed_by_PR15"
+    "prior_success_run": 39551432656,
+    "latest_known_run": 39671891785,
+    "latest_known_status": "failure_due_to_stale_event_payload_assertion_fixed_by_PR15; needs updated-base verification"
   },
   "PR7": {
-    "url": "https://github.com/surendra2304/Memora/pull/7",
     "head": "da7ef4fe514e8a0f511572dc917bfa59fdcd1250",
-    "known_previous_ci_failure": 39548261200,
-    "mergeability": "divergent; do not merge blindly"
+    "known_previous_failure": 39548261200,
+    "status": "divergent_do_not_merge_blindly"
   },
-  "endpoint_idempotency_branch": {
+  "endpoint_idempotency": {
     "branch": "fix/task1-idempotent-task-write-20261021",
     "commit": "4f0fac92082eac989b3f8e2f6eee02077a1d2372",
     "files": [
       "apps/api/routers/v1_task.py",
       "tests/test_task_idempotency.py"
     ],
-    "status": "not verified in fresh PR CI"
+    "test_status": "not_newly_verified"
   },
   "local_tests_run": false,
   "blockers": [
-    "Laptop MCP returns HTTP 404"
+    "Laptop MCP HTTP 404"
   ],
-  "active_duration_seconds": "not measured",
-  "next": "Poll PR16 run 39672966835; then continue endpoint idempotency branch after CI results."
+  "active_duration_seconds": "not_measured",
+  "next": "Recheck PR16 matching CI to latest head; then continue endpoint idempotency coverage."
 }
