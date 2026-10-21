@@ -1,6 +1,5 @@
 """Regression tests for Memora multi-store deletion convergence."""
 import importlib
-import logging
 
 from sqlalchemy import text
 from sqlalchemy.orm import Query
