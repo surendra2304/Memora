@@ -14,6 +14,7 @@ from apps.api.routers.v1_events import (
     ingest_envelope,
     read_consumer_cursor,
     read_events,
+    poll_events,
 )
 from core.events.emitter import EventEmitter
 from sdk.cloud_fallback import MemoraClient as CloudFallbackClient
@@ -977,3 +978,58 @@ def test_intelx_news_ingest_exposes_correlation_id_to_consumers(test_db, monkeyp
     feed = read_events(after_id=0, limit=10, event_type="intelx.news", agent="futuris", db=test_db)
     assert len(feed["events"]) == 1
     assert feed["events"][0]["payload"]["correlation_id"] == "corr-journey-intelx-1"
+
+
+def test_custom_event_payload_preserves_safe_fields_and_sanitizes_recursively(test_db):
+    """Custom event fields remain usable, but sensitive keys never cross the feed."""
+    payload = {
+        "action": "heartbeat",
+        "status": "ok",
+        "query": "sensitive search",
+        "nested": {
+            "safe_label": "keep me",
+            "auth_token": "do not expose",
+            "private_prompt": "do not expose",
+            "openai_api_key": "do not expose",
+            "context": [{"result": "safe", "system_prompt": "do not expose"}],
+        },
+    }
+    test_db.add(EventLog(
+        event_id="custom-payload-sanitization",
+        event_type="custom.unregistered",
+        tenant_id="default",
+        target_agent="friday",
+        payload=payload,
+    ))
+    test_db.commit()
+
+    expected_payload = {
+        "action": "heartbeat",
+        "status": "ok",
+        "nested": {
+            "safe_label": "keep me",
+            "context": [{"result": "safe"}],
+        },
+    }
+    response = read_events(
+        after_id=0,
+        limit=10,
+        event_type="custom.unregistered",
+        agent="friday",
+        db=test_db,
+    )
+    assert len(response["events"]) == 1
+    assert response["events"][0]["event_type"] == "custom.unregistered"
+    assert response["events"][0]["payload"] == expected_payload
+
+    polled = poll_events(
+        after_id=0,
+        consumer_id="default",
+        limit=10,
+        event_type="custom.unregistered",
+        auto_ack=False,
+        agent="friday",
+        db=test_db,
+    )
+    assert len(polled["events"]) == 1
+    assert polled["events"][0]["payload"] == expected_payload
