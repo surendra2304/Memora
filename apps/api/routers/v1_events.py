@@ -351,8 +351,9 @@ def poll_events(
             allowed = _VISIBLE_FIELDS[row_event_type]
             payload = {key: raw_payload[key] for key in allowed if key in raw_payload} if isinstance(raw_payload, dict) else {}
         else:
-            forbidden_keys = {"query", "internal_memory_metadata", "prompt", "auth_token", "signature"}
-            payload = {k: v for k, v in raw_payload.items() if k not in forbidden_keys} if isinstance(raw_payload, dict) else {}
+            # Unknown event types have no public payload contract. Do not rely
+            # on a denylist that can miss future/private field names.
+            payload = {}
         events.append({
             "id": row["id"] if isinstance(row, dict) else row.id,
             "event_id": row["event_id"] if isinstance(row, dict) else row.event_id,
