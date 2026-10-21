@@ -977,3 +977,31 @@ def test_intelx_news_ingest_exposes_correlation_id_to_consumers(test_db, monkeyp
     feed = read_events(after_id=0, limit=10, event_type="intelx.news", agent="futuris", db=test_db)
     assert len(feed["events"]) == 1
     assert feed["events"][0]["payload"]["correlation_id"] == "corr-journey-intelx-1"
+
+
+def test_unknown_event_type_payload_is_default_denied(test_db):
+    """Undocumented event payloads must never cross the API boundary."""
+    test_db.add(EventLog(
+        event_id="unknown-payload-default-deny",
+        event_type="custom.unregistered",
+        tenant_id="default",
+        payload={
+            "action": "heartbeat",
+            "status": "ok",
+            "future_private_field": "must not leak",
+            "query": "sensitive search",
+        },
+    ))
+    test_db.commit()
+
+    response = read_events(
+        after_id=0,
+        limit=10,
+        event_type="custom.unregistered",
+        agent="friday",
+        db=test_db,
+    )
+
+    assert len(response["events"]) == 1
+    assert response["events"][0]["event_type"] == "custom.unregistered"
+    assert response["events"][0]["payload"] == {}
