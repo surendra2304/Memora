@@ -1,0 +1,71 @@
+services:
+  memora-api:
+    build: .
+    container_name: memora-api
+    expose:
+      - "8000"
+    environment:
+      DATABASE_URL: "${DATABASE_URL:?Set DATABASE_URL to the private PostgreSQL 18 memora_db DSN}"
+      USE_SQLITE_FALLBACK: "false"
+      SQLITE_FALLBACK_URL: "sqlite:///./data/memora.db"
+      REDIS_URL: "redis://redis:6379/0"
+      QDRANT_URL: "http://qdrant:6333"
+      QDRANT_COLLECTION: "memora_embeddings"
+      MEMORA_ENV: "production"
+      MEMORA_ALLOW_ANONYMOUS_DEV: "false"
+      MEMORA_SQLITE_AUTHORITATIVE: "false"
+      MEMORA_API_KEY: "${MEMORA_API_KEY:?Set MEMORA_API_KEY in .env}"
+      MEMORA_CORS_ORIGINS: "https://friday-universe.duckdns.org,http://localhost:8000,http://127.0.0.1:8000,http://localhost:8006,http://localhost:3000"
+      FRIDAY_API_KEY: "${FRIDAY_API_KEY:-}"
+      INFERENCE_API_KEY: "${INFERENCE_API_KEY:-}"
+      STRATEX_API_KEY: "${STRATEX_API_KEY:-}"
+      INTELX_API_KEY: "${INTELX_API_KEY:-}"
+      FUTURIS_API_KEY: "${FUTURIS_API_KEY:-}"
+      CORTEX_API_KEY: "${CORTEX_API_KEY:-}"
+      FORGE_API_KEY: "${FORGE_API_KEY:-}"
+      SENTINEL_API_KEY: "${SENTINEL_API_KEY:-}"
+    volumes:
+      - memora_data:/app/data
+    networks:
+      - default
+      - friday_mesh
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: memora-redis
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - default
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.9.0
+    container_name: memora-qdrant
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - default
+    restart: unless-stopped
+
+volumes:
+  memora_data:
+  redis_data:
+  qdrant_data:
+
+networks:
+  default:
+  friday_mesh:
+    name: friday_mesh
+    external: true

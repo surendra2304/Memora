@@ -1,0 +1,39 @@
+{
+  "retrieval_methods": [
+    {
+      "name": "dense_vector",
+      "description": "Dense vector similarity search",
+      "enabled": true,
+      "weight": 0.6
+    },
+    {
+      "name": "bm25",
+      "description": "BM25 keyword search",
+      "enabled": true,
+      "weight": 0.3
+    },
+    {
+      "name": "graph_walk",
+      "description": "Graph-based semantic search",
+      "enabled": true,
+      "weight": 0.1
+    }
+  ],
+  "ranking_factors": [
+    {
+      "name": "salience",
+      "description": "Importance of the memory",
+      "weight": 0.4
+    },
+    {
+      "name": "recency",
+      "description": "How recent the memory is",
+      "weight": 0.3
+    },
+    {
+      "name": "importance",
+      "description": "Significance of the memory",
+      "weight": 0.3
+    }
+  ]
+}

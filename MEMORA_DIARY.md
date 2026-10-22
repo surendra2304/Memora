@@ -1,0 +1,136 @@
+# 🧠 Memora — Executive Engineering Diary & Roadmap Summary
+
+> **M**ulti-tier **E**mbedded **M**emory & **O**rchestrated **R**etrieval **A**rchitecture  
+> *A Personal Engineering Journey to Build an Autonomous Long-Term Memory Fabric for AI Agents*
+
+---
+
+## 📌 Project Overview
+| Attribute | Details |
+| :--- | :--- |
+| **System** | **Memora** — Multi-Tier Cognitive Memory Engine for Autonomous AI Agents |
+| **Repository** | [github.com/surendra2304/Memora](https://github.com/surendra2304/Memora) |
+| **Active Branch** | main (Verified Green) |
+| **Host Environment** | Windows 11 Desktop (x64) • Python 3.11.9 |
+| **Live Cloud Deploy** | Oracle Cloud Always Free (`https://friday-universe.duckdns.org/memora`) • Docker Mesh (`friday_mesh`) |
+| **Cloud Database** | Turso LibSQL Cloud DB (9 GB Mumbai AWS Region) |
+| **Observability** | Prometheus (`/metrics`) & JSON (`/v1/metrics`) with Phase 6 Metrics (`llm_compaction_tokens_saved`, `cross_encoder_reranking_latency_ms`, `predictive_context_hits`) |
+| **Experience Learning** | `ExperienceLearnerService` (`POST /v1/memories/learn-experience`) + Predictive Context Pre-Fetching |
+| **Hierarchical Summarizer** | `LLMContextSummarizer` (OpenAI GPT-4o-mini / Anthropic Claude Haiku / Semantic Synthesis) with Provenance |
+| **Neural Reranker** | Two-Stage Cross-Encoder (`ContextReranker` + `NeuralCrossEncoderEngine`) with Metadata Fusion |
+| **Phase 6 Advanced Intelligence** | Deep Semantic NER, SPO Triples & Canonical Entity Resolution (`EntityExtractor` + `GraphService`) |
+| **E2E Integration** | Verified Cross-Agent Workflow (FRIDAY + SENTINEL + FORGE with Strict Isolation) |
+| **Specialized Adapters** | `ForgeAdapter` + `SentinelAdapter` + `FridayAdapter` + `AIUniverseAdapter` |
+| **Ecosystem Adapters** | `BaseAgentAdapter`, `AdapterRegistry`, `adapter_config.yaml` (FRIDAY, FORGE, FUTURIS, IntelX, MT5, NEXUS, SENTINEL) |
+| **Context Pipeline** | `ContextBuilderService` (Predictive Pre-Fetching, Hierarchical Summarization, Token Budgeting) |
+| **Hybrid Search** | Vector (Qdrant) + Keyword (FTS) + Graph (MemoryRelationship) + RRF Fusion ($k=60$) |
+| **Lifecycle Manager** | State Machine (6 states), Confidence-Weighted Supersession & Forgetting Decay |
+| **Write Pipeline** | Deterministic 10-Step Pipeline (Secret Scan, Normalization, Entity Graphing, Dedup, 5D Policy) |
+| **Storage Engine** | PostgreSQL 18 (Relational) + Qdrant (Vector) + Redis 7 (Cache) + SQLite Fallback |
+| **API Framework** | FastAPI (ASGI) + SQLAlchemy 2.0 + Alembic Migrations |
+
+---
+
+## 🗺️ Chronological Diary Navigation
+
+| Timeline | Milestone / Focus | Status | Diary Log |
+| :--- | :--- | :---: | :---: |
+| **Day 1 — 2026-08-29** | Inception, 5D Policy, Write Pipeline, Context Bundles, Adapters, E2E Integration, Entity Resolution, Neural Reranker, Summarizer & Experience Learning (64 Tests) | ✅ Verified | [2026-08-29](diary/2026-08-29.md) |
+| **Day 2 — 2026-08-30** | Turso Cloud DB (Mumbai), Render Docker Deploy, Pydantic V2 Modernization, Uptime Probes, Observability Metrics & Phase 6 Sign-Off | ✅ Verified | [2026-08-30](diary/2026-08-30.md) |
+| **Day 3 — 2026-08-31** | System Manifest Integration, Live Cloud Audit, Cross-Agent Interoperability & Zero-Regression Verification | ✅ Verified | [2026-08-31](diary/2026-08-31.md) |
+| **Day 4 — 2026-09-01** | Full Codebase Audit, Bug Hunt, Timezone Fixes, Starlette Cleanup, Edge-Case Tests (68 Tests) | ✅ Verified | [2026-09-01](diary/2026-09-01.md) |
+| **Day 5 — 2026-09-02** | Live Cloud Multi-Agent Validation, Turso DB Viewer Tooling, Cross-Agent Memory Integration (68 Tests) | ✅ Verified | [2026-09-02](diary/2026-09-02.md) |
+| **Day 6 — 2026-09-03** | Turso Cloud Connection Fallback, Legacy Entity Migration & Audit Event Viewer | ✅ Verified | [2026-09-03](diary/2026-09-03.md) |
+| **Day 7 — 2026-09-04** | MEMORA Deep Upgrade, Strict Tenant Isolation & Multi-Store Convergence | ✅ Verified | [2026-09-04](diary/2026-09-04.md) |
+
+---
+
+## 📖 Daily Engineering Summaries
+
+### 🚀 [Day 7 — 2026-09-04: MEMORA Deep Upgrade, Strict Tenant Isolation & Multi-Store Convergence](diary/2026-09-04.md)
+- **🎯 Focus**: Full architectural integration of `memora_upgrade`, strict tenant isolation across SQL, vector, and cache layers, default-deny policy enforcement, durable deletion tombstones, and primary-key cursor decay.
+- **💡 What I Accomplished**:
+  - Enforced `tenant_id` across SQL models, Qdrant vector payloads, and distributed Redis cache keys.
+  - Eliminated hardcoded supervisor/admin bypass loopholes in the 5D Policy Engine, establishing strict default-deny.
+  - Reordered candidate retrieval to authorize records prior to pagination slicing, preventing empty page bugs.
+  - Hardened Qdrant vector adapter to raise `VectorUnavailableError` in production rather than silently returning mock success.
+  - Implemented `DeletionTombstone` state tracking ensuring multi-store convergence across SQL, vectors, and cache.
+  - Upgraded memory decay from full-table scans to bounded primary-key cursor batching.
+  - Bound memory mutations and security audit log entries within single atomic database transactions.
+  - Integrated 7 overlay test suites bringing total automated coverage to 86 tests (100% green).
+- **📊 Test Results**: **86 passed across 20 test suites in 101s** (100% green pass rate, 0 warnings).
+
+---
+
+### 🚀 [Day 6 — 2026-09-03: Turso Cloud Connection Fallback, Legacy Entity Migration & Audit Event Viewer](diary/2026-09-03.md)
+- **🎯 Focus**: Supporting direct Turso cloud database connection with automatic SQLite fallback, migrating legacy agent/namespace records, and upgrading `db_viewer.py` with security audit log viewing.
+- **💡 What I Accomplished**:
+  - Implemented automatic fallback to local SQLite in `create_db_engine()` when Turso libSQL endpoints are temporarily unreachable.
+  - Executed database migrations renaming legacy agents `ai_universe` -> `inference` and `nexus` -> `cortex`.
+  - Updated all namespace paths and historical memory content strings.
+  - Upgraded `db_viewer.py` to inspect recent event and security audit logs (`show_events`) with JSON detail parsing.
+- **📊 Test Results**: All 18 stored agent memories active and verified across all agents.
+
+### 🚀 [Day 5 — 2026-09-02: Live Cloud Multi-Agent Validation & Turso DB Tooling](diary/2026-09-02.md)
+- **🎯 Focus**: Verifying live multi-agent memory operations on Render & Turso cloud DB, validating private vs shared vs global namespaces, creating the `db_viewer.py` inspection CLI, and running full verification tests.
+- **💡 What I Accomplished**:
+  - Validated live 10-step write ingestion pipeline against Render cloud deployment.
+  - Verified agent-private isolation (`memora://stratex/private`), collaborative squad memory (`memora://teams/trading-squad/shared`), and global commons (`memora://universe/global`).
+  - Conducted hybrid semantic search across multiple agent namespaces simultaneously.
+  - Created `db_viewer.py` utility CLI for inspecting Turso database tables, namespaces, agents, and running interactive SQL queries.
+  - Executed full test suite verifying 68/68 passed tests with 0 warnings in 80s.
+- **📊 Test Results**: **68 passed** (100% green pass rate across all 18 test suites in 80s with zero warnings).
+
+### 🚀 [Day 4 — 2026-09-01: Comprehensive Audit, Bug Hunt & Codebase Hardening](diary/2026-09-01.md)
+- **🎯 Focus**: Executing full-depth 10-phase audit across all modules, fixing datetime timezone-aware comparisons, removing Starlette deprecations, upgrading grant schemas, expanding edge-case test coverage, and updating documentation.
+- **💡 What I Accomplished**:
+  - Fixed naive vs aware UTC datetime comparison in `AccessGrant.is_expired`.
+  - Replaced deprecated HTTP status constants with clean status code handling.
+  - Enhanced namespace grant API to resolve paths or IDs dynamically.
+  - Expanded test suite with Unicode, excessive whitespace, action gating, and 404 response tests.
+  - Updated `.env.example` with complete environment variables.
+  - Compiled comprehensive `AUDIT_REPORT.md` and verified all 68 tests passing.
+- **📊 Test Results**: **68 passed** (100% green pass rate across all 18 test suites in 84s with zero warnings).
+
+
+### 🚀 [Day 3 — 2026-08-31: System Manifest Integration & Ecosystem Interoperability](diary/2026-08-31.md)
+- **🎯 Focus**: Integrating the official `SYSTEM_MANIFEST.md`, auditing live cloud endpoints on Render and Turso DB, verifying cross-agent authentication interoperability, and ensuring zero regressions across all 64 automated tests.
+- **💡 What I Accomplished**:
+  - Integrated `SYSTEM_MANIFEST.md` documenting live cloud endpoints, Turso cloud database topology, and authentication keys.
+  - Audited ecosystem network configuration across all 9 peer agents (FRIDAY, Cortex, IntelX, Futuris, Stratex, Forge, Sentinel, Inference, Memora).
+  - Executed full test suite verifying 100% green pass rate across all 64 unit, integration, and E2E tests in 68s.
+  - Maintained date-specific engineering diary logs and master navigation indices.
+- **📊 Test Results**: **64 passed** (100% green pass rate across all 18 test suites in 68s).
+
+### 🚀 [Day 2 — 2026-08-30: Cloud Deployment, Uptime Probes, Observability & Phase 6 Sign-Off](diary/2026-08-30.md)
+- **🎯 Focus**: Configuring production cloud deployment with Turso DB and Render Docker containers, modernizing Pydantic schemas, fixing UptimeRobot HEAD request monitoring, and generating the final Phase 6 System Architecture Report.
+- **💡 What I Accomplished**:
+  - Configured Memora for Turso Cloud DB (9 GB Mumbai region) with SQLite Cloud URL resolution.
+  - Added Docker containerization and Render production deployment configuration.
+  - Modernized Pydantic schemas to V2 `ConfigDict` removing all deprecation warnings.
+  - Standardized `MEMORA_API_KEY=memora_api` in core configuration and API authentication dependencies.
+  - Added automatic SQLite directory creation to prevent `unable to open database file` runtime errors.
+  - Supported HTTP HEAD requests on `/` and `/health` to eliminate UptimeRobot 405 Method Not Allowed errors.
+  - Enhanced `MetricsCollector` in `core/metrics/collector.py` with Phase 6 metrics (`llm_compaction_tokens_saved`, `cross_encoder_reranking_latency_ms`, `predictive_context_hits`).
+  - Published the comprehensive Phase 6 Architecture & System Report with formal specification sign-off.
+  - Verified 100% green pass rate across all 64 unit, integration, and ecosystem E2E tests in 68s.
+- **📊 Test Results**: **64 passed** (100% green pass rate across all 18 test suites in 68s).
+
+### 🚀 [Day 1 — 2026-08-29: Core Memory Fabric, Neural Reranking, Summarization & Experience Learning](diary/2026-08-29.md)
+- **🎯 Focus**: Building the core multi-tier memory fabric (5D Policy Engine, 10-step Write Pipeline, Lifecycle Manager, Hybrid Search, Ecosystem Adapters, Neural Cross-Encoder Reranker, Hierarchical LLM Summarizer, and Experience Learning).
+- **💡 What I Accomplished**:
+  - Initialized repository with multi-tier storage models, migrations, and FastAPI gateway.
+  - Built 5D PolicyEngine enforcing Rule 1 (private by default) and Rule 2 (explicit promotion).
+  - Built deterministic 10-step Write Pipeline with secret scanning (API keys, JWTs, AWS tokens).
+  - Implemented Memory Lifecycle Manager supporting 6 states, contradiction supersession, and decay.
+  - Implemented Hybrid Search combining Qdrant vector embeddings, full-text search, and graph traversal.
+  - Built `ContextBuilderService` returning curated, token-budgeted Context Bundles.
+  - Built Ecosystem Adapters for FRIDAY, AI Universe, FORGE, and SENTINEL with `AdapterRegistry`.
+  - Upgraded `EntityExtractor` to deep semantic NER, SPO triples, and canonical entity resolution.
+  - Implemented Two-Stage Neural Cross-Encoder Reranker prioritizing conceptual solutions.
+  - Implemented Hierarchical LLM Context Summarizer with cluster compaction and provenance retention.
+  - Built `ExperienceLearnerService` (`POST /v1/memories/learn-experience`) and predictive context pre-fetching.
+  - Authored comprehensive test suites with 64 passing tests across 18 test modules in 68s.
+- **📊 Test Results**: **64 passed** (100% green pass rate across all 18 test suites in 68s).
+
+---

@@ -1,0 +1,74 @@
+import json
+
+import pytest
+
+from apps.api.routers import health
+from storage.vector.qdrant_adapter import QdrantVectorAdapter
+
+
+class DatabaseProbe:
+    def execute(self, _statement):
+        return 1
+
+
+@pytest.mark.parametrize(
+    ("environment", "expected"),
+    [
+        ("production", {"status": "unavailable", "available": False, "backend": "qdrant"}),
+        ("development", {"status": "in_memory", "available": True, "backend": "process_local"}),
+    ],
+)
+def test_vector_readiness_distinguishes_production_from_local_fallback(
+    monkeypatch, environment, expected
+):
+    adapter = QdrantVectorAdapter(url="http://localhost:6333")
+    monkeypatch.setattr(adapter, "is_production", lambda: environment == "production")
+
+    assert adapter.readiness() == expected
+
+
+def test_render_environment_forces_production_vector_readiness(monkeypatch):
+    adapter = QdrantVectorAdapter(url="http://localhost:6333")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setattr("storage.vector.qdrant_adapter.settings.MEMORA_ENV", "development")
+
+    assert adapter.is_production() is True
+    assert adapter.readiness() == {
+        "status": "unavailable",
+        "available": False,
+        "backend": "qdrant",
+    }
+
+
+def test_render_environment_prevents_ephemeral_vector_writes(monkeypatch):
+    from storage.vector.qdrant_adapter import VectorUnavailableError
+
+    adapter = QdrantVectorAdapter(url="http://localhost:6333")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setattr("storage.vector.qdrant_adapter.settings.MEMORA_ENV", "development")
+
+    with pytest.raises(VectorUnavailableError, match="offline in production"):
+        adapter.upsert_embedding("memory-1", [1.0, 0.0], tenant_id="tenant-1")
+
+
+@pytest.mark.parametrize(
+    ("vector_status", "expected_status", "expected_http"),
+    [
+        ({"status": "connected", "available": True, "backend": "qdrant"}, "healthy", 200),
+        ({"status": "unavailable", "available": False, "backend": "qdrant"}, "degraded", 503),
+    ],
+)
+def test_health_reflects_vector_store_availability(
+    monkeypatch, vector_status, expected_status, expected_http
+):
+    monkeypatch.setattr(health, "turso_events_configured", lambda: False)
+    monkeypatch.setattr(health, "production_mode", lambda: False)
+    monkeypatch.setattr(health.vector_adapter, "readiness", lambda: vector_status)
+
+    response = health.health_check(db=DatabaseProbe())
+    body = json.loads(response.body)
+
+    assert response.status_code == expected_http
+    assert body["status"] in ["ok", "healthy", expected_status]
+    assert body["vector_store"] == vector_status
+

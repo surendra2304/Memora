@@ -1,0 +1,88 @@
+"""
+Memora Core Configuration
+Manages environment variables, connection URLs, and system constants.
+"""
+from typing import Optional
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    MEMORA_ENV: str = "development"
+    DEBUG: bool = True
+    PORT: int = 8000
+    HOST: str = "0.0.0.0"
+
+    # Database
+    DATABASE_URL: str = "sqlite:///./data/memora.db"
+    TURSO_DATABASE_URL: Optional[str] = None
+    TURSO_AUTH_TOKEN: Optional[str] = None
+    SQLITE_FALLBACK_URL: str = "sqlite:///./data/memora.db"
+    USE_SQLITE_FALLBACK: bool = True
+    DB_ECHO: bool = False
+
+    # Redis
+    REDIS_URL: str = "redis://localhost:6379/0"
+
+    # Vector DB (Qdrant)
+    QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_COLLECTION: str = "memora_embeddings"
+    VECTOR_DIMENSION: int = 1536
+
+    # Gemini Embedding Model
+    GEMINI_API_KEY: Optional[str] = None
+    GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-2" 
+
+    # Security & Policy
+    MEMORA_API_KEY: Optional[str] = None
+    MEMORA_MASTER_KEY: Optional[str] = None
+    DEFAULT_CONFIDENCE_THRESHOLD: float = 0.75
+    DEFAULT_IMPORTANCE_THRESHOLD: float = 0.50
+
+    # CORS: Whitelist of allowed browser origins
+    MEMORA_CORS_ORIGINS: str = (
+        "https://friday-universe.duckdns.org,"
+        "http://localhost:8000,"
+        "http://127.0.0.1:8000,"
+        "http://localhost:8006,"
+        "http://localhost:8007,"
+        "http://127.0.0.1:8007,"
+        "http://localhost:3000"
+    )
+
+    def get_cors_origins(self) -> list[str]:
+        return [o.strip() for o in self.MEMORA_CORS_ORIGINS.split(",") if o.strip()]
+
+    def get_memora_api_key(self) -> str:
+        key = self.MEMORA_API_KEY or self.MEMORA_MASTER_KEY
+        if not key:
+            if str(self.MEMORA_ENV).lower() == "production":
+                raise ValueError(
+                    "Production Security Violation: MEMORA_API_KEY or MEMORA_MASTER_KEY "
+                    "must be configured via environment variable in production."
+                )
+            return "memora_api_dev"
+        return key
+
+settings = Settings()
+
+
+def validate_startup_config() -> None:
+    """
+    Validates required configuration on service boot.
+    Fails fast in production with explicit diagnostics pointing to .env.example.
+    """
+    import os
+    env = (os.getenv("ENVIRONMENT") or settings.MEMORA_ENV).lower()
+    if env == "production":
+        missing = []
+        if not (settings.MEMORA_API_KEY or settings.MEMORA_MASTER_KEY or os.getenv("MEMORA_API_KEY") or os.getenv("MEMORA_MASTER_KEY")):
+            missing.append("MEMORA_API_KEY (or MEMORA_MASTER_KEY)")
+        if not (settings.DATABASE_URL or os.getenv("DATABASE_URL")):
+            missing.append("DATABASE_URL")
+
+        if missing:
+            raise RuntimeError(
+                f"Production startup configuration error: Missing required setting(s): {', '.join(missing)}. "
+                "Review your environment configuration or refer to .env.example."
+            )
