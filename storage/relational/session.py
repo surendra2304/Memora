@@ -35,7 +35,7 @@ def validate_production_database_url(url: str) -> None:
     """Fail closed when production is configured with an invalid non-production store."""
     if production_mode() and not url.lower().startswith(("oracle", "oracle+oracledb", "postgresql://", "postgresql+")):
         raise RuntimeError(
-            "Memora production requires the Oracle Autonomous Database or PostgreSQL DATABASE_URL; "
+            "Memora production requires the self-hosted PostgreSQL DATABASE_URL or Oracle Autonomous Database; "
             "SQLite and Turso are development/migration-only backends."
         )
 
@@ -148,7 +148,7 @@ def create_db_engine():
         except Exception as e:
             if production_mode() or not settings.USE_SQLITE_FALLBACK:
                 raise RuntimeError("Memora Oracle Database is unavailable; refusing SQLite fallback.") from e
-            fallback_url = settings.SQLITE_FALLBACK_URL
+            fallback_url = get_effective_sqlite_fallback()
             _ensure_sqlite_dir(fallback_url)
             logger.warning("Oracle DB unavailable; falling back to SQLite in non-production mode.")
             _active_storage_backend = "sqlite_fallback"
@@ -183,7 +183,7 @@ def create_db_engine():
             # the canonical PostgreSQL store is unavailable.
             if production_mode() or not settings.USE_SQLITE_FALLBACK:
                 raise RuntimeError("Memora PostgreSQL is unavailable; refusing SQLite fallback.") from e
-            fallback_url = settings.SQLITE_FALLBACK_URL
+            fallback_url = get_effective_sqlite_fallback()
             _ensure_sqlite_dir(fallback_url)
             logger.warning("PostgreSQL unavailable; falling back to SQLite in non-production mode.")
             _active_storage_backend = "sqlite_fallback"
@@ -209,7 +209,7 @@ def create_db_engine():
             _active_storage_durable = True
             return engine
         except Exception as e:
-            fallback_url = settings.SQLITE_FALLBACK_URL
+            fallback_url = get_effective_sqlite_fallback()
             logger.warning(
                 "Turso ORM connection unavailable (%s); local SQLite fallback is non-authoritative.",
                 type(e).__name__,
