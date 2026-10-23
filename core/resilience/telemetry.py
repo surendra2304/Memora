@@ -14,7 +14,6 @@ import os
 from typing import Any, Dict, Optional
 import requests
 
-from core.config import settings
 from core.resilience.circuit_breaker import circuit_registry
 from storage.relational.session import storage_receipt
 from storage.vector.embedding import EmbeddingGenerator

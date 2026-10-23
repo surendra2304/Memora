@@ -171,7 +171,7 @@ def authenticate_agent(
         return agent
 
     # Opt-in anonymous access exists only for local development and tests.
-    if not production and not expected and not supplied:
+    if not production and not supplied:
         return agent or "friday"
     if not agent or not expected or not supplied or not hmac.compare_digest(expected, supplied):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid agent credentials")

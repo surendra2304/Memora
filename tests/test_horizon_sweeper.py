@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 from apps.api.main import app
 from storage.convergence.horizon_sweeper import (
     HorizonSweeperWorker,
-    horizon_sweeper,
 )
 from storage.relational.session import SessionLocal, init_db
 from storage.relational.models import (

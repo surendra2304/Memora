@@ -21,7 +21,8 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 
 
 @pytest.fixture(autouse=True)
-def reset_embedder_mode():
+def reset_embedder_mode(monkeypatch):
+    monkeypatch.setenv("MEMORA_EMBEDDING_MODE", "auto")
     EmbeddingGenerator.set_mode("auto")
     yield
     EmbeddingGenerator.set_mode("auto")
