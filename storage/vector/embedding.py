@@ -187,13 +187,20 @@ class EmbeddingGenerator:
         if not text or not text.strip():
             return [0.0] * dimension
 
-        # Forced hashing mode
+        # Forced hashing mode (explicit class mode or environment override)
         if cls._mode == "hashing" or not prefer_gemini:
             cls._last_mode = "deterministic_hashing"
             return cls.generate_deterministic_embedding(text, dimension)
 
+        env_mode = os.getenv("MEMORA_EMBEDDING_MODE", "").strip().lower()
+        if env_mode == "hashing" and cls._mode == "auto":
+            cls._last_mode = "deterministic_hashing"
+            return cls.generate_deterministic_embedding(text, dimension)
+
+        effective_mode = cls._mode if cls._mode in {"gemini", "hashing"} else (env_mode or "auto")
+
         # Attempt Gemini if in auto or gemini mode
-        if cls._mode in {"auto", "gemini"}:
+        if effective_mode in {"auto", "gemini"}:
             api_key = cls._get_gemini_api_key()
             if api_key and _GENAI_AVAILABLE:
                 try:
@@ -205,10 +212,10 @@ class EmbeddingGenerator:
                         "Gemini embedding API call failed (%s); failing soft to deterministic feature hashing.",
                         exc,
                     )
-                    if cls._mode == "gemini":
+                    if effective_mode == "gemini":
                         # If explicitly forced to gemini mode, re-raise
                         raise
-            elif cls._mode == "gemini":
+            elif effective_mode == "gemini":
                 raise RuntimeError("Embedding mode set to 'gemini' but GEMINI_API_KEY is missing or genai SDK unavailable.")
 
         # Fail-soft fallback: deterministic feature hashing

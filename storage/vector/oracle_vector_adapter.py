@@ -12,7 +12,6 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from core.config import settings
 from storage.relational.session import SessionLocal, storage_receipt
 from storage.vector.qdrant_adapter import VectorSearchResult
 
@@ -249,7 +248,7 @@ class OracleVectorAdapter:
 
                     v_norm = math.sqrt(sum(x * x for x in v_list))
                     if v_norm > 0:
-                        dot = sum(a * b for a, b in zip(query_vector, v_list))
+                        dot = sum(a * b for a, b in zip(query_vector, v_list, strict=False))
                         cosine_sim = dot / (q_norm * v_norm)
                         if cosine_sim >= score_threshold:
                             scored.append(VectorSearchResult(memory_id=str(mem_id), score=round(cosine_sim, 4), payload=p_dict))
