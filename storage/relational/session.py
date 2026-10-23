@@ -33,9 +33,10 @@ def storage_receipt() -> dict[str, str | bool]:
 
 def validate_production_database_url(url: str) -> None:
     """Fail closed when production is configured with an invalid non-production store."""
-    if production_mode() and not url.lower().startswith(("oracle", "oracle+oracledb", "postgresql://", "postgresql+")):
+    normalized_url = url.strip().lower()
+    if production_mode() and not normalized_url.startswith(("postgresql://", "postgresql+")):
         raise RuntimeError(
-            "Memora production requires the Oracle Autonomous Database or PostgreSQL DATABASE_URL; "
+            "Memora production requires the self-hosted PostgreSQL DATABASE_URL; "
             "SQLite and Turso are development/migration-only backends."
         )
 
