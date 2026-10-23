@@ -175,6 +175,8 @@ async def lifespan(app: FastAPI):
     if storage_ready():
         from storage.convergence.tombstone_worker import tombstone_worker
         tombstone_worker.start_background_worker(interval_seconds=15.0)
+        from storage.convergence.horizon_sweeper import horizon_sweeper
+        horizon_sweeper.start_background_worker()
 
     vyralx_key = os.getenv("VYRALX_API_KEY", "").strip()
     if len(vyralx_key) >= 32 and storage_ready():
@@ -189,6 +191,11 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         logger.info("Initiating graceful shutdown sequence for Memora...")
+        try:
+            from storage.convergence.horizon_sweeper import horizon_sweeper
+            horizon_sweeper.stop_background_worker()
+        except Exception as exc:
+            logger.warning("Horizon sweeper shutdown encountered exception: %s", exc)
         try:
             from storage.convergence.tombstone_worker import tombstone_worker
             tombstone_worker.stop_background_worker()

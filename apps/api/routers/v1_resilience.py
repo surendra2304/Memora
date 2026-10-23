@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from apps.api.dependencies import get_actor_header
 from core.resilience.circuit_breaker import circuit_registry
 from core.resilience.self_healing import self_healing_supervisor
+from core.resilience.telemetry import mesh_telemetry_reporter
 from storage.relational.session import get_db
 
 router = APIRouter(prefix="/v1/resilience", tags=["v1 Resilience"])
@@ -120,3 +121,15 @@ def preview_repair(
         db, dry_run=True, tenant_id="default"
     )
     return report.to_dict()
+
+
+@router.get("/telemetry")
+def get_mesh_telemetry(actor_name: str = Depends(get_actor_header)) -> Dict[str, Any]:
+    """Real-time circuit breaker, storage, and embedder telemetry snapshot."""
+    return mesh_telemetry_reporter.get_telemetry_snapshot()
+
+
+@router.post("/telemetry/report")
+def broadcast_mesh_telemetry(actor_name: str = Depends(get_actor_header)) -> Dict[str, Any]:
+    """Dispatch telemetry to Sentinel (:8008) and FRIDAY (:10000)."""
+    return mesh_telemetry_reporter.report_mesh_telemetry()

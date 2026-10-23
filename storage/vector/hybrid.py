@@ -40,13 +40,23 @@ def hybrid_vector_relational_search(
 
     try:
         query_vector = EmbeddingGenerator.generate_embedding(query_text)
-        vector_hits = vector_adapter.search_similarity(
-            query_vector=query_vector,
-            tenant_id=tenant_id,
-            limit=limit * 2,
-            score_threshold=score_threshold,
-            fail_soft=fail_soft,
-        )
+        from storage.vector.oracle_vector_adapter import oracle_vector_adapter
+        if oracle_vector_adapter.is_oracle_backend():
+            vector_hits = oracle_vector_adapter.search_similarity(
+                query_vector=query_vector,
+                limit=limit * 2,
+                tenant_id=tenant_id,
+                score_threshold=score_threshold,
+                db=db,
+            )
+        else:
+            vector_hits = vector_adapter.search_similarity(
+                query_vector=query_vector,
+                tenant_id=tenant_id,
+                limit=limit * 2,
+                score_threshold=score_threshold,
+                fail_soft=fail_soft,
+            )
         vector_scores = {hit.memory_id: hit.score for hit in vector_hits}
     except Exception as exc:
         logger.warning(
