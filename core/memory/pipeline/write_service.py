@@ -642,21 +642,32 @@ class MemoryWriteService:
                 dense_embedding = EmbeddingGenerator.generate_embedding(normalized_content)
                 vector_write_memory_id = record.id
                 vector_write_attempted = True
-                vector_indexed = vector_adapter.upsert_embedding(
-                    memory_id=record.id,
-                    vector=dense_embedding,
-                    tenant_id=resolved_tenant,
-                    payload={
-                        "namespace_path": namespace.path,
-                        "memory_type": resolved_type.value,
-                        "owner": actor.name,
-                        "user_id": resolved_user_id,
-                        "agent_id": actor.name if actor else resolved_actor_name,
-                        "workspace_id": resolved_workspace_id,
-                        "task_id": task_id,
-                        "trust_level": canonical_trust_level
-                    }
-                )
+                from storage.vector.oracle_vector_adapter import oracle_vector_adapter
+                vec_payload = {
+                    "namespace_path": namespace.path,
+                    "memory_type": resolved_type.value,
+                    "owner": actor.name,
+                    "user_id": resolved_user_id,
+                    "agent_id": actor.name if actor else resolved_actor_name,
+                    "workspace_id": resolved_workspace_id,
+                    "task_id": task_id,
+                    "trust_level": canonical_trust_level
+                }
+                if oracle_vector_adapter.is_oracle_backend():
+                    vector_indexed = oracle_vector_adapter.upsert_embedding(
+                        memory_id=record.id,
+                        vector=dense_embedding,
+                        tenant_id=resolved_tenant,
+                        payload=vec_payload,
+                        db=db,
+                    )
+                else:
+                    vector_indexed = vector_adapter.upsert_embedding(
+                        memory_id=record.id,
+                        vector=dense_embedding,
+                        tenant_id=resolved_tenant,
+                        payload=vec_payload,
+                    )
             except Exception:
                 vector_indexed = False
 

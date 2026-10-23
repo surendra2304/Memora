@@ -764,6 +764,27 @@ def trigger_memory_decay(
     )
 
 
+class MemorySweepHorizonRequest(BaseModel):
+    tenant_id: Optional[str] = Field(default=None, max_length=128, description="Target tenant ID")
+
+
+@router.post("/sweep-horizon")
+def trigger_horizon_sweep(
+    req: Optional[MemorySweepHorizonRequest] = None,
+    actor_name: str = Depends(get_actor_header),
+    db: Session = Depends(get_db),
+):
+    require_admin(actor_name)
+    from storage.convergence.horizon_sweeper import horizon_sweeper
+    tenant_id = req.tenant_id if req and req.tenant_id else None
+    result = horizon_sweeper.run_sweep_pass(db, tenant_id=tenant_id)
+    return {
+        "status": "success",
+        "actor": actor_name,
+        "sweep_result": result,
+    }
+
+
 class RecordInteractionRequest(BaseModel):
     agent_name: Optional[str] = Field(default=None, max_length=128, description="Subsystem agent name")
     user_text: str = Field(..., min_length=1, max_length=32_768, description="User input utterance or prompt")
