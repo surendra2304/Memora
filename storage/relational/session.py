@@ -13,6 +13,14 @@ from fastapi import HTTPException
 from core.config import settings
 from storage.relational.base import Base
 
+# Oracle 23ai JSON Dialect Compatibility Hook
+try:
+    from sqlalchemy.dialects.oracle.base import OracleDialect
+    if not hasattr(OracleDialect, "_json_deserializer"):
+        OracleDialect._json_deserializer = None
+except Exception:
+    pass
+
 logger = logging.getLogger(__name__)
 _active_storage_backend = "uninitialized"
 _active_storage_durable = False
