@@ -44,6 +44,13 @@ def validate_production_database_url(url: str) -> None:
 def storage_ready() -> bool:
     return not production_mode() or _active_storage_durable
 
+def get_effective_sqlite_fallback() -> str:
+    """Ensure Linux tmpfs (/dev/shm) is strictly used in RAM to guarantee zero disk persistence."""
+    if os.path.exists("/dev/shm"):
+        return "sqlite:////dev/shm/memora.db"
+    return settings.SQLITE_FALLBACK_URL
+
+
 def _ensure_sqlite_dir(url: str):
     if "sqlite:///" in url:
         path = url.replace("sqlite:///", "")

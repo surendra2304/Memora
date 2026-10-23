@@ -2,6 +2,7 @@
 Memora Core Configuration
 Manages environment variables, connection URLs, and system constants.
 """
+import os
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -14,10 +15,10 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
 
     # Database
-    DATABASE_URL: str = "sqlite:///./data/memora.db"
+    DATABASE_URL: str = "sqlite:////dev/shm/memora.db" if os.path.exists("/dev/shm") else "sqlite:///./data/memora.db"
     TURSO_DATABASE_URL: Optional[str] = None
     TURSO_AUTH_TOKEN: Optional[str] = None
-    SQLITE_FALLBACK_URL: str = "sqlite:///./data/memora.db"
+    SQLITE_FALLBACK_URL: str = "sqlite:////dev/shm/memora.db" if os.path.exists("/dev/shm") else "sqlite:///./data/memora.db"
     USE_SQLITE_FALLBACK: bool = True
     DB_ECHO: bool = False
 
