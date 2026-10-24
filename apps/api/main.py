@@ -359,6 +359,10 @@ app.include_router(memory_retrieval_router, prefix="/api/v1/memora")
 from routers.memory_reflection_engine import router as memory_reflection_router
 app.include_router(memory_reflection_router, prefix="/api/v1/memora")
 
+# --- Memory Dream Engine Integration ---
+from routers.memory_dream_engine import router as memory_dream_router
+app.include_router(memory_dream_router, prefix="/api/v1/memora")
+
 @app.api_route("/api/dashboard/sync", methods=["GET", "POST"], include_in_schema=False)
 def dashboard_sync(agent_name: str = Depends(authenticate_agent)):
     if agent_name != "memora":
