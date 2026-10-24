@@ -316,7 +316,22 @@ app.include_router(mesh_events_router)
 app.include_router(audit_router)
 app.include_router(v1_resilience_router)
 app.include_router(v1_collaboration_router)
-app.include_router(v1_reflection_router)
+from apps.api.routers.enhanced_memory import router as enhanced_memory_router
+from apps.api.routers.knowledge_graph import router as knowledge_graph_router
+from apps.api.routers.multimodal_memory import router as multimodal_memory_router
+from apps.api.routers.knowledge_distillation import router as knowledge_distillation_router
+from apps.api.routers.temporal_knowledge import router as temporal_knowledge_router
+
+app.include_router(enhanced_memory_router, prefix="/api/v1")
+app.include_router(knowledge_graph_router, prefix="/api/v1")
+app.include_router(multimodal_memory_router, prefix="/api/v1")
+app.include_router(knowledge_distillation_router, prefix="/api/v1")
+app.include_router(temporal_knowledge_router, prefix="/api/v1")
+from apps.api.routers.knowledge_consolidation import router as knowledge_consolidation_router
+from apps.api.routers.memory_retrieval_optimizer import router as memory_retrieval_optimizer_router
+
+app.include_router(knowledge_consolidation_router, prefix="/api/v1")
+app.include_router(memory_retrieval_optimizer_router, prefix="/api/v1")
 
 @app.api_route("/api/dashboard/sync", methods=["GET", "POST"], include_in_schema=False)
 def dashboard_sync(agent_name: str = Depends(authenticate_agent)):

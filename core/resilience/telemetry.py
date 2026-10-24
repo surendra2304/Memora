@@ -65,17 +65,20 @@ class MeshTelemetryReporter:
         """Dispatch signed audit telemetry to Sentinel (:8008)."""
         data = telemetry or self.get_telemetry_snapshot()
         endpoint = f"{self.sentinel_url}/v1/audit/record"
-        key = (
-            os.getenv("SENTINEL_AUDIT_HMAC_KEY")
-            or os.getenv("SENTINEL_API_KEY")
-            or "c36209e9fbe54d008d51a660d2ecb0b023f9906649f8269e8bb95b217dc3ad3e"
-        )
-        sig = self._sign_payload(data, key)
+        signing_key = os.getenv("SENTINEL_AUDIT_HMAC_KEY")
+        api_key = os.getenv("SENTINEL_API_KEY")
+        if not signing_key or not api_key:
+            logger.error("Sentinel telemetry is disabled: required credentials are not configured")
+            return {
+                "sentinel_status": "misconfigured (missing required credential)",
+                "endpoint": endpoint,
+            }
 
+        sig = self._sign_payload(data, signing_key)
         headers = {
             "Content-Type": "application/json",
             "X-Agent-Name": "Memora",
-            "Authorization": f"Bearer {os.getenv('SENTINEL_API_KEY', '')}",
+            "Authorization": f"Bearer {api_key}",
             "X-Signature": sig,
         }
 
