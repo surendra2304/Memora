@@ -13,6 +13,7 @@ from apps.api.routers.v1_resilience import router as v1_resilience_router
 from apps.api.routers.v1_collaboration import router as v1_collaboration_router
 from apps.api.routers.v1_reflection import router as v1_reflection_router
 from apps.api.routers.memory_consolidation_engine import router as consolidation_router
+from apps.api.routers.temporal_context_retriever import router as temporal_router
 from apps.api.routers.causal_memory_graph import router as causal_router
 
 __all__ = [
@@ -32,5 +33,6 @@ __all__ = [
     "v1_collaboration_router",
     "v1_reflection_router",
     "consolidation_router",
+    "temporal_router",
     "causal_router",
 ]
