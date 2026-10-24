@@ -36,6 +36,9 @@ from apps.api.routers import (
     v1_resilience_router,
     v1_collaboration_router,
     v1_reflection_router,
+    semantic_search_router,
+    encrypted_vector_router,
+    causal_graph_router,
 )
 
 import os
@@ -332,6 +335,9 @@ from apps.api.routers.memory_retrieval_optimizer import router as memory_retriev
 
 app.include_router(knowledge_consolidation_router, prefix="/api/v1")
 app.include_router(memory_retrieval_optimizer_router, prefix="/api/v1")
+app.include_router(semantic_search_router, prefix="/api/v1")
+app.include_router(encrypted_vector_router, prefix="/api/v1")
+app.include_router(causal_graph_router, prefix="/api/v1")
 
 @app.api_route("/api/dashboard/sync", methods=["GET", "POST"], include_in_schema=False)
 def dashboard_sync(agent_name: str = Depends(authenticate_agent)):
