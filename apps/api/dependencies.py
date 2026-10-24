@@ -6,6 +6,7 @@ import os
 from typing import Optional
 from fastapi import Header, HTTPException, status
 from core.config import settings
+from storage.relational.session import get_db
 
 AGENT_API_KEY_ENV_VARS = {
     "friday": "FRIDAY_API_KEY",
