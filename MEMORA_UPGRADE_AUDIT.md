@@ -113,7 +113,7 @@ All 86 automated tests pass with 100% green status, zero schema drift detected b
 ```
 ============================= test session starts =============================
 platform win32 -- Python 3.11.9, pytest-9.1.1, pluggy-1.6.0
-rootdir: D:\FRIDAY Universe\Memora
+rootdir: FRIDAY_UNIVERSE_HOME\Memora
 collected 86 items
 
 tests/test_advanced_entity_extraction.py ...                            [  3%]
