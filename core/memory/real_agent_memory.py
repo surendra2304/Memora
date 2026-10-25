@@ -733,7 +733,7 @@ class MemoryStore:
         for dirpath, _dirs, files in os.walk(self.root):
             for fname in sorted(files):
                 if fname.endswith(".md") and fname != "MEMORY.md":
-                    paths.append(os.path.relpath(os.path.join(dirpath, fname), self.root))
+                    paths.append(os.path.relpath(os.path.join(dirpath, fname), self.root).replace(chr(92), "/"))
         return sorted(paths)
 
     def trace(self, name: str) -> list[str]:
@@ -830,7 +830,7 @@ class RecallEngine:
 
     def _relative(self, memory: MarkdownMemory, name: str) -> str:
         if memory.path:
-            return os.path.relpath(memory.path, self.store.root)
+            return os.path.relpath(memory.path, self.store.root).replace(chr(92), "/")
         fm = memory.frontmatter
         return f"{fm.type}/{fm.group}/{name}.md"
 
