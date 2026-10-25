@@ -373,6 +373,10 @@ app.include_router(memory_decay_router, prefix="/api/v1/memora")
 from apps.api.routers.memory_dream_interpreter import router as memory_interpreter_router
 app.include_router(memory_interpreter_router, prefix="/api/v1/memora")
 
+# --- Real Context Mode Engine Integration ---
+from apps.api.routers.real_context_routes import router as real_context_router
+app.include_router(real_context_router, prefix="/api/v1/memora")
+
 @app.api_route("/api/dashboard/sync", methods=["GET", "POST"], include_in_schema=False)
 def dashboard_sync(agent_name: str = Depends(authenticate_agent)):
     if agent_name != "memora":

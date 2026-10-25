@@ -20,6 +20,7 @@ from apps.api.routers.causal_memory_graph import router as causal_router, router
 from apps.api.routers.semantic_search_engine import router as semantic_search_router
 from apps.api.routers.encrypted_vector_store import router as encrypted_vector_router
 from apps.api.routers.context_db import router as context_db_router
+from apps.api.routers.real_context_routes import router as real_context_router
 
 __all__ = [
     "health_router",
@@ -46,4 +47,5 @@ __all__ = [
     "semantic_search_router",
     "context_db_router",
     "encrypted_vector_router",
+    "real_context_router",
 ]
