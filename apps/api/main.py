@@ -352,23 +352,23 @@ from apps.api.routers.memory_provenance_tracker import router as memory_provenan
 app.include_router(memory_provenance_router, prefix="/api/v1/memora")
 
 # --- Memory Retrieval Engine Integration ---
-from routers.memory_retrieval_engine import router as memory_retrieval_router
+from apps.api.routers.memory_retrieval_engine import router as memory_retrieval_router
 app.include_router(memory_retrieval_router, prefix="/api/v1/memora")
 
 # --- Memory Reflection Engine Integration ---
-from routers.memory_reflection_engine import router as memory_reflection_router
+from apps.api.routers.memory_reflection_engine import router as memory_reflection_router
 app.include_router(memory_reflection_router, prefix="/api/v1/memora")
 
 # --- Memory Dream Engine Integration ---
-from routers.memory_dream_engine import router as memory_dream_router
+from apps.api.routers.memory_dream_engine import router as memory_dream_router
 app.include_router(memory_dream_router, prefix="/api/v1/memora")
 
 # --- Memory Decay Predictor Integration ---
-from routers.memory_decay_predictor import router as memory_decay_router
+from apps.api.routers.memory_decay_predictor import router as memory_decay_router
 app.include_router(memory_decay_router, prefix="/api/v1/memora")
 
 # --- Memory Dream Interpreter Integration ---
-from routers.memory_dream_interpreter import router as memory_interpreter_router
+from apps.api.routers.memory_dream_interpreter import router as memory_interpreter_router
 app.include_router(memory_interpreter_router, prefix="/api/v1/memora")
 
 @app.api_route("/api/dashboard/sync", methods=["GET", "POST"], include_in_schema=False)

@@ -16,7 +16,9 @@ from apps.api.routers.memory_consolidation_engine import router as consolidation
 from apps.api.routers.temporal_context_retriever import router as temporal_router
 from apps.api.routers.knowledge_extraction_pipeline import router as extraction_router
 from apps.api.routers.memory_reinforcement_engine import router as reinforcement_router
-from apps.api.routers.causal_memory_graph import router as causal_router
+from apps.api.routers.causal_memory_graph import router as causal_router, router as causal_graph_router
+from apps.api.routers.semantic_search_engine import router as semantic_search_router
+from apps.api.routers.encrypted_vector_store import router as encrypted_vector_router
 
 __all__ = [
     "health_router",
@@ -39,4 +41,7 @@ __all__ = [
     "extraction_router",
     "reinforcement_router",
     "causal_router",
+    "causal_graph_router",
+    "semantic_search_router",
+    "encrypted_vector_router",
 ]
