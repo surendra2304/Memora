@@ -461,7 +461,7 @@ class MemoryRetrievalOptimizer:
 
         if len(low_priority) > 10:
             triggers.append(ConsolidationTrigger(
-                trigger_id=hashlib.md5(f"trigger:low_priority:{time.time()}").hexdigest()[:12],
+                trigger_id=hashlib.md5(f"trigger:low_priority:{time.time()}".encode()).hexdigest()[:12],
                 reason=f"{len(low_priority)} low-priority memories detected",
                 memories_to_consolidate=[p.memory_id for p in low_priority[:10]],
                 estimated_savings=len(low_priority) * 5,
