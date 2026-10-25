@@ -191,9 +191,44 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             logger.warning("VyralX bootstrap skipped or failed: %s", exc)
 
+    # Background consolidation and wiki compilation loop
+    bg_enabled = os.getenv("FRIDAY_BACKGROUND_TASKS", "1").strip().lower() not in {"0", "false", "no"}
+    bg_task = None
+    if bg_enabled:
+        import asyncio
+        async def _memora_bg_worker():
+            interval = float(os.getenv("MEMORA_CONSOLIDATION_INTERVAL_SEC", "300.0"))
+            while True:
+                try:
+                    await asyncio.sleep(interval)
+                    logger.info("Running Memora background consolidation and wiki compile pass...")
+                    from apps.api.routers.context_db import get_service
+                    service = get_service()
+                    service.compile_wiki(persist=True)
+                    service.consolidate()
+                    logger.info("Memora background consolidation and wiki compile pass completed.")
+                except asyncio.CancelledError:
+                    break
+                except Exception as exc:
+                    logger.warning("Memora background worker exception: %s", exc)
+
+        bg_task = asyncio.create_task(_memora_bg_worker())
+
     try:
         yield
     finally:
+        if bg_task is not None:
+            bg_task.cancel()
+            try:
+                await bg_task
+            except asyncio.CancelledError:
+                pass
+        try:
+            from apps.api.routers.context_db import get_service
+            get_service().compile_wiki(persist=True)
+            logger.info("Memora shutdown wiki compile complete.")
+        except Exception as exc:
+            logger.warning("Memora shutdown wiki compile skipped: %s", exc)
         logger.info("Initiating graceful shutdown sequence for Memora...")
         try:
             from storage.convergence.horizon_sweeper import horizon_sweeper

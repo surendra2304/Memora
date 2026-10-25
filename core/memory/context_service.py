@@ -143,12 +143,32 @@ class MemoraContextService:
         return [RecallHit(uri=hit.uri, score=hit.score, abstract=hit.abstract,
                           level=hit.level, kind=hit.kind).as_dict() for hit in hits]
 
+    def recall_layered(self, query: str, limit: int = 5,
+                       uri: str | None = None) -> tuple[str, list[dict[str, Any]]]:
+        """Escalate from L0 to L1 to L2 if lower level yields no hits."""
+        for level in ("L0", "L1", "L2"):
+            hits = self.recall(query, limit=limit, level=level, uri=uri)
+            if hits:
+                return level, hits
+        return "L2", []
+
+    def consolidate(self) -> dict[str, Any]:
+        """Run the sleep-time consolidation pass on agent memory."""
+        try:
+            from . import real_agent_memory as am
+            engine = am.get_engine()
+            return engine.sleep_pass()
+        except Exception as exc:
+            return {"applied": 0, "status": "noop", "error": str(exc)}
+
     def commit_session(self, session_id: str, turns: list[dict[str, Any]]) -> dict[str, Any]:
         session = vk.Session(session_id, self.user)
         for turn in turns:
             session.add(str(turn.get("role", "user")), str(turn.get("content", "")))
         result = self.db.commit_session(session)
-        return result.as_dict()
+        d = result.as_dict()
+        d["committed"] = True
+        return d
 
     def compile_wiki(self, persist: bool = True) -> dict[str, Any]:
         report = self.db.compile(root=self.root, persist=persist)
@@ -236,6 +256,10 @@ class FabricBridge:
 
     def recall(self, agent: str, query: str, limit: int = 3) -> list[dict[str, Any]]:
         return self.service.recall(query, limit=limit, uri=self.agent_root(agent))
+
+    def recall_layered(self, agent: str, query: str, limit: int = 3
+                       ) -> tuple[str, list[dict[str, Any]]]:
+        return self.service.recall_layered(query, limit=limit, uri=self.agent_root(agent))
 
     def summary(self, agent: str) -> str:
         return self.service.db.summary(self.agent_root(agent)).abstract
@@ -331,6 +355,10 @@ if _ROUTER_AVAILABLE:
     @router.post("/compile")
     def compile_wiki(persist: bool = True) -> dict[str, Any]:
         return get_service().compile_wiki(persist=persist)
+
+    @router.post("/consolidate")
+    def consolidate() -> dict[str, Any]:
+        return get_service().consolidate()
 
 else:  # pragma: no cover
     router = None
