@@ -39,6 +39,7 @@ from apps.api.routers import (
     semantic_search_router,
     encrypted_vector_router,
     causal_graph_router,
+    context_db_router,
 )
 
 import os
@@ -305,6 +306,7 @@ logger.info(
 )
 
 # Mount Routers
+app.include_router(context_db_router)  # viking:// context database (/v1/context/*)
 app.include_router(health_router)
 app.include_router(agents_router)
 app.include_router(namespaces_router)
