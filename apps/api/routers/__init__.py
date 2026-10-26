@@ -21,6 +21,7 @@ from apps.api.routers.semantic_search_engine import router as semantic_search_ro
 from apps.api.routers.encrypted_vector_store import router as encrypted_vector_router
 from apps.api.routers.context_db import router as context_db_router
 from apps.api.routers.real_context_routes import router as real_context_router
+from apps.api.routers.real_engines_router import router as real_engines_router
 
 __all__ = [
     "health_router",

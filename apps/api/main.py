@@ -412,6 +412,9 @@ app.include_router(memory_interpreter_router, prefix="/api/v1/memora")
 from apps.api.routers.real_context_routes import router as real_context_router
 app.include_router(real_context_router, prefix="/api/v1/memora")
 
+# --- Real Engines Integration ---
+from apps.api.routers.real_engines_router import router as real_engines_router
+app.include_router(real_engines_router)
 @app.api_route("/api/dashboard/sync", methods=["GET", "POST"], include_in_schema=False)
 def dashboard_sync(agent_name: str = Depends(authenticate_agent)):
     if agent_name != "memora":
