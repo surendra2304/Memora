@@ -362,51 +362,53 @@ from apps.api.routers.multimodal_memory import router as multimodal_memory_route
 from apps.api.routers.knowledge_distillation import router as knowledge_distillation_router
 from apps.api.routers.temporal_knowledge import router as temporal_knowledge_router
 
-app.include_router(enhanced_memory_router, prefix="/api/v1")
-app.include_router(knowledge_graph_router, prefix="/api/v1")
-app.include_router(multimodal_memory_router, prefix="/api/v1")
-app.include_router(knowledge_distillation_router, prefix="/api/v1")
-app.include_router(temporal_knowledge_router, prefix="/api/v1")
+# These routers declare absolute paths; adding /api/v1 duplicated it.
+app.include_router(enhanced_memory_router)
+app.include_router(knowledge_graph_router)
+app.include_router(multimodal_memory_router)
+app.include_router(knowledge_distillation_router)
+app.include_router(temporal_knowledge_router)
 from apps.api.routers.knowledge_consolidation import router as knowledge_consolidation_router
 from apps.api.routers.memory_retrieval_optimizer import router as memory_retrieval_optimizer_router
 
-app.include_router(knowledge_consolidation_router, prefix="/api/v1")
-app.include_router(memory_retrieval_optimizer_router, prefix="/api/v1")
-app.include_router(semantic_search_router, prefix="/api/v1")
-app.include_router(encrypted_vector_router, prefix="/api/v1")
-app.include_router(causal_graph_router, prefix="/api/v1")
+app.include_router(knowledge_consolidation_router)
+app.include_router(memory_retrieval_optimizer_router)
+# These routers declare absolute /api/v1/memora/... paths; mount at root.
+app.include_router(semantic_search_router)
+app.include_router(encrypted_vector_router)
+app.include_router(causal_graph_router)
 
 # --- Working Memory Manager Integration ---
 from apps.api.routers.working_memory_manager import router as working_memory_router
-app.include_router(working_memory_router, prefix="/api/v1/memora")
+app.include_router(working_memory_router, prefix="/api/v1")
 
 # --- Memory Access Controller Integration ---
 from apps.api.routers.memory_access_controller import router as memory_access_router
-app.include_router(memory_access_router, prefix="/api/v1/memora")
+app.include_router(memory_access_router, prefix="/api/v1")
 
 # --- Memory Provenance Tracker Integration ---
 from apps.api.routers.memory_provenance_tracker import router as memory_provenance_router
-app.include_router(memory_provenance_router, prefix="/api/v1/memora")
+app.include_router(memory_provenance_router, prefix="/api/v1")
 
 # --- Memory Retrieval Engine Integration ---
 from apps.api.routers.memory_retrieval_engine import router as memory_retrieval_router
-app.include_router(memory_retrieval_router, prefix="/api/v1/memora")
+app.include_router(memory_retrieval_router, prefix="/api/v1")
 
 # --- Memory Reflection Engine Integration ---
 from apps.api.routers.memory_reflection_engine import router as memory_reflection_router
-app.include_router(memory_reflection_router, prefix="/api/v1/memora")
+app.include_router(memory_reflection_router, prefix="/api/v1")
 
 # --- Memory Dream Engine Integration ---
 from apps.api.routers.memory_dream_engine import router as memory_dream_router
-app.include_router(memory_dream_router, prefix="/api/v1/memora")
+app.include_router(memory_dream_router, prefix="/api/v1")
 
 # --- Memory Decay Predictor Integration ---
 from apps.api.routers.memory_decay_predictor import router as memory_decay_router
-app.include_router(memory_decay_router, prefix="/api/v1/memora")
+app.include_router(memory_decay_router, prefix="/api/v1")
 
 # --- Memory Dream Interpreter Integration ---
 from apps.api.routers.memory_dream_interpreter import router as memory_interpreter_router
-app.include_router(memory_interpreter_router, prefix="/api/v1/memora")
+app.include_router(memory_interpreter_router, prefix="/api/v1")
 
 # --- Real Context Mode Engine Integration ---
 from apps.api.routers.real_context_routes import router as real_context_router
