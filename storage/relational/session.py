@@ -1,6 +1,12 @@
 """
 Database Engine & Session Management for Memora
-Supports PostgreSQL as primary with automatic fallback/test SQLite support.
+Supports PostgreSQL and Oracle Autonomous Database as authoritative stores.
+
+There is no implicit SQLite fallback. If the configured authoritative database
+cannot be reached, engine creation raises instead of silently opening a
+process-local database that would accept writes and lose them on restart.
+SQLite is still supported when it is named explicitly in ``DATABASE_URL`` (local
+development and the test suite).
 """
 import os
 import logging
@@ -51,11 +57,13 @@ def validate_production_database_url(url: str) -> None:
 def storage_ready() -> bool:
     return not production_mode() or _active_storage_durable
 
-def get_effective_sqlite_fallback() -> str:
-    """Ensure Linux tmpfs (/dev/shm) is strictly used in RAM to guarantee zero disk persistence."""
-    if os.path.exists("/dev/shm"):
-        return "sqlite:////dev/shm/memora.db"
-    return settings.SQLITE_FALLBACK_URL
+
+def _unavailable(backend: str, exc: Exception) -> RuntimeError:
+    """Build the fail-closed error used when an authoritative store is down."""
+    return RuntimeError(
+        f"Memora {backend} is unavailable; refusing to open a local SQLite fallback. "
+        "Fix DATABASE_URL / network access and restart Memora."
+    )
 
 
 def _ensure_sqlite_dir(url: str):
@@ -154,14 +162,9 @@ def create_db_engine():
             _active_storage_durable = True
             return engine
         except Exception as e:
-            if production_mode() or not settings.USE_SQLITE_FALLBACK:
-                raise RuntimeError("Memora Oracle Database is unavailable; refusing SQLite fallback.") from e
-            fallback_url = get_effective_sqlite_fallback()
-            _ensure_sqlite_dir(fallback_url)
-            logger.warning("Oracle DB unavailable; falling back to SQLite in non-production mode.")
-            _active_storage_backend = "sqlite_fallback"
+            _active_storage_backend = "unavailable"
             _active_storage_durable = False
-            return _new_sqlite_engine(fallback_url)
+            raise _unavailable("Oracle database", e) from e
 
     # 2. PostgreSQL connection
     if db_url.startswith("postgresql"):
@@ -187,16 +190,11 @@ def create_db_engine():
             _active_storage_durable = True
             return engine
         except Exception as e:
-            # A production write must never drift to a process-local database when
-            # the canonical PostgreSQL store is unavailable.
-            if production_mode() or not settings.USE_SQLITE_FALLBACK:
-                raise RuntimeError("Memora PostgreSQL is unavailable; refusing SQLite fallback.") from e
-            fallback_url = get_effective_sqlite_fallback()
-            _ensure_sqlite_dir(fallback_url)
-            logger.warning("PostgreSQL unavailable; falling back to SQLite in non-production mode.")
-            _active_storage_backend = "sqlite_fallback"
+            # A write must never drift to a process-local database when the
+            # canonical PostgreSQL store is unavailable.
+            _active_storage_backend = "unavailable"
             _active_storage_durable = False
-            return _new_sqlite_engine(fallback_url)
+            raise _unavailable("PostgreSQL database", e) from e
 
     # 2. Turso cloud database connection through Turso's SQLAlchemy dialect.
     if "turso.io" in db_url or db_url.startswith(("libsql://", "sqlite+libsql://")):
@@ -217,14 +215,9 @@ def create_db_engine():
             _active_storage_durable = True
             return engine
         except Exception as e:
-            fallback_url = get_effective_sqlite_fallback()
-            logger.warning(
-                "Turso ORM connection unavailable (%s); local SQLite fallback is non-authoritative.",
-                type(e).__name__,
-            )
-            _active_storage_backend = "sqlite_fallback"
+            _active_storage_backend = "unavailable"
             _active_storage_durable = False
-            return _new_sqlite_engine(fallback_url)
+            raise _unavailable("Turso database", e) from e
 
     # 3. Standard SQLite connection
     _active_storage_backend = "sqlite"
@@ -234,6 +227,179 @@ def create_db_engine():
 
 engine = create_db_engine()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+def _add_scope_columns(engine, columns: set[str], dialect: str) -> None:
+    """Add the scope tier columns to a schema created before they existed.
+
+    ``create_all`` never alters an existing table, so an upgrade from an older
+    Memora schema would leave ``memory_records`` without the two columns every
+    read path now selects. Add them here (idempotently) rather than requiring a
+    manual DBA step. Values are backfilled immediately afterwards.
+    """
+    statements: list[str] = []
+    if "scope" not in columns:
+        if dialect == "oracle":
+            statements.append(
+                "ALTER TABLE memory_records ADD (scope VARCHAR2(9))"
+            )
+        else:
+            statements.append(
+                "ALTER TABLE memory_records ADD COLUMN scope VARCHAR(9)"
+            )
+    if "owner_agent" not in columns:
+        if dialect == "oracle":
+            statements.append(
+                "ALTER TABLE memory_records ADD (owner_agent VARCHAR2(128))"
+            )
+        else:
+            statements.append(
+                "ALTER TABLE memory_records ADD COLUMN owner_agent VARCHAR(128)"
+            )
+
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
+def _backfill_scope_columns(engine) -> None:
+    """Derive scope/owner for rows that pre-date the columns, then constrain."""
+    from storage.relational.models import SHARED_WITH_ALL_AGENTS
+
+    dialect = engine.dialect.name
+    with engine.begin() as connection:
+        # owner_agent: the owning agent's name, resolved from the FK first and
+        # from the identity-scope column as a fallback.
+        connection.execute(text(
+            "UPDATE memory_records SET owner_agent = ("
+            "  SELECT LOWER(a.name) FROM agents a WHERE a.id = memory_records.owner_id"
+            ") WHERE owner_agent IS NULL AND EXISTS ("
+            "  SELECT 1 FROM agents a WHERE a.id = memory_records.owner_id"
+            ")"
+        ))
+        connection.execute(text(
+            "UPDATE memory_records SET owner_agent = LOWER(agent_id) "
+            "WHERE owner_agent IS NULL AND agent_id IS NOT NULL"
+        ))
+        connection.execute(text(
+            "UPDATE memory_records SET owner_agent = 'friday' WHERE owner_agent IS NULL"
+        ))
+
+        # scope: the namespace type already encoded the historical visibility.
+        connection.execute(text(
+            "UPDATE memory_records SET scope = 'UNIVERSAL' WHERE scope IS NULL "
+            "AND namespace_id IN ("
+            "  SELECT id FROM namespaces WHERE type IN ('universe-global', 'public')"
+            ")"
+        ))
+        connection.execute(text(
+            "UPDATE memory_records SET scope = 'SHARED' WHERE scope IS NULL "
+            "AND namespace_id IN ("
+            "  SELECT id FROM namespaces WHERE type = 'team-shared'"
+            ")"
+        ))
+        connection.execute(text(
+            "UPDATE memory_records SET scope = 'PRIVATE' WHERE scope IS NULL"
+        ))
+
+        # SHARED rows written under an open team namespace keep their historical
+        # meaning: readable by every agent in the tenant.
+        open_shared = [
+            row[0]
+            for row in connection.execute(text(
+                "SELECT m.id FROM memory_records m "
+                "JOIN namespaces n ON n.id = m.namespace_id "
+                "WHERE m.scope = 'SHARED' AND n.type = 'team-shared'"
+            )).fetchall()
+        ]
+        already_listed = {
+            row[0]
+            for row in connection.execute(text(
+                "SELECT DISTINCT memory_id FROM memory_shared_agents"
+            )).fetchall()
+        }
+        missing = [memory_id for memory_id in open_shared if memory_id not in already_listed]
+        if missing:
+            for memory_id in missing:
+                connection.execute(
+                    text(
+                        "INSERT INTO memory_shared_agents "
+                        "(id, tenant_id, memory_id, agent_name, granted_by, created_at) "
+                        "SELECT :id, m.tenant_id, m.id, :agent_name, :granted_by, CURRENT_TIMESTAMP "
+                        "FROM memory_records m WHERE m.id = :memory_id"
+                    ),
+                    {
+                        "id": __import__("uuid").uuid4().hex,
+                        "memory_id": memory_id,
+                        "agent_name": SHARED_WITH_ALL_AGENTS,
+                        "granted_by": "memora",
+                    },
+                )
+
+    # Enforce NOT NULL where the dialect can do it in place. SQLite cannot
+    # modify a column, and in any case the backfill above leaves no NULLs.
+    if dialect in {"oracle", "postgresql"}:
+        with engine.begin() as connection:
+            for column in ("scope", "owner_agent"):
+                try:
+                    if dialect == "oracle":
+                        connection.execute(text(
+                            f"ALTER TABLE memory_records MODIFY ({column} NOT NULL)"
+                        ))
+                    else:
+                        connection.execute(text(
+                            f"ALTER TABLE memory_records ALTER COLUMN {column} SET NOT NULL"
+                        ))
+                except Exception:
+                    # Oracle raises ORA-01442 when the column is already NOT NULL.
+                    logger.debug("NOT NULL already enforced for memory_records.%s", column)
+
+
+def _ensure_scope_indexes(engine, tables: set[str]) -> None:
+    """Create the (scope, owner_agent) index on pre-existing schemas."""
+    if "memory_records" not in tables:
+        return
+    indexes = {
+        (index["name"] or "").lower()
+        for index in inspect(engine).get_indexes("memory_records")
+    }
+    if "ix_memory_scope_owner" in indexes:
+        return
+
+    dialect = engine.dialect.name
+    if dialect == "oracle":
+        ddl = """
+        BEGIN
+            EXECUTE IMMEDIATE 'CREATE INDEX ix_memory_scope_owner ON memory_records (scope, owner_agent)';
+        EXCEPTION
+            WHEN OTHERS THEN
+                IF SQLCODE != -955 THEN RAISE; END IF;
+        END;
+        """
+        with engine.begin() as connection:
+            connection.execute(text(ddl))
+    else:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_memory_scope_owner "
+                "ON memory_records (scope, owner_agent)"
+            ))
+
+
+def _ensure_scope_constraint(engine, tables: set[str]) -> None:
+    """Add the scope CHECK constraint where the dialect supports it in place."""
+    if "memory_records" not in tables or engine.dialect.name != "oracle":
+        return
+    ddl = """
+    BEGIN
+        EXECUTE IMMEDIATE 'ALTER TABLE memory_records ADD CONSTRAINT ck_memory_scope CHECK (scope IN (''PRIVATE'', ''SHARED'', ''UNIVERSAL''))';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE NOT IN (-2264, -2260) THEN RAISE; END IF;
+    END;
+    """
+    with engine.begin() as connection:
+        connection.execute(text(ddl))
+
 
 def init_db():
     """Initialize a fresh ORM schema without leaving it untracked by Alembic."""
@@ -248,6 +414,24 @@ def init_db():
     has_memora_tables = bool(existing_tables & set(Base.metadata.tables))
     has_alembic_version = "alembic_version" in existing_tables
     Base.metadata.create_all(bind=engine)
+
+    # A schema created before the scope tier existed needs the new columns and
+    # their values before any ORM query selects them. `create_all` above only
+    # created the new `memory_shared_agents` table.
+    if "memory_records" in existing_tables:
+        dialect = engine.dialect.name
+        columns = {
+            column["name"].lower()
+            for column in inspect(engine).get_columns("memory_records")
+        }
+        added = bool({"scope", "owner_agent"} - columns)
+        if added:
+            _add_scope_columns(engine, columns, dialect)
+        # Backfill is idempotent: it only touches NULL values, so running it on
+        # every boot costs one indexed UPDATE.
+        _backfill_scope_columns(engine)
+        _ensure_scope_indexes(engine, existing_tables)
+        _ensure_scope_constraint(engine, existing_tables)
 
     if not has_memora_tables and not has_alembic_version:
         # A brand-new database has no data migrations to replay. `create_all`
@@ -269,6 +453,16 @@ def init_db():
         logger.warning(
             "Existing Memora tables have no Alembic version; refusing to auto-stamp an unverified schema."
         )
+
+    # Bootstrap the vector store. On Oracle this creates the native
+    # VECTOR(384, FLOAT32) table plus its HNSW neighbour-graph index; elsewhere
+    # it creates the portable emulation table used by tests and local dev.
+    try:
+        from storage.vector.oracle_vector_adapter import oracle_vector_adapter
+
+        oracle_vector_adapter.ensure_schema()
+    except Exception as exc:  # pragma: no cover - defensive bootstrap
+        logger.warning("Vector store bootstrap skipped: %s", exc)
 
 def get_db() -> Generator[Session, None, None]:
     """Dependency for obtaining a database session."""

@@ -6,6 +6,7 @@ import enum
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from sqlalchemy import (
+    CheckConstraint,
     String,
     Text,
     Float,
@@ -17,10 +18,59 @@ from sqlalchemy import (
     Enum as SQLEnum,
     Index,
     UniqueConstraint,
+    event,
     true,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, Session
 from storage.relational.base import Base, generate_uuid, get_utc_now
+
+
+#: Sentinel stored in ``memory_shared_agents.agent_name`` meaning "every agent
+#: in the tenant may read this SHARED memory".
+SHARED_WITH_ALL_AGENTS = "*"
+
+
+class MemoryScopeType(str, enum.Enum):
+    """Memory visibility tier, independent of the namespace hierarchy.
+
+    PRIVATE   - readable and writable only by ``owner_agent``.
+    SHARED    - readable by the agents listed in ``memory_shared_agents``
+                (or by everyone when the ``*`` sentinel is present); writable
+                only by ``owner_agent``.
+    UNIVERSAL - readable by every agent in the tenant; writable only by the
+                Memora service identity / administrative paths.
+
+    ``NamespaceType`` describes where a memory physically lives; this enum
+    describes who may see it. Keeping them separate lets one schema host all
+    three tiers without per-agent schemas.
+    """
+
+    PRIVATE = "PRIVATE"
+    SHARED = "SHARED"
+    UNIVERSAL = "UNIVERSAL"
+
+
+#: Derivation used whenever a writer does not state a scope explicitly. It is
+#: the historical access semantics of each namespace type, encoded once so the
+#: ORM hook and the write pipeline cannot drift apart.
+_NAMESPACE_SCOPE_DEFAULTS = {
+    "universe-global": MemoryScopeType.UNIVERSAL,
+    "public": MemoryScopeType.UNIVERSAL,
+    "team-shared": MemoryScopeType.SHARED,
+    "agent-private": MemoryScopeType.PRIVATE,
+    "project-private": MemoryScopeType.PRIVATE,
+}
+
+
+def normalize_agent_name(value: Optional[str]) -> str:
+    """Canonical agent handle used by the access predicate."""
+    return (value or "").strip().lower()
+
+
+def scope_for_namespace_type(namespace_type: Any) -> MemoryScopeType:
+    raw = getattr(namespace_type, "value", namespace_type)
+    return _NAMESPACE_SCOPE_DEFAULTS.get(str(raw or "").strip().lower(), MemoryScopeType.PRIVATE)
+
 
 class NamespaceType(str, enum.Enum):
     AGENT_PRIVATE = "agent-private"
@@ -176,6 +226,16 @@ class MemoryRecord(Base):
     idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     namespace_id: Mapped[str] = mapped_column(String(64), ForeignKey("namespaces.id", ondelete="CASCADE"), nullable=False, index=True)
     owner_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    # Scope tier + owner handle are the authorization pair evaluated by every
+    # read path. ``owner_agent`` deliberately stores the lower-case agent name,
+    # not an FK: authorization is name-based in the API, and the name survives
+    # agent-row re-creation during bootstrap.
+    scope: Mapped[MemoryScopeType] = mapped_column(
+        SQLEnum(MemoryScopeType, values_callable=lambda obj: [e.value for e in obj], name="memory_scope_type"),
+        nullable=False,
+        default=MemoryScopeType.PRIVATE,
+    )
+    owner_agent: Mapped[str] = mapped_column(String(128), nullable=False, default="friday")
     memory_type: Mapped[MemoryType] = mapped_column(
         SQLEnum(MemoryType, values_callable=lambda obj: [e.value for e in obj]),
         nullable=False,
@@ -209,8 +269,13 @@ class MemoryRecord(Base):
     audit_logs: Mapped[List["AuditLog"]] = relationship("AuditLog", back_populates="memory")
     outgoing_relationships: Mapped[List["MemoryRelationship"]] = relationship("MemoryRelationship", foreign_keys="MemoryRelationship.source_memory_id", back_populates="source_memory", cascade="all, delete-orphan")
     incoming_relationships: Mapped[List["MemoryRelationship"]] = relationship("MemoryRelationship", foreign_keys="MemoryRelationship.target_memory_id", back_populates="target_memory", cascade="all, delete-orphan")
+    shared_agents: Mapped[List["MemorySharedAgent"]] = relationship("MemorySharedAgent", back_populates="memory", cascade="all, delete-orphan")
 
     __table_args__ = (
+        CheckConstraint(
+            "scope IN ('PRIVATE', 'SHARED', 'UNIVERSAL')",
+            name="ck_memory_scope",
+        ),
         # Idempotency is per (tenant, writing agent). NULL is distinct from NULL in
         # both SQLite and PostgreSQL unique indexes, so ordinary writes that carry no
         # idempotency key are never constrained against each other.
@@ -226,10 +291,81 @@ class MemoryRecord(Base):
         Index("ix_memory_identity_agent", "tenant_id", "agent_id"),
         Index("ix_memory_identity_task", "tenant_id", "task_id"),
         Index("ix_memory_identity_ws", "tenant_id", "workspace_id"),
+        Index("ix_memory_scope_owner", "scope", "owner_agent"),
     )
 
     def __repr__(self) -> str:
         return f"<MemoryRecord(id={self.id}, type={self.memory_type}, state={self.lifecycle_state})>"
+
+
+class MemorySharedAgent(Base):
+    """Per-memory read allow-list for the SHARED scope.
+
+    A row is ``(memory_id, agent_name)``. The sentinel ``*`` means the memory is
+    shared with every agent in the tenant. A join table (instead of a JSON/CLOB
+    column on ``memory_records``) keeps membership indexable on Oracle, avoids
+    read-modify-write races on revocation, and cascades with the memory row.
+    """
+
+    __tablename__ = "memory_shared_agents"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=generate_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default", index=True)
+    memory_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("memory_records.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    agent_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    granted_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now, nullable=False)
+
+    memory: Mapped["MemoryRecord"] = relationship("MemoryRecord", back_populates="shared_agents")
+
+    __table_args__ = (
+        UniqueConstraint("memory_id", "agent_name", name="uq_memory_shared_agent"),
+        Index("ix_memory_shared_lookup", "tenant_id", "agent_name"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<MemorySharedAgent(memory_id={self.memory_id}, agent={self.agent_name})>"
+
+
+@event.listens_for(Session, "before_flush")
+def _stamp_memory_scope(session: Session, _flush_context, _instances) -> None:
+    """Derive ``scope``/``owner_agent`` for records created without them.
+
+    Most of the codebase -- and the whole test suite -- constructs
+    ``MemoryRecord`` rows directly. Requiring every call site to pass the new
+    columns would have produced PRIVATE/``friday`` rows for records that really
+    belong to another agent or to an open namespace, silently changing who can
+    read them. Deriving here keeps legacy construction semantics identical to
+    what the namespace/policy layer already implied, while the API write path
+    still stamps an explicit scope it validated.
+    """
+    pending_agents = {obj.id: obj for obj in session.new if isinstance(obj, Agent)}
+    pending_namespaces = {obj.id: obj for obj in session.new if isinstance(obj, Namespace)}
+    for obj in list(session.new) + list(session.dirty):
+        if not isinstance(obj, MemoryRecord):
+            continue
+
+        if not obj.owner_agent:
+            candidate = normalize_agent_name(obj.agent_id)
+            if not candidate and obj.owner is not None:
+                candidate = normalize_agent_name(obj.owner.name)
+            if not candidate and obj.owner_id:
+                owner = pending_agents.get(obj.owner_id)
+                if owner is None:
+                    owner = session.get(Agent, obj.owner_id)
+                if owner is not None:
+                    candidate = normalize_agent_name(owner.name)
+            obj.owner_agent = candidate or "friday"
+
+        if obj.scope is None:
+            namespace = obj.namespace
+            if namespace is None and obj.namespace_id:
+                namespace = pending_namespaces.get(obj.namespace_id)
+                if namespace is None:
+                    namespace = session.get(Namespace, obj.namespace_id)
+            obj.scope = scope_for_namespace_type(getattr(namespace, "type", None))
 
 class MemoryRelationship(Base):
     """

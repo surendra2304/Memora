@@ -9,6 +9,7 @@ from sqlalchemy import or_
 import logging
 
 from storage.relational.models import MemoryRelationship, MemoryRecord, LifecycleState
+from storage.relational.access_scope import record_is_visible, visible_memory_predicate
 from core.memory.pipeline.entity_extractor import EntityExtractor
 from core.policy.engine import PolicyEngine
 
@@ -119,6 +120,11 @@ class GraphService:
             MemoryRecord.id != memory_record.id,
             MemoryRecord.tenant_id == getattr(memory_record, "tenant_id", "default"),
             MemoryRecord.lifecycle_state.in_(_LINKABLE_STATES)
+        ).filter(
+            # Never wire the new memory to a row its author cannot read: the
+            # edge would disclose that the row exists, and traversal would hand
+            # back its id.
+            visible_memory_predicate(getattr(memory_record, "owner_agent", None))
         ).order_by(MemoryRecord.created_at.desc()).limit(50).all()
 
         created_edges = []
@@ -197,6 +203,9 @@ class GraphService:
                 MemoryRecord.tenant_id == actor_tenant,
             ).first()
             if record is None:
+                readable[candidate_id] = False
+                return False
+            if not record_is_visible(record, getattr(actor, "name", None)):
                 readable[candidate_id] = False
                 return False
             decision = PolicyEngine.evaluate_access(

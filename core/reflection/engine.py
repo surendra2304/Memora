@@ -51,6 +51,7 @@ from storage.relational.models import (
     MemoryType,
     NamespaceType,
 )
+from storage.relational.access_scope import record_is_visible
 
 logger = logging.getLogger(__name__)
 
@@ -273,6 +274,8 @@ class ReflectionEngine:
 
         for record in records:
             if record.tenant_id != actor_tenant or record.namespace is None:
+                continue
+            if not record_is_visible(record, actor.name):
                 continue
             namespace = record.namespace
             cached = namespace_access.get(namespace.id)

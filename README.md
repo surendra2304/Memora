@@ -209,11 +209,7 @@ All error responses (4xx and 5xx) conform to a standardized error envelope:
 | `PORT` | integer | `8000` | Internal container HTTP port (Host: `8006`). |
 | `HOST` | string | `0.0.0.0` | Listening network interface. |
 | `DEBUG` | boolean | `false` | Enable verbose debugging and OpenAPI schema reload. |
-| `DATABASE_URL` | string | required PostgreSQL 18 DSN in production | Primary authoritative relational database connection URL. |
-| `SQLITE_FALLBACK_URL` | string | `sqlite:///./data/memora.db` | SQLite fallback database path when primary is unreachable. |
-| `USE_SQLITE_FALLBACK` | boolean | `false` | Development-only fallback; production refuses SQLite fallback. |
-| `MEMORA_SQLITE_AUTHORITATIVE` | boolean | `false` | Legacy SQLite durability flag; must remain false in production. |
-| `MEMORA_SQLITE_BUSY_TIMEOUT` | float | `30` | SQLite busy timeout in seconds. |
+| `DATABASE_URL` | string | required Oracle DSN in production | Authoritative Oracle Autonomous Database connection URL (`MEMORA` login/schema). PostgreSQL and SQLite are not supported. |
 | `CIRCUIT_BREAKER_FAILURE_THRESHOLD` | integer | `5` | Consecutive failures before circuit opens. |
 | `CIRCUIT_BREAKER_RECOVERY_TIMEOUT` | float | `30.0` | Cool-off seconds before probe attempt. |
 | `HTTP_CLIENT_TIMEOUT_SECONDS` | float | `10.0` | Default timeout for async pooled HTTP client. |

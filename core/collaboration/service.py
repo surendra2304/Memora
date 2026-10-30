@@ -46,6 +46,7 @@ from storage.relational.models import (
     MemoryRecord,
     Namespace,
 )
+from storage.relational.access_scope import share_record_with
 
 logger = logging.getLogger(__name__)
 
@@ -407,6 +408,9 @@ class CollaborationService:
                 tenant_id=record.tenant_id,
                 commit=False,
             )
+            # The namespace grant only opens the container. Add the recipient to
+            # the record's SHARED allow-list so the scope tier agrees with it.
+            share_record_with(db, record, recipient.name, granted_by=contributor.name)
 
             PolicyEngine.log_audit_decision(
                 db,

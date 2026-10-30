@@ -14,12 +14,16 @@ class Settings(BaseSettings):
     PORT: int = 8000
     HOST: str = "0.0.0.0"
 
-    # Database
-    DATABASE_URL: str = "sqlite:////dev/shm/memora.db" if os.path.exists("/dev/shm") else "sqlite:///./data/memora.db"
+    # Database: Oracle Autonomous Database only. Empty default so a missing
+    # configuration fails closed instead of silently opening a SQLite file.
+    DATABASE_URL: str = ""
     TURSO_DATABASE_URL: Optional[str] = None
     TURSO_AUTH_TOKEN: Optional[str] = None
-    SQLITE_FALLBACK_URL: str = "sqlite:////dev/shm/memora.db" if os.path.exists("/dev/shm") else "sqlite:///./data/memora.db"
-    USE_SQLITE_FALLBACK: bool = True
+    # Deprecated: retained only so existing deployment files that set these
+    # keys still parse. Memora no longer opens a SQLite fallback when the
+    # configured authoritative database is unreachable -- it fails closed.
+    SQLITE_FALLBACK_URL: Optional[str] = None
+    USE_SQLITE_FALLBACK: bool = False
     DB_ECHO: bool = False
 
     # Redis
@@ -86,4 +90,11 @@ def validate_startup_config() -> None:
             raise RuntimeError(
                 f"Production startup configuration error: Missing required setting(s): {', '.join(missing)}. "
                 "Review your environment configuration or refer to .env.example."
+            )
+
+        dsn = (settings.DATABASE_URL or os.getenv("DATABASE_URL") or "").strip().lower()
+        if dsn.startswith(("sqlite", "postgresql", "postgres://")):
+            raise RuntimeError(
+                "Production startup configuration error: DATABASE_URL must be an Oracle "
+                "Autonomous Database DSN. SQLite and PostgreSQL are not supported backends."
             )

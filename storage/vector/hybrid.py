@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from storage.relational.models import MemoryRecord, Namespace, LifecycleState, MemoryType
+from storage.relational.access_scope import visible_memory_predicate
 from storage.vector.qdrant_adapter import vector_adapter, VectorSearchResult
 from storage.vector.embedding import EmbeddingGenerator
 
@@ -24,6 +25,7 @@ def hybrid_vector_relational_search(
     namespace_path: Optional[str] = None,
     user_id: Optional[str] = None,
     agent_id: Optional[str] = None,
+    caller_agent: Optional[str] = None,
     limit: int = 10,
     score_threshold: float = 0.30,
     fail_soft: bool = True,
@@ -74,6 +76,9 @@ def hybrid_vector_relational_search(
 
     if memory_types:
         sql_query = sql_query.filter(MemoryRecord.memory_type.in_(memory_types))
+    if caller_agent:
+        # `agent_id` narrows the identity scope; it must never widen visibility.
+        sql_query = sql_query.filter(visible_memory_predicate(caller_agent))
     if namespace_path:
         sql_query = sql_query.filter(Namespace.path == namespace_path)
     if user_id:

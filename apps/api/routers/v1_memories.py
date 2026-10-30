@@ -16,7 +16,13 @@ from storage.relational.models import (
     MemoryRecord,
     MemoryType,
     LifecycleState,
-    Namespace
+    Namespace,
+    MemoryScopeType,
+)
+from storage.relational.access_scope import (
+    may_mutate_record,
+    record_is_visible,
+    share_record_with,
 )
 from core.memory.schemas import MemoryRecordRead, MemoryQuery, MemoryPromoteRequest
 from core.memory.pipeline.write_service import MemoryWriteService, MemoryPipelineError
@@ -110,6 +116,12 @@ def _require_memory_read_access(db: Session, memory_id: str, actor_name: str, pu
             detail=f"Memory with ID '{memory_id}' not found.",
         )
 
+    if not record_is_visible(record, actor.name):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Memory with ID '{memory_id}' not found.",
+        )
+
     decision = PolicyEngine.evaluate_access(
         db,
         actor=actor,
@@ -141,6 +153,15 @@ class MemoryWriteRequest(BaseModel):
     confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     importance: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     expires_at: Optional[datetime] = Field(default=None, description="Temporal expiry timestamp")
+    scope: Optional[MemoryScopeType] = Field(
+        default=None,
+        description="Visibility tier: PRIVATE, SHARED, or UNIVERSAL (default derives from the target namespace)",
+    )
+    shared_with: Optional[List[str]] = Field(
+        default=None,
+        max_length=64,
+        description="Agent handles allowed to read this memory when scope is SHARED",
+    )
     allow_duplicates: bool = Field(default=False)
 
 class MemoryWriteResponse(BaseModel):
@@ -242,6 +263,8 @@ def write_memory_event(
             confidence=req.confidence,
             importance=req.importance,
             expires_at=req.expires_at,
+            scope=req.scope,
+            shared_with=req.shared_with,
             purpose=purpose,
             allow_duplicates=req.allow_duplicates
         )
@@ -521,6 +544,14 @@ def share_memory_endpoint(
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Memory not found.")
 
+    if not record_is_visible(record, caller.name):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Memory not found.")
+    if not may_mutate_record(record, caller.name):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the agent that owns a memory may share it.",
+        )
+
     requested_actions = list(dict.fromkeys(action.strip().lower() for action in req.actions))
     allowed_share_actions = {"read", "query", "write"}
     if not requested_actions or any(action not in allowed_share_actions for action in requested_actions):
@@ -588,6 +619,10 @@ def share_memory_endpoint(
             tenant_id=caller.tenant_id,
             commit=False,
         )
+        # Namespace grants alone do not widen the record's scope tier. Add the
+        # recipient to the SHARED allow-list and escalate a PRIVATE record to
+        # SHARED, so the authorization model and the grant agree.
+        share_record_with(db, record, target.name, granted_by=caller.name)
         PolicyEngine.log_audit_decision(
             db,
             PolicyDecision(

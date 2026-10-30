@@ -4,7 +4,7 @@ Pydantic Schemas for Memora API & Memory Service
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, Field, ConfigDict
-from storage.relational.models import MemoryType, LifecycleState, NamespaceType
+from storage.relational.models import MemoryType, LifecycleState, NamespaceType, MemoryScopeType
 
 class AgentCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=128, description="Unique agent handle (e.g. 'friday', 'forge')")
@@ -96,11 +96,25 @@ class MemoryRecordCreate(BaseModel):
     namespace_id: Optional[str] = Field(default=None, max_length=64)
     owner_name: Optional[str] = Field(default=None, max_length=128)
     owner_id: Optional[str] = Field(default=None, max_length=64)
+    owner_agent: Optional[str] = Field(default=None, max_length=128, description="Agent that owns/authorizes this memory (scope enforcement)")
     source: str = Field(default="unknown")
     provenance: Optional[Dict[str, Any]] = Field(default_factory=dict)
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     importance: float = Field(default=0.5, ge=0.0, le=1.0)
     lifecycle_state: Optional[LifecycleState] = Field(default=LifecycleState.CANDIDATE)
+    #: Visibility tier. When omitted it is derived from the namespace type, so
+    #: `memora://<agent>/private` stays owner-only and `memora://universe/global`
+    #: stays fabric-wide. UNIVERSAL authoring is reserved for the Memora
+    #: service identity.
+    scope: Optional[MemoryScopeType] = Field(
+        default=None,
+        description="Visibility tier: PRIVATE, SHARED, or UNIVERSAL (default derives from the namespace)",
+    )
+    shared_with: Optional[List[str]] = Field(
+        default=None,
+        max_length=64,
+        description="Agent handles allowed to read this memory when scope is SHARED",
+    )
     valid_from: Optional[datetime] = None
     valid_until: Optional[datetime] = None
     expires_at: Optional[datetime] = None
@@ -111,6 +125,8 @@ class MemoryRecordUpdate(BaseModel):
     confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     importance: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     lifecycle_state: Optional[LifecycleState] = None
+    scope: Optional[MemoryScopeType] = None
+    shared_with: Optional[List[str]] = None
     provenance: Optional[Dict[str, Any]] = None
     valid_from: Optional[datetime] = None
     valid_until: Optional[datetime] = None
@@ -130,6 +146,9 @@ class MemoryRecordRead(BaseModel):
     idempotency_key: Optional[str] = None
     namespace_id: str
     owner_id: str
+    owner_agent: str = "friday"
+    scope: MemoryScopeType = MemoryScopeType.PRIVATE
+    shared_with: Optional[List[str]] = None
     memory_type: MemoryType
     content_text: str
     source: str

@@ -10,7 +10,20 @@ import hashlib
 import time
 import logging
 
-from storage.relational.models import MemoryRecord, MemoryType, LifecycleState, NamespaceType
+from storage.relational.models import (
+    MemoryRecord,
+    MemoryType,
+    LifecycleState,
+    NamespaceType,
+    MemoryScopeType,
+    normalize_agent_name,
+    scope_for_namespace_type,
+)
+from storage.relational.access_scope import (
+    SERVICE_AGENT,
+    grant_shared_access,
+    share_record_with_all,
+)
 from storage.relational.session import storage_receipt
 from storage.vector.qdrant_adapter import vector_adapter
 from storage.vector.embedding import EmbeddingGenerator
@@ -98,6 +111,8 @@ class MemoryWriteService:
         importance: Optional[float] = None,
         purpose: Optional[str] = None,
         allow_duplicates: bool = False,
+        scope: Optional[MemoryScopeType] = None,
+        shared_with: Optional[List[str]] = None,
         valid_from: Optional[datetime] = None,
         valid_until: Optional[datetime] = None,
         expires_at: Optional[datetime] = None
@@ -351,6 +366,47 @@ class MemoryWriteService:
                 db.commit()
                 raise PermissionDeniedError(policy_decision.reason)
 
+            # -------------------------------------------------------------
+            # SCOPE TIER (PRIVATE / SHARED / UNIVERSAL)
+            # -------------------------------------------------------------
+            # The namespace says where the row lives; the scope says who may
+            # read it. Default to the namespace's historical semantics, and
+            # only let the Memora service identity author UNIVERSAL rows.
+            resolved_scope = (
+                MemoryScopeType(scope)
+                if scope is not None
+                else scope_for_namespace_type(namespace.type)
+            )
+            if resolved_scope == MemoryScopeType.UNIVERSAL and actor.name != SERVICE_AGENT:
+                PolicyEngine.log_audit_decision(
+                    db,
+                    PolicyDecision(
+                        allowed=False,
+                        reason="UNIVERSAL memories may only be authored by the Memora service identity.",
+                        rule_matched="MEMORY_SCOPE_UNIVERSAL_AUTHORING_DENIED",
+                        dimensions={"actor": actor.name, "scope": resolved_scope.value},
+                    ),
+                    actor_id=actor.id,
+                    tenant_id=resolved_tenant,
+                )
+                db.commit()
+                raise PermissionDeniedError(
+                    "Only the Memora service identity may author UNIVERSAL memories."
+                )
+
+            share_targets: List[str] = []
+            for raw_name in (shared_with or []):
+                target_name = normalize_agent_name(raw_name)
+                if not target_name:
+                    raise MemoryPipelineError("shared_with entries must be non-empty agent names.")
+                if target_name not in share_targets:
+                    share_targets.append(target_name)
+            if share_targets and resolved_scope == MemoryScopeType.UNIVERSAL:
+                # Already readable by everyone in the tenant.
+                share_targets = []
+            elif share_targets and resolved_scope == MemoryScopeType.PRIVATE:
+                resolved_scope = MemoryScopeType.SHARED
+
             def _require_duplicate_read_access(existing_record: MemoryRecord) -> PolicyDecision:
                 read_decision = PolicyEngine.evaluate_access(
                     db,
@@ -548,6 +604,8 @@ class MemoryWriteService:
                 idempotency_key=idempotency_key,
                 namespace_id=namespace.id,
                 owner_id=actor.id,
+                scope=resolved_scope,
+                owner_agent=normalize_agent_name(actor.name),
                 memory_type=resolved_type,
                 content_text=normalized_content,
                 content_hash=content_hash,
@@ -564,6 +622,17 @@ class MemoryWriteService:
             db.add(record)
             try:
                 db.flush()
+                if resolved_scope == MemoryScopeType.SHARED:
+                    if share_targets:
+                        for target_name in share_targets:
+                            grant_shared_access(
+                                db, record, target_name, granted_by=actor.name
+                            )
+                    elif scope_for_namespace_type(namespace.type) == MemoryScopeType.SHARED:
+                        # A `team-shared` namespace keeps its historical meaning:
+                        # readable by the whole team, still gated by namespace
+                        # policy/grants. Encode that as the `*` membership row.
+                        share_record_with_all(db, record, granted_by=actor.name)
                 # Safety Invariant 2: Cryptographic Provenance (HMAC-SHA256 signature)
                 sig = compute_memory_signature(
                     record_or_dict={

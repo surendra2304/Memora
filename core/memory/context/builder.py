@@ -19,6 +19,7 @@ from storage.relational.models import (
 )
 from core.identity.service import IdentityService
 from core.policy.engine import PolicyEngine
+from storage.relational.access_scope import visible_memory_predicate
 from core.memory.search_service import SearchService, SearchResultItem
 from core.memory.context.reranker import ContextReranker
 from core.memory.context.budgeter import ContextBudgeter
@@ -163,6 +164,9 @@ class ContextBuilderService:
             # boundary and made this O(all tenants) per request.
             MemoryRecord.tenant_id == getattr(actor, "tenant_id", "default"),
         )
+        # Only prefetch rows inside the caller's scope tier (PRIVATE owner,
+        # SHARED allow-list, or UNIVERSAL).
+        exp_query = exp_query.filter(visible_memory_predicate(actor.name))
         if user_id:
             exp_query = exp_query.filter(MemoryRecord.user_id == user_id)
         if workspace_id:

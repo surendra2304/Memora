@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
 from storage.relational.models import MemoryRecord, MemoryType, LifecycleState
+from storage.relational.access_scope import visible_memory_predicate
 from core.identity.service import IdentityService
 from core.memory.pipeline.write_service import MemoryWriteService
 
@@ -191,6 +192,8 @@ class ExperienceLearnerService:
             MemoryRecord.owner_id == actor.id,
             MemoryRecord.memory_type == MemoryType.EXPERIENCE,
             MemoryRecord.lifecycle_state == LifecycleState.ACTIVE
+        ).filter(
+            visible_memory_predicate(actor.name)
         ).order_by(MemoryRecord.importance.desc(), MemoryRecord.created_at.desc())
 
         records = query.limit(limit * 2).all()

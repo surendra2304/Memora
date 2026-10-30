@@ -14,7 +14,19 @@ from storage.relational.models import (
     Namespace,
     MemoryType,
     LifecycleState,
+    MemoryScopeType,
     DeletionTombstone,
+    normalize_agent_name,
+    scope_for_namespace_type,
+)
+from storage.relational.access_scope import (
+    SERVICE_AGENT,
+    grant_shared_access,
+    may_mutate_record,
+    record_is_visible,
+    share_record_with,
+    share_record_with_all,
+    visible_memory_predicate,
 )
 from storage.vector.qdrant_adapter import vector_adapter
 from core.identity.service import IdentityService
@@ -91,6 +103,14 @@ class MemoryService:
         ).first()
         if record is None:
             raise MemoryNotFoundError(f"Memory record with ID '{memory_id}' not found.")
+        if not record_is_visible(record, actor.name):
+            # Another agent's PRIVATE row is indistinguishable from a missing
+            # one for this caller: do not confirm its existence.
+            raise MemoryNotFoundError(f"Memory record with ID '{memory_id}' not found.")
+        if not may_mutate_record(record, actor.name):
+            raise PermissionDeniedError(
+                "Only the agent that owns a memory may mutate it."
+            )
         return actor, record
 
     @staticmethod
@@ -173,6 +193,46 @@ class MemoryService:
         if not decision.allowed:
             raise PermissionDeniedError(decision.reason)
 
+        # ------------------------------------------------------------------
+        # SCOPE RESOLUTION (PRIVATE / SHARED / UNIVERSAL)
+        # ------------------------------------------------------------------
+        # The namespace still determines where the row lives; the scope tier
+        # determines who may read it. An explicit request may only narrow or
+        # widen within the caller's authority:
+        #   * UNIVERSAL authoring belongs to the Memora service identity, so an
+        #     agent cannot publish into the whole fabric by asking for it.
+        #   * PRIVATE / SHARED rows are owned by exactly one agent; `owner` was
+        #     already constrained to the authenticated actor above.
+        requested_scope = getattr(memory_in, "scope", None)
+        resolved_scope = (
+            MemoryScopeType(requested_scope)
+            if requested_scope is not None
+            else scope_for_namespace_type(namespace.type)
+        )
+        if resolved_scope == MemoryScopeType.UNIVERSAL and actor.name != SERVICE_AGENT:
+            raise PermissionDeniedError(
+                "Only the Memora service identity may author UNIVERSAL memories."
+            )
+
+        requested_share = getattr(memory_in, "shared_with", None) or []
+        normalized_share: List[str] = []
+        if requested_share:
+            if normalize_agent_name(actor.name) != normalize_agent_name(owner.name):
+                raise PermissionDeniedError(
+                    "Only the owner of a memory may share it with other agents."
+                )
+            if resolved_scope == MemoryScopeType.UNIVERSAL:
+                # Already readable by everyone; an allow-list would be ignored.
+                requested_share = []
+            for raw_name in requested_share:
+                target_name = normalize_agent_name(raw_name)
+                if not target_name:
+                    raise ValueError("shared_with entries must be non-empty agent names.")
+                if target_name not in normalized_share:
+                    normalized_share.append(target_name)
+            if normalized_share and resolved_scope == MemoryScopeType.PRIVATE:
+                resolved_scope = MemoryScopeType.SHARED
+
         # Resolve the 6-dimension identity scope up front. Idempotency is scoped
         # to the writing agent, so agent_id must be known before the check.
         resolved_user = getattr(memory_in, "user_id", "default_user") or "default_user"
@@ -191,7 +251,11 @@ class MemoryService:
                 MemoryRecord.idempotency_key == idemp_key
             ).first()
             if existing_idemp:
-                return existing_idemp
+                # A caller-supplied `agent_id` must not hand back somebody
+                # else's idempotent record. If the existing row is outside this
+                # caller's scope, treat the key as unseen and write normally.
+                if actor is None or record_is_visible(existing_idemp, actor.name):
+                    return existing_idemp
 
         # Poison & Prompt Injection Check
         from core.memory.pipeline.poison_detector import PoisonDetector
@@ -249,6 +313,8 @@ class MemoryService:
             idempotency_key=idemp_key,
             namespace_id=namespace.id,
             owner_id=owner.id,
+            scope=resolved_scope,
+            owner_agent=normalize_agent_name(owner.name),
             memory_type=memory_in.memory_type,
             content_text=memory_in.content_text,
             source=memory_in.source,
@@ -263,6 +329,19 @@ class MemoryService:
         )
         db.add(record)
         db.flush()
+
+        # SHARED membership rows. A `team-shared` namespace keeps its historical
+        # "open to the team" meaning by carrying the `*` sentinel; the namespace
+        # policy engine still gates the actual grant, so this only makes the
+        # scope tier agree with the namespace tier.
+        if resolved_scope == MemoryScopeType.SHARED:
+            if normalized_share:
+                for target_name in normalized_share:
+                    grant_shared_access(
+                        db, record, target_name, granted_by=actor.name
+                    )
+            elif scope_for_namespace_type(namespace.type) == MemoryScopeType.SHARED:
+                share_record_with_all(db, record, granted_by=actor.name)
 
         # Audit Log for creation (single atomic transaction)
         PolicyEngine.log_audit_decision(
@@ -299,6 +378,8 @@ class MemoryService:
                     f"Authenticated agent '{actor_name}' is not registered in the default tenant."
                 )
             if record.tenant_id != actor.tenant_id:
+                raise MemoryNotFoundError(f"Memory record with ID '{memory_id}' not found.")
+            if not record_is_visible(record, actor.name):
                 raise MemoryNotFoundError(f"Memory record with ID '{memory_id}' not found.")
 
         if actor_name:
@@ -358,6 +439,11 @@ class MemoryService:
             q = q.filter(MemoryRecord.user_id == query.user_id)
 
         # 3. Agent and Scope Isolation
+        if actor is not None:
+            # Scope tier is a property of the row, not of the filter the caller
+            # supplied: passing another agent's `agent_id` must not expose its
+            # PRIVATE memories.
+            q = q.filter(visible_memory_predicate(actor.name))
         if query.agent_id:
             q = q.filter(MemoryRecord.agent_id == query.agent_id)
         if query.workspace_id:
@@ -555,6 +641,12 @@ class MemoryService:
         ).first()
         if new_record is None:
             raise MemoryNotFoundError(f"Memory record with ID '{new_memory_id}' not found.")
+        if not record_is_visible(new_record, actor.name):
+            raise MemoryNotFoundError(f"Memory record with ID '{new_memory_id}' not found.")
+        if not may_mutate_record(new_record, actor.name):
+            raise PermissionDeniedError(
+                "A supersession mutates both records; the caller must own both."
+            )
         if old_record.id == new_record.id:
             raise ValueError("A memory cannot supersede itself.")
 
@@ -640,6 +732,12 @@ class MemoryService:
         ).first()
         if not record:
             raise MemoryNotFoundError(f"Memory with ID '{memory_id}' not found.")
+        if not record_is_visible(record, actor.name):
+            raise MemoryNotFoundError(f"Memory with ID '{memory_id}' not found.")
+        if not may_mutate_record(record, actor.name):
+            raise PermissionDeniedError(
+                "Only the agent that owns a memory may delete it."
+            )
 
         decision = PolicyEngine.evaluate_access(
             db,

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
 from storage.relational.models import MemoryRecord, Namespace, LifecycleState, MemoryType
+from storage.relational.access_scope import visible_memory_predicate
 from storage.vector.qdrant_adapter import vector_adapter
 from storage.vector.embedding import EmbeddingGenerator
 from core.identity.service import IdentityService
@@ -162,6 +163,11 @@ class SearchService:
             MemoryRecord.tenant_id == resolved_tenant,
             MemoryRecord.lifecycle_state.in_(allowed_states)
         )
+        # Scope filter: the caller-supplied identity filters below narrow a
+        # result set; they never widen it. Without this leg an agent could pass
+        # another agent's `agent_id` and read its PRIVATE rows.
+        if actor is not None:
+            kw_query = kw_query.filter(visible_memory_predicate(actor.name))
         # Identity and Scope Filters (Requirement 10: Strict User Isolation)
         if user_id:
             kw_query = kw_query.filter(MemoryRecord.user_id == user_id)
@@ -260,6 +266,10 @@ class SearchService:
             MemoryRecord.tenant_id == resolved_tenant,
             MemoryRecord.lifecycle_state.in_(allowed_states)
         )
+        if actor is not None:
+            # Vector and graph candidates bypass the lexical WHERE clause, so
+            # the scope predicate has to be reapplied to the union.
+            cand_q = cand_q.filter(visible_memory_predicate(actor.name))
         if user_id:
             cand_q = cand_q.filter(MemoryRecord.user_id == user_id)
         if agent_id:
