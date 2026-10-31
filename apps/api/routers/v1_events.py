@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 from apps.api.dependencies import AGENT_API_KEY_ENV_VARS, authenticate_agent
 from storage.relational.models import EventConsumerCursor, EventLog
 from storage.relational.session import get_db
-from storage.relational.turso_events import EventIdTenantConflictError, acknowledge as acknowledge_turso_event, append as append_turso_event, configured as turso_events_configured, production_mode as turso_required, read as read_turso_events, read_cursor as read_turso_cursor
+# The durable event feed is the Oracle ``event_log`` table reached through the
+# ORM session below. There is no external SQLite/Turso replica.
 
 router = APIRouter(prefix="/v1/events", tags=["Agent Event Feed"])
 mesh_router = APIRouter(tags=["Agent Event Ingest"])
@@ -294,16 +295,7 @@ def read_events(
     )
     if event_type:
         query = query.filter(EventLog.event_type == event_type)
-    if turso_events_configured():
-        try:
-            remote_rows = read_turso_events(after_id=after_id, limit=limit, tenant_id=tenant_id, agent=agent, event_type=event_type)
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail="Durable event store is temporarily unavailable") from exc
-        rows = remote_rows
-    elif turso_required():
-        raise HTTPException(status_code=503, detail="Durable event store is not configured")
-    else:
-        rows = query.order_by(EventLog.id.asc()).limit(limit).all()
+    rows = query.order_by(EventLog.id.asc()).limit(limit).all()
     events = []
     for row in rows:
         row_event_type = row["event_type"] if isinstance(row, dict) else row.event_type
@@ -360,16 +352,10 @@ def poll_events(
     norm_auto_ack = bool(auto_ack) if isinstance(auto_ack, bool) else False
 
     if effective_after_id is None:
-        if turso_events_configured():
-            try:
-                effective_after_id = read_turso_cursor(tenant_id=tenant_id, agent=agent, consumer_id=norm_consumer_id)
-            except Exception:
-                effective_after_id = 0
-        else:
-            cursor_row = db.query(EventConsumerCursor).filter_by(
-                tenant_id=tenant_id, agent=agent, consumer_id=norm_consumer_id
-            ).first()
-            effective_after_id = cursor_row.last_event_id if cursor_row else 0
+        cursor_row = db.query(EventConsumerCursor).filter_by(
+            tenant_id=tenant_id, agent=agent, consumer_id=norm_consumer_id
+        ).first()
+        effective_after_id = cursor_row.last_event_id if cursor_row else 0
 
     query = db.query(EventLog).filter(
         EventLog.id > effective_after_id,
@@ -379,22 +365,7 @@ def poll_events(
     if norm_event_type:
         query = query.filter(EventLog.event_type == norm_event_type)
 
-    if turso_events_configured():
-        try:
-            remote_rows = read_turso_events(
-                after_id=effective_after_id,
-                limit=norm_limit,
-                tenant_id=tenant_id,
-                agent=agent,
-                event_type=norm_event_type,
-            )
-            rows = remote_rows
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail="Durable event store is temporarily unavailable") from exc
-    elif turso_required():
-        raise HTTPException(status_code=503, detail="Durable event store is not configured")
-    else:
-        rows = query.order_by(EventLog.id.asc()).limit(norm_limit).all()
+    rows = query.order_by(EventLog.id.asc()).limit(norm_limit).all()
 
     events = []
     for row in rows:
@@ -424,33 +395,21 @@ def poll_events(
     next_cursor = effective_after_id
     if norm_auto_ack and events:
         max_event_id = events[-1]["id"]
-        if turso_events_configured():
-            try:
-                acknowledge_turso_event(
-                    tenant_id=tenant_id,
-                    agent=agent,
-                    consumer_id=norm_consumer_id,
-                    event_id=max_event_id,
-                )
-                next_cursor = max_event_id
-            except Exception as exc:
-                logger.warning("Turso auto-ack failed: %s", exc)
+        cursor_row = db.query(EventConsumerCursor).filter_by(
+            tenant_id=tenant_id, agent=agent, consumer_id=norm_consumer_id
+        ).first()
+        if cursor_row is None:
+            cursor_row = EventConsumerCursor(
+                tenant_id=tenant_id,
+                agent=agent,
+                consumer_id=norm_consumer_id,
+                last_event_id=max_event_id,
+            )
+            db.add(cursor_row)
         else:
-            cursor_row = db.query(EventConsumerCursor).filter_by(
-                tenant_id=tenant_id, agent=agent, consumer_id=norm_consumer_id
-            ).first()
-            if cursor_row is None:
-                cursor_row = EventConsumerCursor(
-                    tenant_id=tenant_id,
-                    agent=agent,
-                    consumer_id=norm_consumer_id,
-                    last_event_id=max_event_id,
-                )
-                db.add(cursor_row)
-            else:
-                cursor_row.last_event_id = max(cursor_row.last_event_id, max_event_id)
-            db.commit()
-            next_cursor = cursor_row.last_event_id
+            cursor_row.last_event_id = max(cursor_row.last_event_id, max_event_id)
+        db.commit()
+        next_cursor = cursor_row.last_event_id
 
     return {
         "agent": agent,
@@ -472,16 +431,8 @@ def read_consumer_cursor(
     """Return this agent's independent durable event acknowledgement cursor."""
     if not re.fullmatch(r"[A-Za-z0-9._:-]{1,64}", consumer_id):
         raise HTTPException(status_code=422, detail="Invalid consumer_id")
-    if turso_events_configured():
-        try:
-            cursor = read_turso_cursor(tenant_id="default", agent=agent, consumer_id=consumer_id)
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail="Durable event cursor is temporarily unavailable") from exc
-    elif turso_required():
-        raise HTTPException(status_code=503, detail="Durable event store is not configured")
-    else:
-        row = db.query(EventConsumerCursor).filter_by(tenant_id="default", agent=agent, consumer_id=consumer_id).first()
-        cursor = row.last_event_id if row else 0
+    row = db.query(EventConsumerCursor).filter_by(tenant_id="default", agent=agent, consumer_id=consumer_id).first()
+    cursor = row.last_event_id if row else 0
     return {"agent": agent, "consumer_id": consumer_id, "after_id": cursor}
 
 
@@ -492,35 +443,25 @@ def acknowledge_event(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Acknowledge one event after successful handling; reads alone never advance the cursor."""
-    if turso_events_configured():
-        try:
-            cursor = acknowledge_turso_event(tenant_id="default", agent=agent, consumer_id=acknowledgement.consumer_id, event_id=acknowledgement.event_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail="Event is not the next visible event for this consumer") from exc
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail="Durable event cursor is temporarily unavailable") from exc
-    elif turso_required():
-        raise HTTPException(status_code=503, detail="Durable event store is not configured")
+    row = db.query(EventConsumerCursor).filter_by(tenant_id="default", agent=agent, consumer_id=acknowledgement.consumer_id).first()
+    current = row.last_event_id if row else 0
+    if acknowledgement.event_id <= current:
+        return {"status": "acknowledged", "agent": agent, "consumer_id": acknowledgement.consumer_id, "after_id": current}
+    next_visible = db.query(EventLog).filter(
+        EventLog.id > current,
+        EventLog.id <= acknowledgement.event_id,
+        EventLog.tenant_id == "default",
+        (EventLog.target_agent.is_(None) | (EventLog.target_agent == agent)),
+    ).order_by(EventLog.id.asc()).first()
+    if next_visible is None or next_visible.id != acknowledgement.event_id:
+        raise HTTPException(status_code=409, detail="Event is not the next visible event for this consumer")
+    if row is None:
+        row = EventConsumerCursor(tenant_id="default", agent=agent, consumer_id=acknowledgement.consumer_id, last_event_id=acknowledgement.event_id)
+        db.add(row)
     else:
-        row = db.query(EventConsumerCursor).filter_by(tenant_id="default", agent=agent, consumer_id=acknowledgement.consumer_id).first()
-        current = row.last_event_id if row else 0
-        if acknowledgement.event_id <= current:
-            return {"status": "acknowledged", "agent": agent, "consumer_id": acknowledgement.consumer_id, "after_id": current}
-        next_visible = db.query(EventLog).filter(
-            EventLog.id > current,
-            EventLog.id <= acknowledgement.event_id,
-            EventLog.tenant_id == "default",
-            (EventLog.target_agent.is_(None) | (EventLog.target_agent == agent)),
-        ).order_by(EventLog.id.asc()).first()
-        if next_visible is None or next_visible.id != acknowledgement.event_id:
-            raise HTTPException(status_code=409, detail="Event is not the next visible event for this consumer")
-        if row is None:
-            row = EventConsumerCursor(tenant_id="default", agent=agent, consumer_id=acknowledgement.consumer_id, last_event_id=acknowledgement.event_id)
-            db.add(row)
-        else:
-            row.last_event_id = max(row.last_event_id, acknowledgement.event_id)
-        db.commit()
-        cursor = row.last_event_id
+        row.last_event_id = max(row.last_event_id, acknowledgement.event_id)
+    db.commit()
+    cursor = row.last_event_id
     return {"status": "acknowledged", "agent": agent, "consumer_id": acknowledgement.consumer_id, "after_id": cursor}
 
 
@@ -608,16 +549,6 @@ def ingest_envelope(
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     remote_cursor = None
-    if turso_events_configured():
-        try:
-            remote_cursor = append_turso_event(event_data)
-        except EventIdTenantConflictError as exc:
-            raise HTTPException(status_code=409, detail="Event ID is already in use") from exc
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail="Durable event store is temporarily unavailable") from exc
-    elif turso_required():
-        raise HTTPException(status_code=503, detail="Durable event store is not configured")
-
     row = EventLog(
         event_id=envelope.message_id,
         event_type=envelope.intent,

@@ -1,18 +1,18 @@
-"""
-Database Engine & Session Management for Memora
-Supports PostgreSQL and Oracle Autonomous Database as authoritative stores.
+"""Database engine and session management for Memora.
 
-There is no implicit SQLite fallback. If the configured authoritative database
-cannot be reached, engine creation raises instead of silently opening a
-process-local database that would accept writes and lose them on restart.
-SQLite is still supported when it is named explicitly in ``DATABASE_URL`` (local
-development and the test suite).
+Memora persists to Oracle Autonomous Database. There is no implicit SQLite or
+PostgreSQL fallback: if the configured authoritative database cannot be
+reached, engine creation raises instead of opening a process-local database
+that would accept writes and lose them on restart.
+
+SQLite remains available only as an explicitly-passed test backend, and only
+inside a pytest run (``MEMORA_ENV=testing`` or an active pytest process).
 """
 import os
 import logging
+import sys
 from pathlib import Path
 from typing import Generator
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker, Session
 from fastapi import HTTPException
@@ -31,9 +31,18 @@ logger = logging.getLogger(__name__)
 _active_storage_backend = "uninitialized"
 _active_storage_durable = False
 
+_ORACLE_PREFIXES = ("oracle", "oracle+oracledb")
+_TEST_ENVS = {"testing", "test"}
+
 
 def production_mode() -> bool:
     return (os.getenv("ENVIRONMENT", "") or settings.MEMORA_ENV).lower() == "production"
+
+
+def _test_backend_allowed() -> bool:
+    """True only inside an explicit test run; production never returns True."""
+    env = (os.getenv("ENVIRONMENT", "") or settings.MEMORA_ENV).lower()
+    return env in _TEST_ENVS or "pytest" in sys.modules
 
 
 def storage_receipt() -> dict[str, str | bool]:
@@ -46,12 +55,17 @@ def storage_receipt() -> dict[str, str | bool]:
 
 
 def validate_production_database_url(url: str) -> None:
-    """Fail closed when production is configured with an invalid non-production store."""
-    if production_mode() and not url.lower().startswith(("oracle", "oracle+oracledb", "postgresql://", "postgresql+")):
-        raise RuntimeError(
-            "Memora production requires the self-hosted PostgreSQL DATABASE_URL or Oracle Autonomous Database; "
-            "SQLite and Turso are development/migration-only backends."
-        )
+    """Fail closed unless the URL is an Oracle DSN or an explicit test backend."""
+    value = (url or "").strip().lower()
+    if value.startswith(_ORACLE_PREFIXES):
+        return
+    if _test_backend_allowed() and value.startswith("sqlite"):
+        return
+    raise RuntimeError(
+        "Memora requires an Oracle Autonomous Database DSN "
+        "(oracle+oracledb://user:password@host/service_name). PostgreSQL and "
+        "SQLite are not supported backends."
+    )
 
 
 def storage_ready() -> bool:
@@ -67,6 +81,7 @@ def _unavailable(backend: str, exc: Exception) -> RuntimeError:
 
 
 def _ensure_sqlite_dir(url: str):
+    """Create the parent directory for an explicit test SQLite file."""
     if "sqlite:///" in url:
         path = url.replace("sqlite:///", "")
         if "?" in path:
@@ -77,31 +92,15 @@ def _ensure_sqlite_dir(url: str):
                 os.makedirs(dirname, exist_ok=True)
 
 
-def _turso_sqlalchemy_url(url: str) -> str:
-    """Convert a Turso URL to the URL accepted by sqlalchemy-libsql."""
-    value = url.strip()
-    if value.startswith("sqlite+libsql://"):
-        return value
-    parsed = urlsplit(value)
-    if parsed.scheme not in {"https", "libsql"} or not parsed.netloc:
-        raise ValueError("Turso URL must use https:// or libsql:// and include a host")
-    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
-    query.setdefault("secure", "true")
-    return urlunsplit(("sqlite+libsql", parsed.netloc, parsed.path, urlencode(query), parsed.fragment))
-
-
 def _new_sqlite_engine(url: str):
+    """Build a SQLite engine for the test suite only."""
+    if not _test_backend_allowed():
+        raise RuntimeError(
+            "SQLite is a test-only backend for Memora; configure an Oracle "
+            "Autonomous Database DSN in DATABASE_URL."
+        )
     _ensure_sqlite_dir(url)
 
-    # Under concurrent load the default journal mode serialises readers against
-    # the single writer, and connections give up almost immediately with
-    # "database is locked". Verified with scripts/stress_memora.py: 6 agents
-    # writing while 6 readers queried produced OperationalError on both the
-    # event_log insert and the read path.
-    #
-    # WAL lets readers proceed concurrently with one writer, and busy_timeout
-    # makes a contended connection wait instead of failing. Both are set per
-    # connection because SQLite pragmas are not inherited from the file.
     timeout_seconds = float(os.getenv("MEMORA_SQLITE_BUSY_TIMEOUT", "30"))
 
     engine = create_engine(
@@ -109,41 +108,32 @@ def _new_sqlite_engine(url: str):
         connect_args={
             "check_same_thread": False,
             "timeout": timeout_seconds,
-        } if "sqlite" in url else {},
+        },
         echo=settings.DB_ECHO,
     )
 
-    if "sqlite" in url:
-        from sqlalchemy import event
+    from sqlalchemy import event
 
-        @event.listens_for(engine, "connect")
-        def _set_sqlite_pragmas(dbapi_connection, _record):  # pragma: no cover - driver hook
-            cursor = dbapi_connection.cursor()
-            try:
-                cursor.execute("PRAGMA journal_mode=WAL;")
-                cursor.execute("PRAGMA busy_timeout=5000;")
-                # WAL's recommended durability/performance trade-off.
-                cursor.execute("PRAGMA synchronous=NORMAL;")
-            finally:
-                cursor.close()
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragmas(dbapi_connection, _record):  # pragma: no cover - driver hook
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA busy_timeout=5000;")
+            cursor.execute("PRAGMA synchronous=NORMAL;")
+        finally:
+            cursor.close()
 
     return engine
 
-def create_db_engine():
-    global _active_storage_backend, _active_storage_durable
-    db_url = settings.DATABASE_URL
-    configured_turso_url = settings.TURSO_DATABASE_URL or os.getenv("TURSO_DATABASE_URL", "")
-    turso_token = settings.TURSO_AUTH_TOKEN or os.getenv("TURSO_AUTH_TOKEN", "")
 
-    # Production is self-hosted and PostgreSQL-only. Hosted Turso is never selected
-    # implicitly; local development can opt in explicitly if migration work requires it.
-    use_turso_primary = os.getenv("MEMORA_USE_TURSO", "").strip().lower() in {"1", "true", "yes"}
-    if use_turso_primary and not production_mode() and configured_turso_url and turso_token:
-        db_url = configured_turso_url
+def create_db_engine():
+    """Create the authoritative engine: Oracle, or an explicit test backend."""
+    global _active_storage_backend, _active_storage_durable
+    db_url = (settings.DATABASE_URL or "").strip()
     validate_production_database_url(db_url)
 
-    # 1. Oracle Autonomous Database 23ai connection
-    if db_url.startswith(("oracle", "oracle+oracledb")):
+    if db_url.startswith(_ORACLE_PREFIXES):
         try:
             pool_size = max(1, min(int(os.getenv("MEMORA_DB_POOL_SIZE", "3")), 8))
             max_overflow = max(0, min(int(os.getenv("MEMORA_DB_MAX_OVERFLOW", "2")), 8))
@@ -166,67 +156,20 @@ def create_db_engine():
             _active_storage_durable = False
             raise _unavailable("Oracle database", e) from e
 
-    # 2. PostgreSQL connection
-    if db_url.startswith("postgresql"):
-        try:
-            # Every FRIDAY specialist owns a small SQLAlchemy pool while sharing one
-            # PostgreSQL instance. Do not let default per-service pools add up to
-            # hundreds of connections on the 2-OCPU Oracle host.
-            pool_size = max(1, min(int(os.getenv("MEMORA_DB_POOL_SIZE", "3")), 8))
-            max_overflow = max(0, min(int(os.getenv("MEMORA_DB_MAX_OVERFLOW", "2")), 8))
-            engine = create_engine(
-                db_url,
-                pool_pre_ping=True,
-                pool_size=pool_size,
-                max_overflow=max_overflow,
-                pool_timeout=10,
-                echo=settings.DB_ECHO,
-                connect_args={"connect_timeout": 3},
-            )
-            with engine.connect() as conn:
-                conn.execute(text("SELECT 1"))
-            logger.info("Successfully connected to PostgreSQL database.")
-            _active_storage_backend = "postgresql"
-            _active_storage_durable = True
-            return engine
-        except Exception as e:
-            # A write must never drift to a process-local database when the
-            # canonical PostgreSQL store is unavailable.
-            _active_storage_backend = "unavailable"
-            _active_storage_durable = False
-            raise _unavailable("PostgreSQL database", e) from e
+    if db_url.startswith("sqlite"):
+        _active_storage_backend = "sqlite"
+        _active_storage_durable = False
+        return _new_sqlite_engine(db_url)
 
-    # 2. Turso cloud database connection through Turso's SQLAlchemy dialect.
-    if "turso.io" in db_url or db_url.startswith(("libsql://", "sqlite+libsql://")):
-        try:
-            if not turso_token:
-                raise RuntimeError("TURSO_AUTH_TOKEN is not configured")
-            clean_url = _turso_sqlalchemy_url(db_url)
-            engine = create_engine(
-                clean_url,
-                connect_args={"auth_token": turso_token},
-                pool_pre_ping=True,
-                echo=settings.DB_ECHO,
-            )
-            with engine.connect() as conn:
-                conn.execute(text("SELECT 1"))
-            logger.info("Successfully connected to Turso cloud database.")
-            _active_storage_backend = "turso"
-            _active_storage_durable = True
-            return engine
-        except Exception as e:
-            _active_storage_backend = "unavailable"
-            _active_storage_durable = False
-            raise _unavailable("Turso database", e) from e
+    raise RuntimeError(
+        "Memora DATABASE_URL is not configured. Set an Oracle Autonomous "
+        "Database DSN (oracle+oracledb://...)."
+    )
 
-    # 3. Standard SQLite connection
-    _active_storage_backend = "sqlite"
-    sqlite_authoritative = os.getenv("MEMORA_SQLITE_AUTHORITATIVE", "").lower() in {"1", "true", "yes"}
-    _active_storage_durable = sqlite_authoritative
-    return _new_sqlite_engine(db_url)
 
 engine = create_db_engine()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 
 def _add_scope_columns(engine, columns: set[str], dialect: str) -> None:
     """Add the scope tier columns to a schema created before they existed.
@@ -337,7 +280,7 @@ def _backfill_scope_columns(engine) -> None:
 
     # Enforce NOT NULL where the dialect can do it in place. SQLite cannot
     # modify a column, and in any case the backfill above leaves no NULLs.
-    if dialect in {"oracle", "postgresql"}:
+    if dialect == "oracle":
         with engine.begin() as connection:
             for column in ("scope", "owner_agent"):
                 try:

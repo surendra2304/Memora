@@ -8,7 +8,6 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from storage.relational.session import get_db, storage_receipt
-from storage.relational.turso_events import configured as turso_events_configured, probe as probe_turso_events, production_mode
 from storage.vector.qdrant_adapter import vector_adapter
 
 router = APIRouter(prefix="/health", tags=["Health"])
@@ -23,21 +22,9 @@ def health_check(db: Session = Depends(get_db)):
     except Exception as e:
         db_status = f"degraded ({type(e).__name__})"
 
-    event_store = "local_only"
-    event_store_ok = True
-    if turso_events_configured():
-        try:
-            probe_turso_events()
-            event_store = "turso_available"
-        except Exception:
-            event_store = "turso_unavailable"
-            event_store_ok = False
-    elif database.get("backend") == "oracle":
-        event_store = "oracle_database"
-        event_store_ok = True
-    elif production_mode():
-        event_store = "turso_not_configured"
-        event_store_ok = False
+    # The durable event feed is the same Oracle schema as the rest of Memora.
+    event_store = "oracle_database" if database.get("backend") == "oracle" else "unavailable"
+    event_store_ok = event_store == "oracle_database"
 
     if database.get("backend") == "oracle":
         vector_store = {"status": "available", "available": True, "backend": "oracle_23ai_native_vector"}
@@ -50,13 +37,13 @@ def health_check(db: Session = Depends(get_db)):
         "service": "memora",
         "evidence_class": "process_liveness",
         "observed_at": datetime.now(timezone.utc).isoformat(),
-        "storage": "sqlite_wal",
+        "storage": database.get("backend", "uninitialized"),
         "database": db_status,
         "database_backend": database["backend"],
         "database_durable": database["durable"],
         "database_durability": database["durability"],
         "event_store": event_store,
-        "event_store_durable": event_store == "turso_available",
+        "event_store_durable": event_store == "oracle_database",
         "vector_store": vector_store,
         "version": "2.0.0"
     })
@@ -65,18 +52,11 @@ def health_check(db: Session = Depends(get_db)):
 @router.get("/ready")
 @router.head("/ready")
 def readiness_check(db: Session = Depends(get_db)):
-    """Dedicated readiness probe verifying database, WAL, and vector availability."""
+    """Dedicated readiness probe verifying the Oracle database and vector availability."""
     database = storage_receipt()
     db_status = "healthy"
-    wal_status = "ready"
     try:
         db.execute(text("SELECT 1"))
-        if database.get("backend") in ("sqlite", "sqlite_fallback"):
-            res = db.execute(text("PRAGMA journal_mode")).fetchone()
-            if res and res[0].upper() == "WAL":
-                wal_status = "wal_active"
-            else:
-                wal_status = "non_wal"
     except Exception as e:
         db_status = f"degraded ({type(e).__name__})"
 
@@ -94,7 +74,7 @@ def readiness_check(db: Session = Depends(get_db)):
             "service": "memora",
             "version": "2.0.0",
             "database": db_status,
-            "wal": wal_status,
+            "database_backend": database["backend"],
             "vector_store": vector_store.get("status", "unknown"),
             "circuits": "healthy" if circuits_ok else "degraded",
             "evidence_class": "readiness_probe",

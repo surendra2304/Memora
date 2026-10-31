@@ -751,15 +751,8 @@ class MemoryService:
 
         tenant_id = getattr(record, "tenant_id", "default")
         if hard_delete:
-            from storage.relational.turso_sync import (
-                delete_memory_from_turso,
-                turso_replica_enabled,
-            )
-
-            # Persist the deletion outbox before calling the remote replica. If
-            # the request fails or the process exits after the local commit, the
-            # self-healing worker can safely retry the tenant-scoped operation.
-            turso_replica_required = turso_replica_enabled()
+            # Local-only deletion convergence: the durable store is the Oracle
+            # relational database reached through the ORM session.
             tombstone = DeletionTombstone(
                 tenant_id=tenant_id,
                 memory_id=memory_id,
@@ -767,7 +760,7 @@ class MemoryService:
                 vector_deleted=False,
                 cache_deleted=False,
                 graph_deleted=False,
-                turso_deleted=not turso_replica_required,
+                turso_deleted=True,
                 status="DELETE_REQUESTED"
             )
             db.add(tombstone)
@@ -809,17 +802,6 @@ class MemoryService:
                 tenant_id=tenant_id
             )
             db.commit()
-
-            if turso_replica_required:
-                try:
-                    tombstone.turso_deleted = bool(
-                        delete_memory_from_turso(memory_id, tenant_id=tenant_id)
-                    )
-                except Exception:
-                    logger.exception("Turso replica deletion failed; tombstone will remain retryable")
-                    tombstone.turso_deleted = False
-                tombstone.status = "CONVERGED" if tombstone.is_converged() else "PENDING_RETRY"
-                db.commit()
 
             return {
                 "status": "hard_deleted",

@@ -18,8 +18,7 @@ dependencies = [
     "pydantic-settings>=2.2.0",
     "sqlalchemy>=2.0.28",
     "alembic>=1.13.1",
-    "psycopg2-binary>=2.9.9",
-    "asyncpg>=0.29.0",
+    "oracledb>=2.5.0",
     "redis>=5.0.3",
     # The vector adapter imports qdrant_client lazily, but it is the dense leg of
     # hybrid search and must be present for a real deployment.
@@ -33,7 +32,6 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "python-multipart>=0.0.9",
     "httpx>=0.27.0",
-    "sqlalchemy-libsql==0.2.0; sys_platform != 'win32'",
 ]
 
 [project.optional-dependencies]

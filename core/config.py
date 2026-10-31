@@ -17,13 +17,6 @@ class Settings(BaseSettings):
     # Database: Oracle Autonomous Database only. Empty default so a missing
     # configuration fails closed instead of silently opening a SQLite file.
     DATABASE_URL: str = ""
-    TURSO_DATABASE_URL: Optional[str] = None
-    TURSO_AUTH_TOKEN: Optional[str] = None
-    # Deprecated: retained only so existing deployment files that set these
-    # keys still parse. Memora no longer opens a SQLite fallback when the
-    # configured authoritative database is unreachable -- it fails closed.
-    SQLITE_FALLBACK_URL: Optional[str] = None
-    USE_SQLITE_FALLBACK: bool = False
     DB_ECHO: bool = False
 
     # Redis

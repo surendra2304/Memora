@@ -22,13 +22,9 @@ from collections import Counter
 from sqlalchemy import func
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# A real file-backed SQLite, not StaticPool in-memory, so contention is genuine.
 _TMPDIR = tempfile.mkdtemp(prefix="memora_stress_")
+# Development mode so the local disposable backend is acceptable in tests.
 os.environ["DATABASE_URL"] = f"sqlite:///{_TMPDIR}/stress.db"
-os.environ["SQLITE_FALLBACK_URL"] = f"sqlite:///{_TMPDIR}/stress.db"
-# Development mode so SQLite is an acceptable backend (production correctly
-# refuses it as non-durable). Auth is still fully enforced because real per-agent
-# API keys are set below and MEMORA_ALLOW_ANONYMOUS_DEV is explicitly unset.
 os.environ["MEMORA_ENV"] = "development"
 os.environ.pop("MEMORA_ALLOW_ANONYMOUS_DEV", None)
 

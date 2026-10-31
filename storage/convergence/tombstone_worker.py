@@ -2,7 +2,7 @@
 Multi-Store Deletion Convergence Worker for Memora
 Guarantees eventual consistency and hard delete convergence across
 relational SQL, Qdrant vector store, Redis/in-memory cache, knowledge graph relations,
-and optional Turso cloud replicas using DeletionTombstone outbox records.
+and the relational (Oracle) SQL store using DeletionTombstone outbox records.
 """
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from storage.relational.models import DeletionTombstone, MemoryRecord, MemoryRel
 from storage.relational.session import SessionLocal
 from storage.vector.qdrant_adapter import vector_adapter
 from core.cache.memory_cache import memory_cache
-from storage.relational.turso_sync import delete_memory_from_turso, turso_replica_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -111,23 +110,9 @@ class TombstoneConvergenceWorker:
                     exc,
                 )
 
-        # 4. Turso Cloud Write-Through Replica Deletion
-        if not tombstone.turso_deleted:
-            try:
-                if turso_replica_enabled():
-                    turso_ok = delete_memory_from_turso(
-                        tombstone.memory_id,
-                        tenant_id=tombstone.tenant_id,
-                    )
-                    tombstone.turso_deleted = bool(turso_ok)
-                else:
-                    tombstone.turso_deleted = True
-            except Exception as exc:
-                logger.warning(
-                    "Tombstone %s Turso deletion retry failed: %s",
-                    tombstone.memory_id,
-                    exc,
-                )
+        # 4. Retired cloud replica: deletion convergence is now local-only.
+        #    The durable store is the Oracle relational database itself.
+        tombstone.turso_deleted = True
 
         # 5. Relational SQL Hard Deletion
         if not tombstone.relational_deleted:

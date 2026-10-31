@@ -132,7 +132,6 @@ class SelfHealingSupervisor:
         """Retry deletions that never converged across all stores."""
         from storage.relational.models import DeletionTombstone
         from storage.vector.qdrant_adapter import vector_adapter
-        from storage.relational.turso_sync import delete_memory_from_turso
 
         name = "unconverged_tombstones"
         pending = (
@@ -157,7 +156,6 @@ class SelfHealingSupervisor:
                     ("vector", tombstone.vector_deleted),
                     ("cache", tombstone.cache_deleted),
                     ("graph", tombstone.graph_deleted),
-                    ("turso", tombstone.turso_deleted),
                 )
                 if not done
             ]
@@ -175,16 +173,6 @@ class SelfHealingSupervisor:
                     )
                 except Exception as exc:
                     logger.warning("tombstone %s vector retry failed: %s", tombstone.memory_id, exc)
-
-            if not tombstone.turso_deleted:
-                try:
-                    tombstone.turso_deleted = bool(
-                        delete_memory_from_turso(
-                            tombstone.memory_id, tenant_id=tombstone.tenant_id
-                        )
-                    )
-                except Exception as exc:
-                    logger.warning("Turso deletion retry failed (%s)", type(exc).__name__)
 
             tombstone.retry_count += 1
             if tombstone.is_converged():
