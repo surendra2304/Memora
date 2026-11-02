@@ -110,11 +110,7 @@ class TombstoneConvergenceWorker:
                     exc,
                 )
 
-        # 4. Retired cloud replica: deletion convergence is now local-only.
-        #    The durable store is the Oracle relational database itself.
-        tombstone.turso_deleted = True
-
-        # 5. Relational SQL Hard Deletion
+        # 4. Relational SQL Hard Deletion
         if not tombstone.relational_deleted:
             try:
                 with db.begin_nested():
@@ -134,7 +130,6 @@ class TombstoneConvergenceWorker:
                 )
 
         # 6. Evaluation and State Transition
-        tombstone.retry_count += 1
         if tombstone.is_converged():
             tombstone.status = "CONVERGED"
         elif tombstone.retry_count >= self.max_retries:

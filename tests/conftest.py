@@ -1,13 +1,23 @@
-"""
-Pytest Fixtures for Memora Test Suite
+"""Pytest Fixtures for Memora Test Suite
+
+The suite runs against an explicitly-passed, file-backed SQLite database. That
+is the only place SQLite is allowed: runtime code fails closed unless an Oracle
+Autonomous Database DSN is configured, and the fixture below sets the URL
+before ``storage.relational.session`` is imported so the lazy engine picks up
+the test path rather than a production DSN.
 """
 import os
+import tempfile
 
-# The suite exercises endpoints without presenting a mesh credential. Agent
-# authentication now fails closed unless anonymous access is opted into explicitly,
-# so the tests must say so rather than depend on a missing-key side effect.
 os.environ.setdefault("MEMORA_ALLOW_ANONYMOUS_DEV", "1")
 os.environ.setdefault("MEMORA_EMBEDDING_MODE", "hashing")
+os.environ["MEMORA_ENV"] = "testing"
+os.environ["ENVIRONMENT"] = "testing"
+
+_TEST_DB_DIR = tempfile.mkdtemp(prefix="memora_tests_")
+os.environ["DATABASE_URL"] = os.getenv(
+    "MEMORA_TEST_DATABASE_URL", f"sqlite:///{_TEST_DB_DIR}/memora_test.db"
+)
 
 import pytest
 from sqlalchemy import create_engine

@@ -87,7 +87,6 @@ def test_cloud_fallback_client_poll_stream(monkeypatch):
 def test_custom_mesh_envelope_payload_and_sanitization(test_db, monkeypatch):
     """Verify that agent mesh envelopes preserve custom payload fields while stripping forbidden keys."""
     monkeypatch.setenv("ENVIRONMENT", "development")
-    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
     monkeypatch.setenv("VYRALX_API_KEY", "vyralx-key-1234567890123456789012")
 
     envelope = IncomingEnvelope(

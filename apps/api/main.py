@@ -17,7 +17,7 @@ from apps.api.middleware import RequestBodyLimitMiddleware
 from core.config import settings, validate_startup_config
 from storage.relational.session import init_db, storage_ready, get_db
 from storage.vector.qdrant_adapter import vector_adapter
-from core.events.emitter import event_emitter
+from core.events.emitter import event_emitter, start_cloud_sync, stop_cloud_sync
 from apps.api.routers.health import readiness_check
 from apps.api.routers import (
     health_router,
@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI):
     init_db()
     vector_adapter.connect()
     event_emitter.connect()
-    event_emitter.start_cloud_sync()
+    start_cloud_sync()
 
     if storage_ready():
         from storage.convergence.tombstone_worker import tombstone_worker
@@ -126,7 +126,7 @@ async def lifespan(app: FastAPI):
             tombstone_worker.stop_background_worker()
         except Exception as exc:
             logger.warning("Tombstone worker shutdown encountered exception: %s", exc)
-        event_emitter.stop_cloud_sync()
+        stop_cloud_sync()
         try:
             from core.resilience.http_client import close_async_client
             await close_async_client()

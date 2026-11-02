@@ -61,7 +61,6 @@ def test_render_environment_prevents_ephemeral_vector_writes(monkeypatch):
 def test_health_reflects_vector_store_availability(
     monkeypatch, vector_status, expected_status, expected_http
 ):
-    monkeypatch.setattr(health, "turso_events_configured", lambda: False)
     monkeypatch.setattr(health, "production_mode", lambda: False)
     monkeypatch.setattr(health.vector_adapter, "readiness", lambda: vector_status)
 

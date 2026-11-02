@@ -44,19 +44,6 @@ def test_rolled_back_memory_transaction_does_not_leave_event(test_db):
     assert test_db.query(EventLog).filter_by(event_id=event.event_id).first() is None
 
 
-def test_startup_cloud_import_requires_explicit_opt_in(monkeypatch):
-    from apps.api.main import _startup_turso_sync_enabled
-
-    monkeypatch.setenv("ENVIRONMENT", "development")
-    monkeypatch.delenv("MEMORA_SYNC_TURSO_ON_STARTUP", raising=False)
-    assert _startup_turso_sync_enabled() is False
-    monkeypatch.setenv("MEMORA_SYNC_TURSO_ON_STARTUP", "true")
-    assert _startup_turso_sync_enabled() is True
-    monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.delenv("MEMORA_SYNC_TURSO_ON_STARTUP", raising=False)
-    assert _startup_turso_sync_enabled() is False
-
-
 def test_feed_sanitizes_private_context_payload_and_obeys_cursor_and_tenant(test_db):
     test_db.add_all([
         EventLog(event_id="one", event_type="context.generated", tenant_id="default", payload={"query": "private prompt", "bundle_id": "b-1", "agent": "friday", "memories_count": 2}),
@@ -73,8 +60,6 @@ def test_feed_sanitizes_private_context_payload_and_obeys_cursor_and_tenant(test
 def test_live_event_route_requires_agent_authentication(client, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("FRIDAY_API_KEY", "friday-test-key")
-    monkeypatch.setattr("apps.api.routers.v1_events.turso_events_configured", lambda: False)
-    monkeypatch.setattr("apps.api.routers.v1_events.turso_required", lambda: False)
 
     response = client.get("/v1/events?after_id=0&limit=1")
 
@@ -85,8 +70,6 @@ def test_live_event_route_requires_agent_authentication(client, monkeypatch):
 def test_live_event_route_returns_authenticated_allowlisted_envelope(client, test_db, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("FRIDAY_API_KEY", "friday-test-key")
-    monkeypatch.setattr("apps.api.routers.v1_events.turso_events_configured", lambda: False)
-    monkeypatch.setattr("apps.api.routers.v1_events.turso_required", lambda: False)
     test_db.add(EventLog(
         event_id="context-private-data",
         event_type="context.generated",
@@ -144,7 +127,6 @@ def test_broadcast_news_event_is_visible_to_independent_agent_reads(test_db):
 
 def test_agent_cursors_advance_only_after_visible_event_ack(test_db, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "development")
-    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
     event = EventLog(
         event_id="cursor-event-1", event_type="intelx.news", tenant_id="default",
         target_agent="futuris", payload={"headline": "Forecast input"},
@@ -418,9 +400,6 @@ def test_mesh_allowlist_matches_authenticated_agent_names(
     test_db, monkeypatch, sender, recipient, credential_env
 ):
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
-    monkeypatch.setattr("apps.api.routers.v1_events.turso_events_configured", lambda: False)
-    monkeypatch.setattr("apps.api.routers.v1_events.turso_required", lambda: False)
     key = "synthetic-mesh-test-key"
     monkeypatch.setenv(credential_env, key)
     envelope = _signed_envelope(
@@ -442,7 +421,6 @@ def test_mesh_allowlist_matches_authenticated_agent_names(
 
 def test_signed_intelx_event_is_durable_targeted_and_idempotent(test_db, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "development")
-    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
     monkeypatch.setenv("INTELX_API_KEY", "intelx-test-key")
     env = _signed_envelope("intelx-test-key")
     first = ingest_envelope(env, "Bearer intelx-test-key", test_db)
@@ -462,7 +440,6 @@ def test_signed_intelx_event_is_durable_targeted_and_idempotent(test_db, monkeyp
 
 def test_mesh_ingest_rejects_system_events_and_caller_tenant_claims(test_db, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "development")
-    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
     monkeypatch.setenv("INTELX_API_KEY", "intelx-test-key")
 
     spoofed = _signed_envelope(
@@ -503,7 +480,6 @@ def test_mesh_ingest_rejects_system_events_and_caller_tenant_claims(test_db, mon
 
 def test_mesh_duplicate_id_collision_does_not_disclose_other_tenant_cursor(test_db, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "development")
-    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
     monkeypatch.setenv("INTELX_API_KEY", "intelx-test-key")
 
     foreign = EventLog(
@@ -531,7 +507,6 @@ def test_mesh_duplicate_id_collision_does_not_disclose_other_tenant_cursor(test_
 
 def test_mesh_duplicate_id_is_not_shared_between_same_tenant_publishers(test_db, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "development")
-    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
     monkeypatch.setenv("FRIDAY_API_KEY", "friday-test-key")
     test_db.add(EventLog(
         event_id="same-tenant-publisher-collision",
@@ -592,10 +567,7 @@ def _signed_forecast_envelope(key, *, sender="futuris", payload=None):
 
 def test_signed_futuris_forecast_is_visible_with_only_advisory_fields(test_db, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
     monkeypatch.setenv("FUTURIS_API_KEY", "futuris-test-key")
-    monkeypatch.setattr("apps.api.routers.v1_events.turso_events_configured", lambda: False)
-    monkeypatch.setattr("apps.api.routers.v1_events.turso_required", lambda: False)
 
     result = ingest_envelope(
         _signed_forecast_envelope("futuris-test-key"),
@@ -627,7 +599,6 @@ def test_signed_futuris_forecast_is_visible_with_only_advisory_fields(test_db, m
 
 def test_only_authenticated_futuris_can_publish_forecast_intent(test_db, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
     monkeypatch.setenv("INTELX_API_KEY", "intelx-test-key")
 
     with pytest.raises(HTTPException) as exc:
@@ -651,10 +622,7 @@ def test_only_authenticated_futuris_can_publish_forecast_intent(test_db, monkeyp
 )
 def test_futuris_forecast_rejects_invalid_advisories_before_persistence(test_db, monkeypatch, change):
     monkeypatch.setenv("ENVIRONMENT", "development")
-    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
     monkeypatch.setenv("FUTURIS_API_KEY", "futuris-test-key")
-    monkeypatch.setattr("apps.api.routers.v1_events.turso_events_configured", lambda: False)
-    monkeypatch.setattr("apps.api.routers.v1_events.turso_required", lambda: False)
     payload = {
         "forecast_id": "forecast-1", "target": "BTC volatility", "status": "active",
         "prediction": 0.5, "range_lower": 0.2, "range_upper": 0.8,
@@ -673,7 +641,6 @@ def test_futuris_forecast_rejects_invalid_advisories_before_persistence(test_db,
 
 def test_mesh_ingest_rejects_tampering_and_bad_credentials(test_db, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
     monkeypatch.setenv("INTELX_API_KEY", "intelx-test-key")
     env = _signed_envelope("intelx-test-key")
     env.payload["headline"] = "tampered"
@@ -690,155 +657,6 @@ def test_mesh_ingest_rejects_tampering_and_bad_credentials(test_db, monkeypatch)
     with pytest.raises(HTTPException) as exc:
         ingest_envelope(env, "Bearer intelx-test-key", test_db)
     assert exc.value.status_code == 401
-
-
-def test_turso_event_adapter_uses_http_pipeline_without_printing_credentials(monkeypatch):
-    from storage.relational import turso_events
-
-    monkeypatch.setenv("ENVIRONMENT", "development")
-    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "true")
-    monkeypatch.setenv("TURSO_DATABASE_URL", "https://events-test.turso.io")
-    monkeypatch.setenv("TURSO_AUTH_TOKEN", "test-token")
-    turso_events._schema_ready_for.clear()
-    calls = []
-
-    class Response:
-        status = 200
-        def __init__(self, body):
-            self.body = body
-        def __enter__(self):
-            return self
-        def __exit__(self, *_):
-            return False
-        def read(self):
-            return json.dumps(self.body).encode()
-
-    def fake_urlopen(request, timeout):
-        body = json.loads(request.data.decode())
-        calls.append(body)
-        sql = body["requests"][0]["stmt"]["sql"]
-        if sql.startswith("SELECT id,tenant_id,payload FROM event_log"):
-            result = {"type": "ok", "response": {"result": {"rows": [[
-                {"value": 42}, {"value": "default"}, {"value": '{"source_agent":"intelx"}'},
-            ]]}}}
-        elif sql.startswith("SELECT id,event_id"):
-            result = {"type": "ok", "response": {"result": {"rows": [[
-                {"value": 42}, {"value": "event-42"}, {"value": "intelx.news"},
-                {"value": "default"}, {"value": "futuris"}, {"value": '{"headline":"News"}'},
-                {"value": "2026-09-26T00:00:00+00:00"},
-            ]]}}}
-        else:
-            result = {"type": "ok", "response": {"result": {}}}
-        return Response({"results": [result for _ in body["requests"]]})
-
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    cursor = turso_events.append({
-        "event_id": "event-42", "event_type": "intelx.news", "tenant_id": "default",
-        "target_agent": "futuris", "payload": {"headline": "News"}, "created_at": "2026-09-26T00:00:00+00:00",
-    })
-    rows = turso_events.read(after_id=0, limit=10, tenant_id="default", agent="futuris")
-    assert cursor == 42
-    assert rows[0]["target_agent"] == "futuris"
-    assert rows[0]["payload"] == {"headline": "News"}
-    assert len(calls) == 4
-
-
-@pytest.mark.parametrize(
-    ("stored_tenant", "stored_source"),
-    [("other-tenant", "friday"), ("default", "intelx")],
-)
-def test_turso_event_append_rejects_foreign_event_id_collision(
-    monkeypatch, stored_tenant, stored_source
-):
-    from storage.relational import turso_events
-
-    monkeypatch.setattr(turso_events, "ensure_schema", lambda: None)
-    statements = []
-
-    def fake_request(requests):
-        sql = requests[0]["stmt"]["sql"]
-        statements.append(sql)
-        if sql.startswith("INSERT INTO event_log"):
-            return [{"type": "ok"}]
-        stored_payload = json.dumps({"source_agent": stored_source})
-        return [{"type": "ok", "response": {"result": {"rows": [[
-            {"value": 42}, {"value": stored_tenant}, {"value": stored_payload},
-        ]]}}}]
-
-    monkeypatch.setattr(turso_events, "_request", fake_request)
-    with pytest.raises(turso_events.EventIdTenantConflictError):
-        turso_events.append({
-            "event_id": "remote-foreign-collision",
-            "event_type": "custom.notice",
-            "tenant_id": "default",
-            "target_agent": "futuris",
-            "payload": {"source_agent": "friday", "headline": "synthetic"},
-            "created_at": "2026-10-01T00:00:00Z",
-        })
-    assert len(statements) == 2
-    assert "tenant_id,payload FROM event_log" in statements[1]
-
-
-def test_remote_event_id_conflict_maps_to_http_409(test_db, monkeypatch):
-    from storage.relational.turso_events import EventIdTenantConflictError
-
-    monkeypatch.setenv("ENVIRONMENT", "development")
-    monkeypatch.setenv("INTELX_API_KEY", "intelx-test-key")
-    monkeypatch.setattr("apps.api.routers.v1_events.turso_events_configured", lambda: True)
-    monkeypatch.setattr("apps.api.routers.v1_events.turso_required", lambda: False)
-    monkeypatch.setattr(
-        "apps.api.routers.v1_events.append_turso_event",
-        lambda _event: (_ for _ in ()).throw(EventIdTenantConflictError("collision")),
-    )
-    with pytest.raises(HTTPException) as exc:
-        ingest_envelope(
-            _signed_envelope("intelx-test-key", message_id="remote-foreign-collision"),
-            "Bearer intelx-test-key",
-            test_db,
-        )
-    assert exc.value.status_code == 409
-    assert test_db.query(EventLog).count() == 0
-
-
-def test_turso_consumer_cursor_ack_requires_visible_event(monkeypatch):
-    from storage.relational import turso_events
-
-    monkeypatch.setenv("ENVIRONMENT", "development")
-    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "true")
-    monkeypatch.setenv("TURSO_DATABASE_URL", "https://cursor-test.turso.io")
-    monkeypatch.setenv("TURSO_AUTH_TOKEN", "cursor-token")
-    turso_events._schema_ready_for.clear()
-    statements = []
-
-    class Response:
-        status = 200
-        def __init__(self, body):
-            self.body = body
-        def __enter__(self):
-            return self
-        def __exit__(self, *_):
-            return False
-        def read(self):
-            return json.dumps(self.body).encode()
-
-    cursor_reads = 0
-    def fake_urlopen(request, timeout):
-        nonlocal cursor_reads
-        batch = json.loads(request.data.decode())
-        sql = batch["requests"][0]["stmt"]["sql"]
-        statements.append(sql)
-        if sql.startswith("SELECT last_event_id"):
-            rows = [[{"value": 0 if cursor_reads == 0 else 42}]]
-            cursor_reads += 1
-        elif sql.startswith("SELECT id FROM event_log WHERE id>? "):
-            rows = [[{"value": 42}]]
-        else:
-            rows = []
-        return Response({"results": [{"type": "ok", "response": {"result": {"rows": rows}}}]})
-
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    assert turso_events.acknowledge(tenant_id="default", agent="friday", event_id=42) == 42
-    assert any("MAX(last_event_id,excluded.last_event_id)" in sql for sql in statements)
 
 
 def _signed_decision_envelope(key, *, sender="stratex", payload=None):
@@ -872,10 +690,7 @@ def _signed_decision_envelope(key, *, sender="stratex", payload=None):
 
 def test_signed_stratex_decision_round_trips_correlation_id(test_db, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
     monkeypatch.setenv("STRATEX_API_KEY", "stratex-test-key")
-    monkeypatch.setattr("apps.api.routers.v1_events.turso_events_configured", lambda: False)
-    monkeypatch.setattr("apps.api.routers.v1_events.turso_required", lambda: False)
 
     result = ingest_envelope(
         _signed_decision_envelope("stratex-test-key"),
@@ -895,7 +710,6 @@ def test_signed_stratex_decision_round_trips_correlation_id(test_db, monkeypatch
 
 def test_only_authenticated_stratex_can_publish_decision_intent(test_db, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
     monkeypatch.setenv("INTELX_API_KEY", "intelx-test-key")
 
     with pytest.raises(HTTPException) as exc:
@@ -920,10 +734,7 @@ def test_only_authenticated_stratex_can_publish_decision_intent(test_db, monkeyp
 )
 def test_stratex_decision_rejects_invalid_or_live_bearing_payloads(test_db, monkeypatch, change):
     monkeypatch.setenv("ENVIRONMENT", "development")
-    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
     monkeypatch.setenv("STRATEX_API_KEY", "stratex-test-key")
-    monkeypatch.setattr("apps.api.routers.v1_events.turso_events_configured", lambda: False)
-    monkeypatch.setattr("apps.api.routers.v1_events.turso_required", lambda: False)
     payload = {
         "decision_id": "decision-1",
         "forecast_id": "forecast-1",
@@ -944,10 +755,7 @@ def test_stratex_decision_rejects_invalid_or_live_bearing_payloads(test_db, monk
 
 def test_intelx_news_ingest_exposes_correlation_id_to_consumers(test_db, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("MEMORA_TURSO_EVENTS_ENABLED", "false")
     monkeypatch.setenv("INTELX_API_KEY", "intelx-test-key")
-    monkeypatch.setattr("apps.api.routers.v1_events.turso_events_configured", lambda: False)
-    monkeypatch.setattr("apps.api.routers.v1_events.turso_required", lambda: False)
 
     fields = {
         "message_id": "intelx-news-corr-1",

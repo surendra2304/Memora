@@ -6,6 +6,7 @@ import json
 import logging
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, Response, status
@@ -76,6 +77,60 @@ class TaskResultModel(BaseModel):
     summary: str = ""
     error: str | None = None
     execution_time_ms: int = 0
+    #: Necessary for FRIDAY's mesh to certify completion. A 200 with no receipt is
+    #: classified UNVERIFIED: the peer answered but produced no evidence, so the
+    #: caller cannot tell work from acknowledgement.
+    receipt: "ActionReceiptModel | None" = None
+
+
+class ActionReceiptModel(BaseModel):
+    """Mirror of FRIDAY's ``friday.core.task_envelope.ActionReceipt``."""
+
+    requested_action: str
+    target: str
+    authorization_decision: str = "AUTHORIZED"
+    execution_timestamp: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+    result: dict[str, Any] = Field(default_factory=dict)
+    verification_evidence: dict[str, Any] = Field(default_factory=dict)
+    failure_reason: str | None = None
+
+
+TaskResultModel.model_rebuild()
+
+
+def _receipt_for(
+    envelope: TaskEnvelopeModel, result: TaskResultModel
+) -> ActionReceiptModel:
+    """Evidence that this exact action on this exact target produced this result.
+
+    ``verification_evidence`` records what Memora actually touched (a persisted
+    record id for stores, a recalled count for queries) so the caller is not asked
+    to take the summary on trust.
+    """
+    payload = result.result or {}
+    evidence: dict[str, Any] = {
+        "backend": "oracle",
+        "action": envelope.action,
+        "task_id": envelope.task_id,
+        "evidence_source": "memora.v1.task.execute",
+    }
+    if "memory_id" in payload:
+        evidence["memory_id"] = payload["memory_id"]
+        evidence["namespace_path"] = payload.get("namespace_path")
+        evidence["durable_write"] = True
+    if "count" in payload:
+        evidence["recalled_count"] = payload["count"]
+        evidence["query"] = payload.get("query")
+
+    return ActionReceiptModel(
+        requested_action=envelope.action,
+        target=envelope.target_agent,
+        authorization_decision="AUTHORIZED",
+        result=dict(payload),
+        verification_evidence=evidence,
+    )
 
 
 def _elapsed_ms(t0: float) -> int:
@@ -137,6 +192,9 @@ def execute_task(
                   f"{sorted(_STORE_ACTIONS | _QUERY_ACTIONS)}.",
             execution_time_ms=_elapsed_ms(t0),
         )
+
+    if result.status == "SUCCESS":
+        result.receipt = _receipt_for(envelope, result)
 
     response.status_code = _http_status_for(result.status)
     return result

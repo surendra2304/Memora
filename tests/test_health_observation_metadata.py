@@ -10,7 +10,6 @@ class DatabaseProbe:
 
 
 def test_health_reports_server_observation_timestamp_and_evidence_class(monkeypatch):
-    monkeypatch.setattr(health, "turso_events_configured", lambda: False)
     monkeypatch.setattr(health, "production_mode", lambda: False)
     monkeypatch.setattr(
         health.vector_adapter,

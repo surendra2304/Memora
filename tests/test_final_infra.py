@@ -47,8 +47,6 @@ def test_events_emitter_and_durable_query_endpoint(client: TestClient, test_db, 
     """
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("FRIDAY_API_KEY", "friday-test-key")
-    monkeypatch.setattr("apps.api.routers.v1_events.turso_events_configured", lambda: False)
-    monkeypatch.setattr("apps.api.routers.v1_events.turso_required", lambda: False)
     event = event_emitter.publish(
         "test.event", {"action": "heartbeat", "status": "ok"}, db=test_db
     )

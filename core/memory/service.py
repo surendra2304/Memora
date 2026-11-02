@@ -760,7 +760,6 @@ class MemoryService:
                 vector_deleted=False,
                 cache_deleted=False,
                 graph_deleted=False,
-                turso_deleted=True,
                 status="DELETE_REQUESTED"
             )
             db.add(tombstone)

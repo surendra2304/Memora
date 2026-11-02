@@ -439,7 +439,6 @@ class Consolidator:
             vector_deleted=False,
             cache_deleted=False,
             graph_deleted=False,
-            turso_deleted=True,
             status="PENDING",
             retry_count=0,
             created_at=datetime.now(timezone.utc),

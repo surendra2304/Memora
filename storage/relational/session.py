@@ -167,8 +167,104 @@ def create_db_engine():
     )
 
 
-engine = create_db_engine()
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+_engine = None
+_session_factory = None
+
+
+def get_engine():
+    """Return the authoritative engine, creating it on first use.
+
+    Importing this module must not open a socket: the API server imports the
+    ORM layer during startup, and a transient database outage should surface as
+    a failing request (or a failing readiness probe), not as an import error
+    that takes the whole process down before it can report anything.
+    """
+    global _engine
+    if _engine is None:
+        _engine = create_db_engine()
+        _ensure_json_serializer(_engine)
+    return _engine
+
+
+def _ensure_json_serializer(engine) -> None:
+    """Give the Oracle dialect the JSON serializer SQLAlchemy's JSON type expects.
+
+    ``sqlalchemy.sql.sqltypes.JSON`` looks up ``dialect._json_serializer`` when
+    it builds a bind processor. The Oracle dialect in the installed SQLAlchemy
+    build does not define it, so inserting a JSON column fails at execution time
+    with ``'OracleDialect_oracledb' object has no attribute '_json_serializer'``
+    (this is what broke Memora's ``event_log`` writes). Supplying the two
+    attributes is the documented extension point and keeps the JSON type usable.
+    """
+    dialect = getattr(engine, "dialect", None)
+    if dialect is None:
+        return
+    if not hasattr(dialect, "_json_serializer"):
+        import json as _json
+
+        try:
+            dialect._json_serializer = _json.dumps
+        except Exception:  # pragma: no cover - defensive, dialect is a simple object
+            pass
+    import json as _json
+
+    def _deserialize(value):
+        # Oracle returns JSON columns already decoded (a dict/list). Only
+        # parse when the driver handed back a raw string.
+        if isinstance(value, (str, bytes, bytearray)):
+            return _json.loads(value)
+        return value
+
+    if getattr(dialect, "_json_deserializer", None) is not _deserialize:
+        try:
+            dialect._json_deserializer = _deserialize
+        except Exception:  # pragma: no cover
+            pass
+
+
+def get_session_factory():
+    """Return the session factory bound to the authoritative engine."""
+    global _session_factory
+    if _session_factory is None:
+        _session_factory = sessionmaker(
+            autocommit=False, autoflush=False, bind=get_engine()
+        )
+    return _session_factory
+
+
+class _EngineProxy:
+    """Delegates to the lazily-created engine so ``from ... import engine`` works."""
+
+    def __getattr__(self, name):
+        return getattr(get_engine(), name)
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostics only
+        return f"<lazy engine proxy: {_active_storage_backend}>"
+
+
+class _SessionFactoryProxy:
+    """Callable stand-in for ``sessionmaker`` that binds on first use."""
+
+    def __call__(self, *args, **kwargs):
+        return get_session_factory()(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(get_session_factory(), name)
+
+
+engine = _EngineProxy()
+SessionLocal = _SessionFactoryProxy()
+
+# ``sqlalchemy.inspect`` dispatches on the exact type, so a delegating proxy is
+# opaque to it. Register an inspector that resolves the lazily-created engine;
+# without this, init_db()/tests that reflect the schema fail with
+# NoInspectionAvailable instead of inspecting the real database.
+from sqlalchemy import inspection as _sa_inspection
+
+
+@_sa_inspection._inspects(_EngineProxy)
+def _inspect_engine_proxy(proxy: _EngineProxy):
+    return _sa_inspection.inspect(get_engine())
 
 
 def _add_scope_columns(engine, columns: set[str], dialect: str) -> None:

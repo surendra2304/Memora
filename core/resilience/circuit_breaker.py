@@ -1,8 +1,8 @@
 """
 Circuit breaker and dependency health tracking for Memora.
 
-Memora talks to optional external systems (Qdrant for vectors, Turso for the
-durable event feed, Redis for caching). Before this module existed there was no
+Memora talks to optional external systems (Qdrant for vectors, Redis for caching).
+Before this module existed there was no
 resilience layer at all: every call retried a dead dependency at full speed,
 paying the connection timeout on every request, and the /health endpoint could
 not report that a dependency had gone away.

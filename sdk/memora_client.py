@@ -468,3 +468,9 @@ class MemoraClient:
             return f"Reduce position sizing by 50% and enforce tighter stop-loss guardrails during high volatility in '{task_name}'."
         else:
             return f"Execute pre-flight parameter verification and handle graceful exceptions when executing '{task_name}'."
+
+
+#: Shared, lazily-configured client for scripts and agent adapters. It performs
+#: no I/O at import time: every call resolves ``MEMORA_URL`` and the caller's
+#: named ``<AGENT>_API_KEY`` when it is made.
+memora_client = MemoraClient()
